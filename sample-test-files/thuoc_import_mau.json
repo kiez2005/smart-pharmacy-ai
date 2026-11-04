@@ -1,0 +1,29 @@
+[
+  {
+    "ProductName": "Thuốc nhỏ mũi Xisat Người lớn (Chai 75ml)",
+    "PathImage": "https://images.unsplash.com/photo-1607619056574-7b8d3ee536b2?w=400&auto=format&fit=crop&q=80",
+    "ProductType": "Hô hấp",
+    "Quantity": 150,
+    "Unit": "Chai",
+    "Price": 26000,
+    "Description": "Hoạt chất: Nước biển sâu tinh khiết giàu khoáng chất Cu2+, Zn2+. Công dụng: Vệ sinh mũi hàng ngày, giảm nghẹt mũi, hỗ trợ điều trị viêm xoang."
+  },
+  {
+    "ProductName": "Viên uống Bổ gan Boganic Traphaco (Hộp 5 vỉ)",
+    "PathImage": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400&auto=format&fit=crop&q=80",
+    "ProductType": "Tiêu hóa",
+    "Quantity": 120,
+    "Unit": "Hộp",
+    "Price": 85000,
+    "Description": "Hoạt chất: Cao Actiso, Cao Rau đắng đất, Cao Bìm bìm biếc. Công dụng: Giải độc gan, mát gan, hạ men gan, giảm mụn nhọt mề đay do suy giảm chức năng gan."
+  },
+  {
+    "ProductName": "Viên ngậm ho Bảo Thanh (Hộp 20 viên)",
+    "PathImage": "https://images.unsplash.com/photo-1587854692152-cbe660dbde88?w=400&auto=format&fit=crop&q=80",
+    "ProductType": "Hô hấp",
+    "Quantity": 200,
+    "Unit": "Hộp",
+    "Price": 28000,
+    "Description": "Hoạt chất: Xuyên bối mẫu, Tỳ bà diệp, Cát cánh, Ô mai, Mật ong. Công dụng: Bổ phế, trừ ho, hóa đờm, làm ấm đường hô hấp."
+  }
+]

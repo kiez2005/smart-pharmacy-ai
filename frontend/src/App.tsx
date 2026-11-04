@@ -7,14 +7,16 @@ import {
   Receipt,
   MessageSquareHeart,
   UserCheck,
+  Sparkles,
 } from 'lucide-react';
 import { ProductManagementPage } from './pages/ProductManagementPage';
 import { InvoicePaymentPage } from './pages/InvoicePaymentPage';
 import { ContactPage } from './pages/ContactPage';
 import { AuthPage } from './pages/AuthPage';
+import { AiPharmacyStudioPage } from './pages/AiPharmacyStudioPage';
 import { UserProfile } from './types/forms';
 
-type ActiveTab = 'PRODUCTS' | 'INVOICES' | 'CONTACT' | 'AUTH';
+type ActiveTab = 'PRODUCTS' | 'AI_STUDIO' | 'INVOICES' | 'CONTACT' | 'AUTH';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('PRODUCTS');
@@ -26,10 +28,11 @@ export const App: React.FC = () => {
   });
 
   const navItems: Array<{ id: ActiveTab; label: string; icon: React.ElementType }> = [
-    { id: 'PRODUCTS', label: '1. Quản lý Thuốc (Product 11 CN)', icon: Package },
-    { id: 'INVOICES', label: '2. Hóa đơn & Thanh toán VietQR', icon: Receipt },
-    { id: 'CONTACT', label: '3. Liên hệ Tư vấn Dược sĩ', icon: MessageSquareHeart },
-    { id: 'AUTH', label: '4. Đăng nhập / Đăng ký', icon: UserCheck },
+    { id: 'PRODUCTS', label: '1. Quản lý Thuốc (11 CN)', icon: Package },
+    { id: 'AI_STUDIO', label: '2. Trạm AI (OCR & Chẩn đoán Y tế)', icon: Sparkles },
+    { id: 'INVOICES', label: '3. Hóa đơn & Thanh toán VietQR', icon: Receipt },
+    { id: 'CONTACT', label: '4. Liên hệ Dược sĩ', icon: MessageSquareHeart },
+    { id: 'AUTH', label: '5. Đăng nhập / Đăng ký', icon: UserCheck },
   ];
 
   return (
@@ -89,6 +92,7 @@ export const App: React.FC = () => {
       {/* Main Content */}
       <main className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
         {activeTab === 'PRODUCTS' && <ProductManagementPage />}
+        {activeTab === 'AI_STUDIO' && <AiPharmacyStudioPage />}
         {activeTab === 'INVOICES' && <InvoicePaymentPage />}
         {activeTab === 'CONTACT' && <ContactPage />}
         {activeTab === 'AUTH' && (
