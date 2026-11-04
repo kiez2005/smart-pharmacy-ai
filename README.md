@@ -1,37 +1,83 @@
-# Hệ Thống Quản Lý Nhà Thuốc & Kinh Doanh Dược Phẩm Thông Minh Tích Hợp AI
+# PharmaCore ERP — Hệ Thống Quản Trị Nhà Thuốc, Bán Lẻ POS & Trí Tuệ Nhân Tạo Lâm Sàng Chuẩn GPP
 
-**Môn học:** Ngôn ngữ kịch bản (Lớp `D18CNPM5` - Đại học Điện Lực)  
-**Nhóm thực hiện:** Nguyễn Văn Trung (`23810310321`), Đặng Minh Đức (`23810340198`)
+Hệ thống phần mềm quản trị doanh nghiệp dược phẩm (`ERP`), bán lẻ tại quầy (`POS`), quản lý hồ sơ bệnh án - tiền sử dị ứng (`Patient CRM`), số hóa đơn thuốc bằng thị giác máy tính (`OpenCV + OCR`) và trợ lý dược lâm sàng (`Scikit-learn TF-IDF & Multi-Drug Interaction Checker`).
 
 ---
 
 ## 1. Kiến Trúc Hệ Thống (3-Tier Polyglot Architecture)
 
-- **`frontend/`**: `React 18 + TypeScript + Vite + Tailwind CSS + TanStack Table v8 + react-hotkeys-hook` (8 Forms nghiệp vụ + Bảng `Product` đủ 11 chức năng & Phím tắt CRUD).
-- **`backend/`**: `Node.js + Express + TypeScript + Prisma ORM (SQLite) + Meilisearch/Fuse.js + ExcelJS + Fast-XML-Parser` (Core REST API Server).
-- **`ai-service/`**: `Python + FastAPI + OpenCV + Scikit-learn` (Tiền xử lý ảnh & OCR Đơn thuốc, Chẩn đoán sơ bộ triệu chứng bằng TF-IDF & Cosine Similarity).
-- **`.github/workflows/ci-cd.yml`**: Tự động kiểm thử, đồng bộ Database Schema, nạp dữ liệu mẫu và build dự án trên GitHub Actions sau mỗi lần `git push`.
+- **`frontend/`**: `React 18 + TypeScript + Vite + Tailwind CSS + TanStack Table v8` — Thiết kế theo chuẩn Enterprise (`shadcn-admin` / `shadcn-table`), gồm **12 Phân hệ Nghiệp vụ** chia làm 3 phân khu chức năng.
+- **`backend/`**: `Node.js + Express + TypeScript + Prisma ORM (SQLite) + Meilisearch/Fuse.js + ExcelJS + Fast-XML-Parser` — Quản lý **8 bảng cơ sở dữ liệu quan hệ** và hệ thống RESTful API giao dịch (`ACID Transaction`).
+- **`ai-service/`**: `Python + FastAPI + OpenCV + Scikit-learn` — Microservice tiền xử lý ảnh đơn thuốc (`Adaptive Threshold`), bóc tách OCR và gợi ý thuốc theo triệu chứng bằng `TF-IDF Vectorizer + Cosine Similarity`.
+- **`.github/workflows/ci-cd.yml`**: Pipeline `GitHub Actions CI/CD` tự động kiểm tra kiểu dữ liệu TypeScript, đồng bộ Prisma Schema, khởi tạo dữ liệu mẫu (`seed`) và build toàn bộ hệ thống sau mỗi lần `git push`.
 
 ---
 
-## 2. Đáp Ứng 100% Tiêu Chí Chấm Điểm (Mục tiêu 9.5+ Điểm)
+## 2. Cấu Trúc 8 Bảng Cơ Sở Dữ Liệu Quan Hệ (`Prisma Schema`)
 
-### A. Module `Product` (10 Trường Chuẩn & 11 Chức Năng Bắt Buộc)
-Bảng `Product` gồm đúng 10 trường: `ProductID`, `ProductName`, `PathImage`, `ProductType`, `Quantity`, `Unit`, `Price`, `Description`, `CreateDate`, `UpdateDate`.
-1. Hiển thị bảng phân trang (`10 - 15 items/page`)
-2. Thêm mới (`Alt + N`, lưu `Alt + S`)
-3. Cập nhật (`Alt + E`, lưu `Alt + S`)
-4. Xem chi tiết (`Alt + V`)
-5. Xóa 1 bản ghi & Xóa nhiều bản ghi từ Checkbox (`Alt + H`)
-6. Tìm kiếm theo Tên, mô tả, mã (`Alt + F`)
-7. Sao chép 1 bản ghi (`Alt + C`)
-8. Sao chép nhiều bản ghi từ Checkbox (`Alt + D`)
-9. Import & Export dữ liệu ra `Excel (.xlsx)`, `JSON (.json)`, `XML (.xml)` (`Alt + I` / `Alt + X`)
-10. Cấu hình Ẩn/Hiện cột của Table (`Alt + K`)
-11. Hệ thống phím tắt bàn phím cho toàn bộ thao tác CRUD
+1. **`Product`**: Lưu trữ danh mục dược phẩm với 10 trường dữ liệu chuẩn (`ProductID`, `ProductName`, `PathImage`, `ProductType`, `Quantity`, `Unit`, `Price`, `Description`, `CreateDate`, `UpdateDate`).
+2. **`User`**: Quản lý tài khoản nhân sự nhà thuốc và phân quyền (`ADMIN`, `PHARMACIST`, `CASHIER`).
+3. **`Customer`**: Hồ sơ bệnh nhân, lưu trữ **Tiền sử dị ứng thuốc (`Allergies`)**, **Bệnh lý nền (`ChronicCond`)** và điểm tích lũy thành viên (`LoyaltyPoints`).
+4. **`Supplier`**: Danh mục công ty dược phẩm và nhà phân phối đạt chuẩn GDP (`DHG Pharma`, `Traphaco`, `Sanofi`, `Zuellig Pharma`...).
+5. **`PurchaseOrder` & `PurchaseOrderItem`**: Chứng từ phiếu nhập kho dược phẩm, quản lý số lô sản xuất (`BatchNumber`), hạn dùng (`ExpiryDate`), giá vốn nhập (`ImportPrice`) và tự động cộng tồn kho `Product.Quantity`.
+6. **`Invoice` & `InvoiceItem`**: Hóa đơn xuất bán lẻ POS, lưu liều dùng hướng dẫn (`DosageNote`), chiết khấu, tự động trừ tồn kho khi xuất bán và tự động hoàn trả tồn kho khi hủy đơn.
+7. **`Payment`**: Sổ quỹ thanh toán và đối soát giao dịch đa phương thức (`VIETQR`, `CASH`, `CARD`).
+8. **`Contact`**: Phiếu yêu cầu tư vấn dược lâm sàng và lịch sử phản hồi của dược sĩ.
 
-### B. 4 Kỹ Thuật AI Tích Hợp (Bám sát Gợi ý của Giảng viên)
-1. **OCR Đơn thuốc & Hóa đơn (Gợi ý #1):** Tiền xử lý ảnh bằng `OpenCV` + Bóc tách thuốc tự động vào giỏ hàng / kho.
-2. **Chatbot & Chẩn đoán Y tế sơ bộ (Gợi ý #2, #3, #5):** Tư vấn triệu chứng bệnh và gợi ý thuốc OTC đang còn tồn kho bằng `Scikit-learn` (TF-IDF + Cosine Similarity) & LLM.
-3. **Kỹ thuật Tìm kiếm tối ưu Keyword (Gợi ý #8):** Tích hợp `Meilisearch` + `Fuse.js` chống sai chính tả tên thuốc.
-4. **Trợ lý Giọng nói Tiếng Việt (Gợi ý #4):** Tìm kiếm thuốc và ra lệnh CRUD bằng giọng nói (`Web Speech API`).
+---
+
+## 3. Danh Mục 12 Phân Hệ Nghiệp Vụ Trên Giao Diện
+
+### Phân Khu 1: Quản Trị Kho & Dược Phẩm
+1. **Tổng quan điều hành (`DashboardPage`)**: 4 thẻ KPI tài chính & tồn kho thời gian thực, biểu đồ phân bổ giá trị kho theo nhóm dược lý, bảng xếp hạng thuốc bán chạy và cảnh báo thuốc sắp hết hàng.
+2. **Danh mục dược phẩm chuẩn 11 chức năng (`ProductManagementPage`)**:
+   - Phân trang tùy chỉnh (`10 / 12 / 15` dòng/trang) & Sắp xếp cột 2 chiều (`ASC/DESC`)
+   - Thêm mới (`Alt + N`), Cập nhật (`Alt + E`), Lưu nhanh (`Alt + S`), Xem chi tiết (`Alt + V`)
+   - Tải ảnh trực tiếp từ máy tính (`Base64 FileReader`) hoặc liên kết URL
+   - Xóa đơn lẻ & Xóa hàng loạt theo Checkbox (`Alt + H`)
+   - Nhân bản 1 bản ghi (`Alt + C`) & Nhân bản hàng loạt theo Checkbox (`Alt + D`)
+   - Tìm kiếm đa tiêu chí chống sai chính tả (`Meilisearch / Fuse.js`) & Tìm kiếm bằng giọng nói Tiếng Việt (`Web Speech API`)
+   - Import (có Modal xem trước thông tin tệp) & Export dữ liệu ra 3 định dạng: `Excel (.xlsx)`, `JSON (.json)`, `XML (.xml)` (`Alt + I`, `Alt + X`)
+   - Tùy chỉnh Ẩn/Hiện cột linh hoạt có lưu trạng thái (`Alt + K`)
+3. **Hồ sơ thuốc & Thẻ kho (`ProductStockCardPage`)**: Truy xuất lịch sử các lô nhập kho (`+SL`), lịch sử xuất bán POS (`-SL`) và in tem nhãn mã vạch SKU.
+4. **Nhà cung cấp & Nhập kho (`SuppliersAndPurchaseOrdersPage`)**: Quản lý đối tác cung ứng và lập phiếu nhập kho tự động cộng dồn số lượng tồn kho.
+
+### Phân Khu 2: Bán Lẻ POS, Hóa Đơn, Sổ Quỹ & Bệnh Nhân
+5. **Quầy thu ngân POS (`PosTerminalPage`)**: Chọn thuốc nhanh theo nhóm, chọn hồ sơ bệnh nhân, **tự động phát cảnh báo đỏ nếu thuốc trong giỏ trùng tiền sử dị ứng của bệnh nhân hoặc trùng hoạt chất**, tính chiết khấu, tiền thừa và tạo mã `VietQR Napas247`.
+6. **Hóa đơn & Hoàn trả hàng (`InvoicesManagementPage`)**: Xem/in phiếu xuất thuốc GPP và xử lý **Hoàn trả đơn hàng** (tự động hoàn tiền và cộng trả lại số lượng vào kho `Product`).
+7. **Sổ quỹ & Đối soát VietQR (`PaymentsLedgerPage`)**: Quản lý dòng tiền thực thu theo từng phương thức thanh toán và tra cứu chứng từ QR.
+8. **Hồ sơ bệnh nhân & Dị ứng (`CustomersPage`)**: Quản lý tiền sử dị ứng hoạt chất, bệnh lý mãn tính và lịch sử mua thuốc của từng bệnh nhân.
+
+### Phân Khu 3: Lâm Sàng AI, OCR, CSKH & Hệ Thống
+9. **Số hóa đơn thuốc OCR (`PrescriptionOcrPage`)**: Tiền xử lý ảnh đơn thuốc bằng bộ lọc nhị phân `OpenCV Adaptive Threshold`, bóc tách tên thuốc/liều dùng, đối chiếu tồn kho và chuyển toàn bộ vào giỏ hàng POS chỉ với 1 cú nhấp chuột.
+10. **Dược lâm sàng & Tương tác thuốc (`ClinicalAiAndInteractionPage`)**: Tư vấn thuốc theo triệu chứng bằng `TF-IDF + Cosine Similarity` kết hợp công cụ kiểm tra tương tác đa thuốc và cảnh báo quá liều `Paracetamol` / `NSAID`.
+11. **Tư vấn dược sĩ & CSKH (`ContactPage`)**: Tiếp nhận và phản hồi câu hỏi tư vấn liều dùng của người bệnh.
+12. **Nhân sự & Phân quyền (`AuthPage`)**: Quản lý danh sách nhân sự, cấp phát tài khoản mới, đăng nhập JWT và phân quyền vai trò (`ADMIN`, `PHARMACIST`, `CASHIER`).
+
+---
+
+## 4. Hướng Dẫn Cài Đặt & Khởi Chạy Nhanh
+
+### Bước 1: Khởi chạy Backend API & Cơ sở dữ liệu (Port `5000`)
+```bash
+cd backend
+npm install
+npx prisma db push
+npm run db:seed
+npm run dev
+```
+
+### Bước 2: Khởi chạy Frontend Web App (Port `5173`)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### Bước 3 (Tùy chọn): Khởi chạy Python AI Microservice (Port `8000`)
+*(Hệ thống có cơ chế Auto-Fallback thông minh trên Node.js nên vẫn hoạt động đầy đủ 100% tính năng ngay cả khi không bật Python server)*
+```bash
+cd ai-service
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
