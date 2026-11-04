@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Save, Pill } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Product, ProductFormValues } from '../../types/product';
 
 interface ProductFormModalProps {
@@ -59,7 +59,6 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     }
   }, [editingProduct, isOpen]);
 
-  // Hỗ trợ phím tắt Alt + S để Lưu form ngay lập tức (Yêu cầu #11)
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -89,32 +88,34 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
+      <div className="w-full max-w-xl rounded-lg bg-white shadow-xl border border-zinc-200 overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between bg-teal-700 px-6 py-4 text-white">
-          <div className="flex items-center gap-2.5">
-            <Pill className="h-5 w-5" />
-            <h2 className="text-lg font-bold">
-              {editingProduct
-                ? `Cập nhật Thuốc #${editingProduct.ProductID}`
-                : 'Thêm Mới Sản Phẩm Thuốc (Product)'}
+        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-900">
+              {editingProduct ? 'Cập nhật thông tin dược phẩm' : 'Thêm dược phẩm mới'}
             </h2>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              {editingProduct
+                ? `Mã định danh SKU #${editingProduct.ProductID}`
+                : 'Điền thông tin chi tiết để đưa sản phẩm vào danh mục quản lý kho'}
+            </p>
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-teal-100 hover:bg-teal-600 hover:text-white transition"
+            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Form Body */}
         <form onSubmit={handleFormSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                Tên thuốc (ProductName) *
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2">
+              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+                Tên thương mại & hàm lượng <span className="text-rose-500">*</span>
               </label>
               <input
                 type="text"
@@ -122,19 +123,19 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 autoFocus
                 value={values.ProductName}
                 onChange={(e) => setValues({ ...values, ProductName: e.target.value })}
-                placeholder="VD: Panadol Extra Đỏ 500mg/65mg"
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                placeholder="Ví dụ: Panadol Extra 500mg/65mg"
+                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                Nhóm thuốc (ProductType) *
+              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+                Nhóm dược lý
               </label>
               <select
                 value={values.ProductType}
                 onChange={(e) => setValues({ ...values, ProductType: e.target.value })}
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-teal-600 focus:outline-none"
+                className="w-full h-9 rounded-md border border-zinc-300 bg-white px-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
               >
                 {PRODUCT_TYPES.map((type) => (
                   <option key={type} value={type}>
@@ -145,13 +146,13 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                Đơn vị tính (Unit) *
+              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+                Đơn vị quy đổi
               </label>
               <select
                 value={values.Unit}
                 onChange={(e) => setValues({ ...values, Unit: e.target.value })}
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-teal-600 focus:outline-none"
+                className="w-full h-9 rounded-md border border-zinc-300 bg-white px-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
               >
                 {PRODUCT_UNITS.map((unit) => (
                   <option key={unit} value={unit}>
@@ -162,8 +163,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                Số lượng tồn kho (Quantity) *
+              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+                Số lượng tồn kho
               </label>
               <input
                 type="number"
@@ -171,13 +172,13 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 required
                 value={values.Quantity}
                 onChange={(e) => setValues({ ...values, Quantity: Number(e.target.value) })}
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-teal-600 focus:outline-none"
+                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 tabular-nums focus:border-zinc-900 focus:outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                Đơn giá VNĐ (Price) *
+              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+                Giá bán niêm yết (VNĐ)
               </label>
               <input
                 type="number"
@@ -186,57 +187,56 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 required
                 value={values.Price}
                 onChange={(e) => setValues({ ...values, Price: Number(e.target.value) })}
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-teal-600 focus:outline-none"
+                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 tabular-nums focus:border-zinc-900 focus:outline-none"
               />
             </div>
 
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                Đường dẫn hình ảnh (PathImage)
+            <div className="sm:col-span-2">
+              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+                Liên kết ảnh sản phẩm
               </label>
               <input
                 type="url"
                 value={values.PathImage}
                 onChange={(e) => setValues({ ...values, PathImage: e.target.value })}
                 placeholder="https://..."
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-teal-600 focus:outline-none"
+                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
               />
             </div>
 
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                Mô tả hoạt chất, công dụng & liều dùng (Description)
+            <div className="sm:col-span-2">
+              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+                Hoạt chất, chỉ định & hướng dẫn sử dụng
               </label>
               <textarea
                 rows={3}
                 value={values.Description}
                 onChange={(e) => setValues({ ...values, Description: e.target.value })}
-                placeholder="Nhập hoạt chất, chỉ định, liều dùng và chống chỉ định..."
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-teal-600 focus:outline-none"
+                placeholder="Nhập thành phần hoạt chất, công dụng, liều lượng và lưu ý lâm sàng..."
+                className="w-full rounded-md border border-zinc-300 p-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
               />
             </div>
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-            <span className="text-xs text-slate-500">
-              Phím tắt: Bấm <kbd className="px-1.5 py-0.5 bg-slate-100 border rounded font-mono text-xs">Alt + S</kbd> để lưu nhanh
+          <div className="flex items-center justify-between pt-4 border-t border-zinc-100">
+            <span className="text-xs text-zinc-400">
+              Nhấn <kbd className="px-1.5 py-0.5 bg-zinc-100 border border-zinc-200 rounded font-mono text-[11px] text-zinc-600">Alt S</kbd> để lưu nhanh
             </span>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="h-9 rounded-md border border-zinc-200 bg-white px-4 text-[13px] font-medium text-zinc-700 hover:bg-zinc-50"
               >
-                Hủy (Esc)
+                Hủy bỏ
               </button>
               <button
                 type="submit"
                 disabled={submitting}
-                className="inline-flex items-center gap-2 rounded-xl bg-teal-600 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-teal-700 disabled:opacity-50"
+                className="h-9 rounded-md bg-zinc-900 px-4 text-[13px] font-medium text-white hover:bg-zinc-800 disabled:opacity-50 transition-colors"
               >
-                <Save className="h-4 w-4" />
-                {submitting ? 'Đang lưu...' : 'Lưu Sản Phẩm (Alt+S)'}
+                {submitting ? 'Đang lưu...' : editingProduct ? 'Lưu thay đổi' : 'Tạo dược phẩm'}
               </button>
             </div>
           </div>

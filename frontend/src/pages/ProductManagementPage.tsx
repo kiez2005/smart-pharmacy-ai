@@ -15,15 +15,21 @@ import {
   Download,
   Upload,
   Eye,
-  Edit3,
+  Pencil,
   ChevronLeft,
   ChevronRight,
-  Sparkles,
   Mic,
   FileSpreadsheet,
   FileJson,
   FileCode,
-  RefreshCw,
+  RotateCcw,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Package,
+  AlertCircle,
+  Layers,
+  Wallet,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ExportFormat, Product, ProductFormValues } from '../types/product';
@@ -34,7 +40,6 @@ import { ColumnVisibilityMenu } from '../components/product/ColumnVisibilityMenu
 import { ShortcutLegendBar } from '../components/product/ShortcutLegendBar';
 
 export const ProductManagementPage: React.FC = () => {
-  // Dữ liệu & Phân trang (Yêu cầu #1: 10 - 15 item/page)
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [page, setPage] = useState<number>(1);
@@ -42,7 +47,11 @@ export const ProductManagementPage: React.FC = () => {
   const [total, setTotal] = useState<number>(0);
   const [totalPages, setTotalPages] = useState<number>(1);
 
-  // Bộ lọc & Tìm kiếm thông minh (Yêu cầu #6 & Gợi ý AI #8: Meilisearch / Fuse.js)
+  // Sắp xếp cột (Sorting)
+  const [sortBy, setSortBy] = useState<string>('ProductID');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+
+  // Tìm kiếm & Bộ lọc
   const [searchInput, setSearchInput] = useState<string>('');
   const [debouncedSearch, setDebouncedSearch] = useState<string>('');
   const [selectedType, setSelectedType] = useState<string>('ALL');
@@ -54,16 +63,18 @@ export const ProductManagementPage: React.FC = () => {
     processingTimeMs: number;
   } | null>(null);
 
-  // Trạng thái chọn dòng Checkbox & Ẩn/Hiện cột (Yêu cầu #5, #8, #10)
+  // Chọn dòng & Ẩn/Hiện cột
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => {
     const saved = localStorage.getItem('pharmacy_product_columns');
-    return saved ? (JSON.parse(saved) as VisibilityState) : {};
+    return saved
+      ? (JSON.parse(saved) as VisibilityState)
+      : { CreateDate: false };
   });
   const [isColumnMenuOpen, setIsColumnMenuOpen] = useState<boolean>(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
 
-  // Modals (Thêm/Sửa/Chi tiết)
+  // Modals
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
@@ -72,21 +83,18 @@ export const ProductManagementPage: React.FC = () => {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Lưu cấu hình Ẩn/Hiện cột vào localStorage
   useEffect(() => {
     localStorage.setItem('pharmacy_product_columns', JSON.stringify(columnVisibility));
   }, [columnVisibility]);
 
-  // Debounce từ khóa tìm kiếm 250ms
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchInput);
       setPage(1);
-    }, 250);
+    }, 220);
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  // Tải danh sách sản phẩm từ Backend
   const loadProducts = useCallback(async () => {
     setLoading(true);
     try {
@@ -96,6 +104,8 @@ export const ProductManagementPage: React.FC = () => {
         search: debouncedSearch,
         type: selectedType,
         unit: selectedUnit,
+        sortBy,
+        sortOrder,
       });
       setProducts(data.items);
       setTotal(data.pagination.total);
@@ -106,18 +116,17 @@ export const ProductManagementPage: React.FC = () => {
         setSearchEngineInfo(data.searchMeta);
       }
       setRowSelection({});
-    } catch (error) {
-      toast.error('Không thể tải danh sách thuốc từ máy chủ Backend');
+    } catch {
+      toast.error('Không thể đồng bộ dữ liệu danh mục dược phẩm');
     } finally {
       setLoading(false);
     }
-  }, [page, limit, debouncedSearch, selectedType, selectedUnit]);
+  }, [page, limit, debouncedSearch, selectedType, selectedUnit, sortBy, sortOrder]);
 
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
 
-  // Danh sách các bản ghi đang được chọn từ ô Checkbox
   const selectedIds = useMemo(() => {
     return Object.keys(rowSelection)
       .filter((key) => rowSelection[key])
@@ -125,9 +134,28 @@ export const ProductManagementPage: React.FC = () => {
       .filter((id): id is number => Boolean(id));
   }, [rowSelection, products]);
 
-  // ============================================================================
-  // CÁC HÀM XỬ LÝ NGHIỆP VỤ CRUD & BULK ACTIONS
-  // ============================================================================
+  // Chỉ số KPI hiển thị đầu trang
+  const metrics = useMemo(() => {
+    const pageInventoryValue = products.reduce((sum, p) => sum + p.Price * p.Quantity, 0);
+    const lowStockCount = products.filter((p) => p.Quantity <= 60).length;
+    return {
+      pageInventoryValue,
+      lowStockCount,
+      categoryCount: availableTypes.length,
+    };
+  }, [products, availableTypes]);
+
+  const handleSortColumn = useCallback(
+    (field: string) => {
+      if (sortBy === field) {
+        setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setSortBy(field);
+        setSortOrder('asc');
+      }
+    },
+    [sortBy]
+  );
 
   const handleOpenCreate = useCallback(() => {
     setEditingProduct(null);
@@ -143,105 +171,98 @@ export const ProductManagementPage: React.FC = () => {
     try {
       if (editingProduct) {
         await productApi.update(editingProduct.ProductID, values);
-        toast.success(`Đã cập nhật thuốc "${values.ProductName}"`);
+        toast.success(`Đã cập nhật "${values.ProductName}"`);
       } else {
         await productApi.create(values);
-        toast.success(`Đã thêm mới thuốc "${values.ProductName}"`);
+        toast.success(`Đã thêm mới "${values.ProductName}"`);
       }
       await loadProducts();
     } catch {
-      toast.error('Lỗi khi lưu thông tin sản phẩm');
+      toast.error('Không thể lưu dữ liệu dược phẩm');
     }
   };
 
-  // #5a: Xóa 1 bản ghi
   const handleDeleteOne = useCallback(
     async (product: Product) => {
-      if (!window.confirm(`Bạn có chắc chắn muốn xóa thuốc "${product.ProductName}" (#${product.ProductID})?`)) {
+      if (!window.confirm(`Xác nhận xóa "${product.ProductName}" khỏi danh mục?`)) {
         return;
       }
       try {
         await productApi.removeOne(product.ProductID);
-        toast.success(`Đã xóa thuốc #${product.ProductID}`);
+        toast.success(`Đã xóa sản phẩm #${product.ProductID}`);
         await loadProducts();
       } catch {
-        toast.error('Không thể xóa thuốc này (thuốc đang nằm trong hóa đơn đã bán)');
+        toast.error('Sản phẩm đã phát sinh giao dịch hóa đơn, không thể xóa');
       }
     },
     [loadProducts]
   );
 
-  // #5b: Xóa nhiều bản ghi từ ô Checkbox
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.length === 0) {
-      toast.warning('Vui lòng tick chọn ít nhất 1 ô checkbox để xóa!');
+      toast.info('Vui lòng chọn ít nhất một sản phẩm trong bảng');
       return;
     }
-    if (!window.confirm(`Xác nhận xóa ${selectedIds.length} sản phẩm đã chọn?`)) {
+    if (!window.confirm(`Xác nhận xóa ${selectedIds.length} sản phẩm đang chọn?`)) {
       return;
     }
     try {
       const count = await productApi.bulkRemove(selectedIds);
-      toast.success(`Đã xóa hàng loạt ${count} sản phẩm`);
+      toast.success(`Đã xóa ${count} sản phẩm`);
       await loadProducts();
     } catch {
-      toast.error('Lỗi khi xóa hàng loạt bản ghi');
+      toast.error('Một số sản phẩm đang chọn đã phát sinh hóa đơn');
     }
   }, [selectedIds, loadProducts]);
 
-  // #7: Sao chép 1 bản ghi
   const handleCloneOne = useCallback(
     async (product: Product) => {
       try {
         const cloned = await productApi.cloneOne(product.ProductID);
-        toast.success(`Đã sao chép "${product.ProductName}" -> Mã mới #${cloned.ProductID}`);
+        toast.success(`Đã tạo bản sao #${cloned.ProductID}`);
         await loadProducts();
       } catch {
-        toast.error('Lỗi khi sao chép sản phẩm');
+        toast.error('Không thể nhân bản sản phẩm');
       }
     },
     [loadProducts]
   );
 
-  // #8: Sao chép nhiều bản ghi từ ô Checkbox
   const handleBulkClone = useCallback(async () => {
     if (selectedIds.length === 0) {
-      toast.warning('Vui lòng tick chọn ít nhất 1 ô checkbox để sao chép hàng loạt!');
+      toast.info('Vui lòng chọn ít nhất một sản phẩm để nhân bản');
       return;
     }
     try {
       const clonedList = await productApi.bulkClone(selectedIds);
-      toast.success(`Đã sao chép hàng loạt ${clonedList.length} sản phẩm!`);
+      toast.success(`Đã nhân bản ${clonedList.length} sản phẩm`);
       await loadProducts();
     } catch {
-      toast.error('Lỗi khi sao chép nhiều bản ghi');
+      toast.error('Lỗi khi nhân bản hàng loạt');
     }
   }, [selectedIds, loadProducts]);
 
-  // #9a: Xuất dữ liệu ra Excel (.xlsx), JSON (.json), XML (.xml)
   const handleExport = useCallback((format: ExportFormat) => {
     const url = productApi.getExportUrl(format);
     window.open(url, '_blank');
     setIsExportMenuOpen(false);
-    toast.success(`Đang tải xuống file định dạng .${format.toUpperCase()}`);
+    toast.success(`Đang xuất tệp dữ liệu .${format}`);
   }, []);
 
-  // #9b: Nhập dữ liệu từ file Excel (.xlsx), JSON (.json), XML (.xml)
   const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const count = await productApi.importFile(file);
-      toast.success(`Đã Import thành công ${count} sản phẩm từ file "${file.name}"`);
+      toast.success(`Đã nhập thành công ${count} bản ghi từ "${file.name}"`);
       await loadProducts();
     } catch {
-      toast.error('File Import không đúng định dạng (.xlsx, .json, .xml)');
+      toast.error('Tệp nhập vào không hợp lệ (.xlsx, .json, .xml)');
     } finally {
       e.target.value = '';
     }
   };
 
-  // Gợi ý AI #4: Trợ lý giọng nói tiếng Việt để tìm thuốc nhanh
   const handleVoiceSearch = () => {
     const SpeechRecognition =
       (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown })
@@ -249,7 +270,7 @@ export const ProductManagementPage: React.FC = () => {
       (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      toast.error('Trình duyệt của bạn không hỗ trợ Web Speech API');
+      toast.error('Trình duyệt không hỗ trợ nhận diện giọng nói');
       return;
     }
 
@@ -260,7 +281,7 @@ export const ProductManagementPage: React.FC = () => {
 
     recognition.onstart = () => {
       setIsListeningVoice(true);
-      toast.info('🎙️ Đang lắng nghe giọng nói tiếng Việt... Hãy đọc tên thuốc hoặc triệu chứng!');
+      toast.info('Đang nghe... Hãy đọc tên thuốc hoặc hoạt chất');
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -268,7 +289,6 @@ export const ProductManagementPage: React.FC = () => {
       const transcript = String(event.results?.[0]?.[0]?.transcript || '').trim();
       if (transcript) {
         setSearchInput(transcript.replace(/\.$/, ''));
-        toast.success(`Đã nhận diện giọng nói: "${transcript}"`);
       }
     };
 
@@ -279,9 +299,7 @@ export const ProductManagementPage: React.FC = () => {
     recognition.start();
   };
 
-  // ============================================================================
-  // #11: LẮNG NGHE PHÍM TẮT TOÀN CỤC (Alt + N, H, C, D, I, X, F, K, E, V)
-  // ============================================================================
+  // Phím tắt toàn cục
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (!e.altKey) return;
@@ -304,16 +322,12 @@ export const ProductManagementPage: React.FC = () => {
         if (selectedIds.length === 1) {
           const target = products.find((p) => p.ProductID === selectedIds[0]);
           if (target) void handleCloneOne(target);
-        } else {
-          toast.info('Tick chọn 1 dòng để bấm Alt+C (hoặc Alt+D để sao chép nhiều dòng)');
         }
       } else if (key === 'e') {
         e.preventDefault();
         if (selectedIds.length === 1) {
           const target = products.find((p) => p.ProductID === selectedIds[0]);
           if (target) handleOpenEdit(target);
-        } else {
-          toast.info('Tick chọn 1 dòng để bấm Alt+E sửa nhanh');
         }
       } else if (key === 'v') {
         e.preventDefault();
@@ -346,9 +360,20 @@ export const ProductManagementPage: React.FC = () => {
     products,
   ]);
 
-  // ============================================================================
-  // ĐỊNH NGHĨA 10 CỘT CHUẨN CỦA BẢNG PRODUCT (TANSTACK TABLE V8)
-  // ============================================================================
+  const renderSortIcon = useCallback(
+    (field: string) => {
+      if (sortBy !== field) {
+        return <ArrowUpDown className="h-3 w-3 text-zinc-400" />;
+      }
+      return sortOrder === 'asc' ? (
+        <ArrowUp className="h-3 w-3 text-zinc-900" />
+      ) : (
+        <ArrowDown className="h-3 w-3 text-zinc-900" />
+      );
+    },
+    [sortBy, sortOrder]
+  );
+
   const columns = useMemo<ColumnDef<Product>[]>(
     () => [
       {
@@ -358,7 +383,7 @@ export const ProductManagementPage: React.FC = () => {
             type="checkbox"
             checked={table.getIsAllPageRowsSelected()}
             onChange={table.getToggleAllPageRowsSelectedHandler()}
-            className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+            className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900 cursor-pointer"
           />
         ),
         cell: ({ row }) => (
@@ -366,16 +391,25 @@ export const ProductManagementPage: React.FC = () => {
             type="checkbox"
             checked={row.getIsSelected()}
             onChange={row.getToggleSelectedHandler()}
-            className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+            className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900 cursor-pointer"
           />
         ),
       },
       {
         accessorKey: 'ProductID',
-        header: 'Mã SP',
+        header: () => (
+          <button
+            type="button"
+            onClick={() => handleSortColumn('ProductID')}
+            className="inline-flex items-center gap-1 hover:text-zinc-900"
+          >
+            <span>Mã SKU</span>
+            {renderSortIcon('ProductID')}
+          </button>
+        ),
         cell: ({ row }) => (
-          <span className="font-mono text-xs font-bold text-slate-600">
-            #{row.original.ProductID}
+          <span className="font-mono text-xs font-medium text-zinc-500 tabular-nums">
+            #{String(row.original.ProductID).padStart(4, '0')}
           </span>
         ),
       },
@@ -386,23 +420,32 @@ export const ProductManagementPage: React.FC = () => {
           <img
             src={row.original.PathImage}
             alt={row.original.ProductName}
-            className="h-11 w-11 rounded-xl object-cover border border-slate-200 bg-slate-100"
+            className="h-9 w-9 rounded-md object-cover border border-zinc-200 bg-zinc-50"
           />
         ),
       },
       {
         accessorKey: 'ProductName',
-        header: 'Tên Thuốc (ProductName)',
+        header: () => (
+          <button
+            type="button"
+            onClick={() => handleSortColumn('ProductName')}
+            className="inline-flex items-center gap-1 hover:text-zinc-900"
+          >
+            <span>Dược phẩm</span>
+            {renderSortIcon('ProductName')}
+          </button>
+        ),
         cell: ({ row }) => (
-          <div className="max-w-xs">
+          <div className="max-w-[280px]">
             <button
               type="button"
               onClick={() => setViewingProduct(row.original)}
-              className="text-left font-bold text-slate-800 hover:text-teal-700 hover:underline line-clamp-1"
+              className="text-left text-[13px] font-medium text-zinc-900 hover:text-teal-700 transition-colors line-clamp-1"
             >
               {row.original.ProductName}
             </button>
-            <p className="text-xs text-slate-500 line-clamp-1 mt-0.5">
+            <p className="text-xs text-zinc-500 line-clamp-1 mt-0.5">
               {row.original.Description}
             </p>
           </div>
@@ -410,119 +453,147 @@ export const ProductManagementPage: React.FC = () => {
       },
       {
         accessorKey: 'ProductType',
-        header: 'Nhóm Thuốc',
+        header: 'Nhóm dược lý',
         cell: ({ row }) => (
-          <span className="inline-flex items-center rounded-full bg-teal-50 px-2.5 py-0.5 text-xs font-semibold text-teal-700 border border-teal-200">
+          <span className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
             {row.original.ProductType}
           </span>
         ),
       },
       {
         accessorKey: 'Quantity',
-        header: 'Số Lượng',
+        header: () => (
+          <button
+            type="button"
+            onClick={() => handleSortColumn('Quantity')}
+            className="inline-flex items-center gap-1 hover:text-zinc-900"
+          >
+            <span>Tồn kho</span>
+            {renderSortIcon('Quantity')}
+          </button>
+        ),
         cell: ({ row }) => {
           const qty = row.original.Quantity;
+          const isLow = qty > 0 && qty <= 60;
+          const isOut = qty === 0;
           return (
-            <span
-              className={`font-bold text-sm ${
-                qty <= 30 ? 'text-amber-600' : 'text-slate-800'
-              }`}
-            >
-              {qty.toLocaleString('vi-VN')}
-            </span>
+            <div className="inline-flex items-center gap-1.5 tabular-nums text-[13px]">
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  isOut ? 'bg-rose-500' : isLow ? 'bg-amber-500' : 'bg-emerald-500'
+                }`}
+              />
+              <span className="font-medium text-zinc-900">{qty.toLocaleString('vi-VN')}</span>
+            </div>
           );
         },
       },
       {
         accessorKey: 'Unit',
-        header: 'Đơn Vị',
+        header: 'Đơn vị',
         cell: ({ row }) => (
-          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
-            {row.original.Unit}
-          </span>
+          <span className="text-[13px] text-zinc-600">{row.original.Unit}</span>
         ),
       },
       {
         accessorKey: 'Price',
-        header: 'Đơn Giá',
+        header: () => (
+          <button
+            type="button"
+            onClick={() => handleSortColumn('Price')}
+            className="inline-flex items-center gap-1 hover:text-zinc-900"
+          >
+            <span>Giá bán lẻ</span>
+            {renderSortIcon('Price')}
+          </button>
+        ),
         cell: ({ row }) => (
-          <span className="font-extrabold text-teal-700 text-sm">
+          <span className="font-medium text-zinc-900 text-[13px] tabular-nums">
             {row.original.Price.toLocaleString('vi-VN')} ₫
           </span>
         ),
       },
       {
         accessorKey: 'Description',
-        header: 'Mô Tả Công Dụng',
+        header: 'Hoạt chất & Chỉ định',
         cell: ({ row }) => (
-          <p className="max-w-[220px] text-xs text-slate-600 line-clamp-2">
+          <p className="max-w-[220px] text-xs text-zinc-500 line-clamp-1">
             {row.original.Description}
           </p>
         ),
       },
       {
         accessorKey: 'CreateDate',
-        header: 'Ngày Tạo',
+        header: 'Ngày tạo',
         cell: ({ row }) => (
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-zinc-500 tabular-nums">
             {new Date(row.original.CreateDate).toLocaleDateString('vi-VN')}
           </span>
         ),
       },
       {
         accessorKey: 'UpdateDate',
-        header: 'Cập Nhật',
+        header: () => (
+          <button
+            type="button"
+            onClick={() => handleSortColumn('UpdateDate')}
+            className="inline-flex items-center gap-1 hover:text-zinc-900"
+          >
+            <span>Cập nhật</span>
+            {renderSortIcon('UpdateDate')}
+          </button>
+        ),
         cell: ({ row }) => (
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-zinc-500 tabular-nums">
             {new Date(row.original.UpdateDate).toLocaleDateString('vi-VN')}
           </span>
         ),
       },
       {
         id: 'actions',
-        header: 'Thao Tác CRUD',
+        header: () => <span className="sr-only">Thao tác</span>,
         cell: ({ row }) => {
           const item = row.original;
           return (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center justify-end gap-0.5">
               <button
                 type="button"
                 onClick={() => setViewingProduct(item)}
                 title="Xem chi tiết (Alt+V)"
-                className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-teal-700"
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
               >
-                <Eye className="h-4 w-4" />
+                <Eye className="h-3.5 w-3.5" />
               </button>
               <button
                 type="button"
                 onClick={() => handleOpenEdit(item)}
-                title="Cập nhật (Alt+E)"
-                className="rounded-lg p-1.5 text-slate-600 hover:bg-blue-50 hover:text-blue-600"
+                title="Chỉnh sửa (Alt+E)"
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
               >
-                <Edit3 className="h-4 w-4" />
+                <Pencil className="h-3.5 w-3.5" />
               </button>
               <button
                 type="button"
                 onClick={() => void handleCloneOne(item)}
-                title="Sao chép 1 bản ghi (Alt+C)"
-                className="rounded-lg p-1.5 text-slate-600 hover:bg-teal-50 hover:text-teal-700"
+                title="Nhân bản (Alt+C)"
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
               >
-                <Copy className="h-4 w-4" />
+                <Copy className="h-3.5 w-3.5" />
               </button>
               <button
                 type="button"
                 onClick={() => void handleDeleteOne(item)}
-                title="Xóa bản ghi (Alt+H)"
-                className="rounded-lg p-1.5 text-slate-600 hover:bg-rose-50 hover:text-rose-600"
+                title="Xóa sản phẩm (Alt+H)"
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-3.5 w-3.5" />
               </button>
             </div>
           );
         },
       },
     ],
-    [handleOpenEdit, handleCloneOne, handleDeleteOne]
+    [handleOpenEdit, handleCloneOne, handleDeleteOne, handleSortColumn, renderSortIcon]
   );
 
   const table = useReactTable({
@@ -539,25 +610,19 @@ export const ProductManagementPage: React.FC = () => {
   });
 
   return (
-    <div className="space-y-5 pb-16">
-      {/* Thanh tiêu đề & Nút chức năng chính */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 rounded-2xl bg-white p-5 shadow-sm border border-slate-200">
+    <div className="space-y-5">
+      {/* Header khu vực quản lý kho */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-extrabold text-slate-900">
-              Quản Lý Danh Mục Dược Phẩm (Module Product)
-            </h1>
-            <span className="rounded-full bg-teal-100 px-3 py-0.5 text-xs font-bold text-teal-800">
-              {total} sản phẩm
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Đáp ứng đầy đủ 10 trường chuẩn & 11 chức năng CRUD nâng cao theo yêu cầu Bài tập lớn
+          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
+            Danh mục dược phẩm & vật tư
+          </h1>
+          <p className="text-[13px] text-zinc-500 mt-0.5">
+            Quản lý tồn kho, định mức đơn vị quy đổi và đồng bộ dữ liệu danh mục
           </p>
         </div>
 
-        {/* Cụm nút Import / Export / Ẩn hiện cột / Thêm mới */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -569,204 +634,211 @@ export const ProductManagementPage: React.FC = () => {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-            title="Import từ file Excel, JSON, XML (Phím tắt: Alt + I)"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.02)] hover:bg-zinc-50 transition-colors"
           >
-            <Upload className="h-4 w-4 text-teal-600" />
-            <span>Import (Alt+I)</span>
+            <Upload className="h-3.5 w-3.5 text-zinc-500" strokeWidth={1.75} />
+            <span>Nhập dữ liệu</span>
           </button>
 
-          {/* Menu Dropdown Export 3 định dạng */}
           <div className="relative">
             <button
               type="button"
               onClick={() => setIsExportMenuOpen((prev) => !prev)}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.02)] hover:bg-zinc-50 transition-colors"
             >
-              <Download className="h-4 w-4 text-blue-600" />
-              <span>Export (Alt+X)</span>
+              <Download className="h-3.5 w-3.5 text-zinc-500" strokeWidth={1.75} />
+              <span>Xuất tệp</span>
             </button>
 
             {isExportMenuOpen && (
-              <div className="absolute right-0 mt-2 w-52 rounded-2xl bg-white p-2 shadow-xl border border-slate-200 z-40 space-y-1">
+              <div className="absolute right-0 mt-1.5 w-48 rounded-lg bg-white p-1 shadow-lg border border-zinc-200 z-40">
                 <button
                   type="button"
                   onClick={() => handleExport('xlsx')}
-                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-teal-50 hover:text-teal-700"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-700 hover:bg-zinc-100"
                 >
-                  <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
-                  <span>Xuất file Excel (.xlsx)</span>
+                  <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                  <span>Bảng tính Excel (.xlsx)</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleExport('json')}
-                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-teal-50 hover:text-teal-700"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-700 hover:bg-zinc-100"
                 >
-                  <FileJson className="h-4 w-4 text-amber-600" />
-                  <span>Xuất file JSON (.json)</span>
+                  <FileJson className="h-3.5 w-3.5 text-amber-600" />
+                  <span>Định dạng JSON (.json)</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleExport('xml')}
-                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-teal-50 hover:text-teal-700"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-700 hover:bg-zinc-100"
                 >
-                  <FileCode className="h-4 w-4 text-indigo-600" />
-                  <span>Xuất file XML (.xml)</span>
+                  <FileCode className="h-3.5 w-3.5 text-blue-600" />
+                  <span>Tài liệu XML (.xml)</span>
                 </button>
               </div>
             )}
           </div>
 
-          {/* #10: Cấu hình Ẩn/Hiện cột */}
-          <ColumnVisibilityMenu
-            table={table}
-            isOpen={isColumnMenuOpen}
-            onToggle={() => setIsColumnMenuOpen((prev) => !prev)}
-          />
-
-          {/* #2: Thêm mới */}
           <button
             type="button"
             onClick={handleOpenCreate}
-            className="inline-flex items-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-teal-700"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3.5 text-[13px] font-medium text-white shadow-sm hover:bg-zinc-800 transition-colors"
           >
-            <Plus className="h-4 w-4" />
-            <span>Thêm Thuốc Mới (Alt+N)</span>
+            <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+            <span>Thêm dược phẩm</span>
           </button>
         </div>
       </div>
 
-      {/* Thanh Tìm kiếm Meilisearch/Fuse.js + Trợ lý Giọng nói + Bộ lọc */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 rounded-2xl bg-white p-4 shadow-sm border border-slate-200">
-        <div className="lg:col-span-6 relative flex items-center">
-          <Search className="h-4 w-4 text-slate-400 absolute left-3.5 pointer-events-none" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Tìm theo tên thuốc, hoạt chất, triệu chứng, mã SP (chấp nhận gõ sai chính tả VD: paracetamon)... [Alt+F]"
-            className="w-full rounded-xl border border-slate-300 pl-10 pr-24 py-2 text-sm focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
-          />
-          <button
-            type="button"
-            onClick={handleVoiceSearch}
-            title="Tìm kiếm bằng Giọng nói Tiếng Việt (Gợi ý AI #4)"
-            className={`absolute right-2 inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-              isListeningVoice
-                ? 'bg-rose-600 text-white animate-pulse'
-                : 'bg-slate-100 text-slate-700 hover:bg-teal-50 hover:text-teal-700'
-            }`}
-          >
-            <Mic className="h-3.5 w-3.5" />
-            <span>Giọng nói</span>
-          </button>
-        </div>
-
-        <div className="lg:col-span-3">
-          <select
-            value={selectedType}
-            onChange={(e) => {
-              setSelectedType(e.target.value);
-              setPage(1);
-            }}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:border-teal-600 focus:outline-none"
-          >
-            <option value="ALL">Tất cả nhóm thuốc (ProductType)</option>
-            {availableTypes.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="lg:col-span-3 flex items-center gap-2">
-          <select
-            value={selectedUnit}
-            onChange={(e) => {
-              setSelectedUnit(e.target.value);
-              setPage(1);
-            }}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:border-teal-600 focus:outline-none"
-          >
-            <option value="ALL">Tất cả đơn vị (Unit)</option>
-            {availableUnits.map((u) => (
-              <option key={u} value={u}>
-                {u}
-              </option>
-            ))}
-          </select>
-
-          <button
-            type="button"
-            onClick={() => {
-              setSearchInput('');
-              setSelectedType('ALL');
-              setSelectedUnit('ALL');
-              setPage(1);
-            }}
-            title="Làm mới bộ lọc"
-            className="rounded-xl border border-slate-300 p-2 text-slate-600 hover:bg-slate-50"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Badge hiển thị Engine tìm kiếm AI (#8) */}
-        {debouncedSearch && searchEngineInfo && (
-          <div className="lg:col-span-12 flex items-center gap-2 text-xs text-teal-700 bg-teal-50/80 border border-teal-200 rounded-xl px-3.5 py-2">
-            <Sparkles className="h-4 w-4 shrink-0" />
-            <span>
-              Đang kích hoạt <strong>Tìm kiếm thông minh Typo-Tolerant</strong> (Engine:{' '}
-              <code className="font-mono font-bold uppercase">{searchEngineInfo.engine}</code> — Thời
-              gian phản hồi: <strong>{searchEngineInfo.processingTimeMs}ms</strong>). Tìm thấy{' '}
-              <strong>{total}</strong> kết quả khớp với <em>"{debouncedSearch}"</em>.
-            </span>
+      {/* 4 Thẻ KPI Tổng quan kho (Chuẩn shadcn-admin) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+            <span>Tổng mã dược phẩm</span>
+            <Package className="h-4 w-4 text-zinc-400" strokeWidth={1.75} />
           </div>
-        )}
+          <div className="mt-2 text-xl font-semibold text-zinc-900 tabular-nums">{total}</div>
+          <div className="mt-1 text-xs text-zinc-400">Đang lưu hành trong hệ thống</div>
+        </div>
+
+        <div className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+            <span>Giá trị tồn kho trang hiện tại</span>
+            <Wallet className="h-4 w-4 text-zinc-400" strokeWidth={1.75} />
+          </div>
+          <div className="mt-2 text-xl font-semibold text-zinc-900 tabular-nums">
+            {metrics.pageInventoryValue.toLocaleString('vi-VN')} ₫
+          </div>
+          <div className="mt-1 text-xs text-zinc-400">Tính theo giá niêm yết bán lẻ</div>
+        </div>
+
+        <div className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+            <span>Nhóm dược lý</span>
+            <Layers className="h-4 w-4 text-zinc-400" strokeWidth={1.75} />
+          </div>
+          <div className="mt-2 text-xl font-semibold text-zinc-900 tabular-nums">
+            {metrics.categoryCount}
+          </div>
+          <div className="mt-1 text-xs text-zinc-400">Phân nhóm theo danh mục chuẩn</div>
+        </div>
+
+        <div className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+            <span>Cần nhập bổ sung</span>
+            <AlertCircle className="h-4 w-4 text-amber-500" strokeWidth={1.75} />
+          </div>
+          <div className="mt-2 text-xl font-semibold text-zinc-900 tabular-nums">
+            {metrics.lowStockCount}
+          </div>
+          <div className="mt-1 text-xs text-zinc-400">Mặt hàng có tồn kho dưới định mức</div>
+        </div>
       </div>
 
-      {/* Thanh Thao tác Hàng loạt khi tick Checkbox (Yêu cầu #5b & #8) */}
-      {selectedIds.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-900 px-5 py-3 text-white shadow-lg">
-          <div className="text-xs font-semibold">
-            Đã chọn <span className="text-teal-400 font-bold text-sm">{selectedIds.length}</span> bản
-            ghi từ ô Checkbox (Mã: {selectedIds.map((id) => `#${id}`).join(', ')})
+      {/* Khối Data Grid (Toolbar + Bảng + Pagination) */}
+      <div className="rounded-lg border border-zinc-200/80 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+        {/* Toolbar lọc & tìm kiếm */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5 border-b border-zinc-200/80 p-3.5">
+          <div className="flex flex-1 flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[240px] max-w-md">
+              <Search className="h-3.5 w-3.5 text-zinc-400 absolute left-3 top-2.5 pointer-events-none" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Tìm theo tên thuốc, hoạt chất, mã SKU..."
+                className="w-full h-9 rounded-md border border-zinc-200 bg-zinc-50/50 pl-8 pr-9 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:bg-white focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleVoiceSearch}
+                title="Tìm kiếm bằng giọng nói"
+                className={`absolute right-1.5 top-1.5 rounded p-1 transition-colors ${
+                  isListeningVoice
+                    ? 'bg-rose-500 text-white animate-pulse'
+                    : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700'
+                }`}
+              >
+                <Mic className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <select
+              value={selectedType}
+              onChange={(e) => {
+                setSelectedType(e.target.value);
+                setPage(1);
+              }}
+              className="h-9 rounded-md border border-zinc-200 bg-white px-2.5 text-[13px] text-zinc-700 focus:border-zinc-900 focus:outline-none"
+            >
+              <option value="ALL">Tất cả nhóm dược lý</option>
+              {availableTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={selectedUnit}
+              onChange={(e) => {
+                setSelectedUnit(e.target.value);
+                setPage(1);
+              }}
+              className="h-9 rounded-md border border-zinc-200 bg-white px-2.5 text-[13px] text-zinc-700 focus:border-zinc-900 focus:outline-none"
+            >
+              <option value="ALL">Đơn vị tính</option>
+              {availableUnits.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </select>
+
+            {(searchInput || selectedType !== 'ALL' || selectedUnit !== 'ALL') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchInput('');
+                  setSelectedType('ALL');
+                  setSelectedUnit('ALL');
+                  setPage(1);
+                }}
+                className="inline-flex h-9 items-center gap-1 rounded-md px-2.5 text-xs font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span>Đặt lại</span>
+              </button>
+            )}
           </div>
-          <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => void handleBulkClone()}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-teal-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-teal-500"
-            >
-              <Copy className="h-3.5 w-3.5" />
-              <span>Sao chép {selectedIds.length} bản ghi (Alt+D)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleBulkDelete()}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-rose-500"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span>Xóa {selectedIds.length} bản ghi (Alt+H)</span>
-            </button>
+
+          <div className="flex items-center gap-2">
+            {debouncedSearch && searchEngineInfo && (
+              <span className="text-xs text-zinc-400 tabular-nums">
+                {total} kết quả ({searchEngineInfo.processingTimeMs}ms)
+              </span>
+            )}
+            <ColumnVisibilityMenu
+              table={table}
+              isOpen={isColumnMenuOpen}
+              onToggle={() => setIsColumnMenuOpen((prev) => !prev)}
+            />
           </div>
         </div>
-      )}
 
-      {/* Bảng dữ liệu chính TanStack Table */}
-      <div className="rounded-2xl bg-white shadow-sm border border-slate-200 overflow-hidden">
+        {/* Table Content */}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr
                   key={headerGroup.id}
-                  className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-bold uppercase tracking-wider text-slate-500"
+                  className="border-b border-zinc-200/80 bg-zinc-50/60 text-xs font-medium text-zinc-500"
                 >
                   {headerGroup.headers.map((header) => (
-                    <th key={header.id} className="px-4 py-3.5 whitespace-nowrap">
+                    <th key={header.id} className="h-10 px-4 whitespace-nowrap font-medium">
                       {header.isPlaceholder
                         ? null
                         : flexRender(header.column.columnDef.header, header.getContext())}
@@ -775,29 +847,29 @@ export const ProductManagementPage: React.FC = () => {
                 </tr>
               ))}
             </thead>
-            <tbody className="divide-y divide-slate-100 text-sm">
+            <tbody className="divide-y divide-zinc-200/60 text-[13px]">
               {loading ? (
                 <tr>
-                  <td colSpan={columns.length} className="py-12 text-center text-slate-400">
-                    Đang tải dữ liệu bảng Product...
+                  <td colSpan={columns.length} className="py-12 text-center text-zinc-400">
+                    Đang tải dữ liệu...
                   </td>
                 </tr>
               ) : table.getRowModel().rows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="py-12 text-center text-slate-500">
-                    Không tìm thấy sản phẩm thuốc nào khớp với tiêu chí tìm kiếm.
+                  <td colSpan={columns.length} className="py-12 text-center text-zinc-500">
+                    Không tìm thấy dược phẩm phù hợp với bộ lọc hiện tại.
                   </td>
                 </tr>
               ) : (
                 table.getRowModel().rows.map((row) => (
                   <tr
                     key={row.id}
-                    className={`transition hover:bg-slate-50/90 ${
-                      row.getIsSelected() ? 'bg-teal-50/60' : ''
+                    className={`transition-colors hover:bg-zinc-50/80 ${
+                      row.getIsSelected() ? 'bg-zinc-100/70' : ''
                     }`}
                   >
                     {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-3 align-middle">
+                      <td key={cell.id} className="px-4 py-2.5 align-middle">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
@@ -808,34 +880,34 @@ export const ProductManagementPage: React.FC = () => {
           </table>
         </div>
 
-        {/* Thanh Phân Trang (Yêu cầu #1: 10 - 15 item in page) */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-slate-200 bg-slate-50/50 px-5 py-3.5">
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <span>Hiển thị:</span>
+        {/* Footer Phân trang */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-zinc-200/80 px-4 py-3 text-xs text-zinc-500">
+          <div className="flex items-center gap-2">
+            <span>Số dòng hiển thị</span>
             <select
               value={limit}
               onChange={(e) => {
                 setLimit(Number(e.target.value));
                 setPage(1);
               }}
-              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-800 focus:border-teal-600 focus:outline-none"
+              className="h-7 rounded border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-800 focus:border-zinc-900 focus:outline-none"
             >
-              <option value={10}>10 dòng / trang (Chuẩn đề bài)</option>
-              <option value={12}>12 dòng / trang</option>
-              <option value={15}>15 dòng / trang (Chuẩn đề bài)</option>
+              <option value={10}>10</option>
+              <option value={12}>12</option>
+              <option value={15}>15</option>
             </select>
-            <span className="text-slate-400">|</span>
-            <span>
-              Tổng số: <strong className="text-slate-800">{total}</strong> bản ghi
+            <span className="text-zinc-300">|</span>
+            <span className="tabular-nums">
+              Trang <strong className="text-zinc-800">{page}</strong> / {totalPages} ({total} sản phẩm)
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               disabled={page <= 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              className="inline-flex h-7 items-center gap-1 rounded border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
               <span>Trước</span>
@@ -846,10 +918,10 @@ export const ProductManagementPage: React.FC = () => {
                 key={pageNum}
                 type="button"
                 onClick={() => setPage(pageNum)}
-                className={`h-8 w-8 rounded-lg text-xs font-bold transition ${
+                className={`h-7 min-w-[28px] rounded px-2 text-xs font-medium tabular-nums transition-colors ${
                   pageNum === page
-                    ? 'bg-teal-600 text-white shadow-sm'
-                    : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                    ? 'bg-zinc-900 text-white'
+                    : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
                 }`}
               >
                 {pageNum}
@@ -860,7 +932,7 @@ export const ProductManagementPage: React.FC = () => {
               type="button"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              className="inline-flex h-7 items-center gap-1 rounded border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
             >
               <span>Sau</span>
               <ChevronRight className="h-3.5 w-3.5" />
@@ -869,7 +941,7 @@ export const ProductManagementPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Modal Thêm / Cập nhật Thuốc */}
+      {/* Modal Thêm / Sửa */}
       <ProductFormModal
         isOpen={isFormOpen}
         editingProduct={editingProduct}
@@ -877,7 +949,7 @@ export const ProductManagementPage: React.FC = () => {
         onSubmit={handleFormSubmit}
       />
 
-      {/* Modal Xem Chi Tiết Thuốc */}
+      {/* Modal Chi tiết */}
       <ProductDetailModal
         product={viewingProduct}
         onClose={() => setViewingProduct(null)}
@@ -885,7 +957,7 @@ export const ProductManagementPage: React.FC = () => {
         onClone={(item) => void handleCloneOne(item)}
       />
 
-      {/* Thanh Phím Tắt CRUD cố định ở đáy màn hình (#11) */}
+      {/* Floating Bulk Action Bar khi chọn Checkbox */}
       <ShortcutLegendBar
         onNew={handleOpenCreate}
         onFocusSearch={() => searchInputRef.current?.focus()}
@@ -895,6 +967,7 @@ export const ProductManagementPage: React.FC = () => {
         onImport={() => fileInputRef.current?.click()}
         onExportExcel={() => handleExport('xlsx')}
         selectedCount={selectedIds.length}
+        onClearSelection={() => setRowSelection({})}
       />
     </div>
   );

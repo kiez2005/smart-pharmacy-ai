@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Receipt,
-  CreditCard,
   Plus,
   Trash2,
   QrCode,
   Banknote,
-  CheckCircle2,
+  CreditCard,
   Search,
+  Check,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Product } from '../types/product';
@@ -26,13 +25,11 @@ export const InvoicePaymentPage: React.FC = () => {
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [searchTerm, setSearchTerm] = useState<string>('');
 
-  // Form Lập Hóa Đơn (Form 5)
   const [customerName, setCustomerName] = useState<string>('');
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [note, setNote] = useState<string>('');
   const [cart, setCart] = useState<CartLineItem[]>([]);
 
-  // Form Thanh Toán (Form 6)
   const [paymentMethod, setPaymentMethod] = useState<'VIETQR' | 'CASH' | 'CARD'>('VIETQR');
   const [submitting, setSubmitting] = useState<boolean>(false);
 
@@ -45,7 +42,7 @@ export const InvoicePaymentPage: React.FC = () => {
       setProducts(prodRes.items);
       setInvoices(invRes);
     } catch {
-      toast.error('Không thể tải dữ liệu thuốc và hóa đơn');
+      toast.error('Không thể tải dữ liệu bán hàng');
     }
   };
 
@@ -55,7 +52,7 @@ export const InvoicePaymentPage: React.FC = () => {
 
   const filteredProducts = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return products.slice(0, 12);
+    if (!q) return products.slice(0, 14);
     return products.filter(
       (p) =>
         p.ProductName.toLowerCase().includes(q) ||
@@ -71,7 +68,7 @@ export const InvoicePaymentPage: React.FC = () => {
 
   const handleAddToCart = (product: Product) => {
     if (product.Quantity <= 0) {
-      toast.warning(`Thuốc "${product.ProductName}" đã hết hàng trong kho!`);
+      toast.warning(`"${product.ProductName}" hiện đã hết tồn kho`);
       return;
     }
     setCart((prev) => {
@@ -101,11 +98,11 @@ export const InvoicePaymentPage: React.FC = () => {
   const handleCreateInvoiceAndPay = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName.trim()) {
-      toast.warning('Vui lòng nhập tên khách hàng / bệnh nhân');
+      toast.warning('Vui lòng nhập họ tên khách hàng');
       return;
     }
     if (cart.length === 0) {
-      toast.warning('Vui lòng chọn ít nhất 1 loại thuốc vào hóa đơn');
+      toast.warning('Chưa có sản phẩm nào trong phiếu bán hàng');
       return;
     }
 
@@ -124,7 +121,7 @@ export const InvoicePaymentPage: React.FC = () => {
       });
 
       toast.success(
-        `Đã lập hóa đơn ${created.InvoiceCode} (${totalAmount.toLocaleString('vi-VN')} ₫) và trừ tồn kho thành công!`
+        `Đã hoàn tất đơn ${created.InvoiceCode} (${totalAmount.toLocaleString('vi-VN')} ₫)`
       );
       setCustomerName('');
       setCustomerPhone('');
@@ -134,7 +131,7 @@ export const InvoicePaymentPage: React.FC = () => {
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Lỗi khi lập hóa đơn';
+        'Không thể tạo hóa đơn';
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -142,136 +139,144 @@ export const InvoicePaymentPage: React.FC = () => {
   };
 
   const vietQrUrl = `https://img.vietqr.io/image/MB-0988123456-compact2.png?amount=${totalAmount}&addInfo=${encodeURIComponent(
-    `THANH TOAN THUOC ${customerName || 'KHACH LE'}`
-  )}&accountName=${encodeURIComponent('NHA THUOC SMART PHARMACY')}`;
+    `PHARMACORE ${customerName || 'KHACH LE'}`
+  )}&accountName=${encodeURIComponent('PHARMACORE PHARMACY')}`;
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* CỘT TRÁI: CHỌN THUỐC TỪ KHO */}
-        <div className="lg:col-span-5 rounded-2xl bg-white p-5 shadow-sm border border-slate-200 space-y-4">
+      <div>
+        <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
+          Bán hàng tại quầy (POS) & Thanh toán
+        </h1>
+        <p className="text-[13px] text-zinc-500 mt-0.5">
+          Kê đơn bán lẻ, tự động khấu trừ tồn kho và đối soát thanh toán thời gian thực
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* VÙNG TRÁI: TRA CỨU & CHỌN NHANH DƯỢC PHẨM */}
+        <div className="lg:col-span-5 rounded-lg bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)] border border-zinc-200/80 space-y-3.5">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-extrabold text-slate-900">
-              1. Chọn Thuốc Từ Kho Dược Phẩm
-            </h2>
-            <span className="text-xs font-semibold text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full">
-              {products.length} mặt hàng
-            </span>
+            <h2 className="text-sm font-semibold text-zinc-900">Danh mục xuất bán</h2>
+            <span className="text-xs text-zinc-400 tabular-nums">{products.length} sản phẩm</span>
           </div>
 
           <div className="relative">
-            <Search className="h-4 w-4 text-slate-400 absolute left-3.5 top-2.5" />
+            <Search className="h-3.5 w-3.5 text-zinc-400 absolute left-3 top-2.5" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Tìm nhanh thuốc để thêm vào đơn..."
-              className="w-full rounded-xl border border-slate-300 pl-9 pr-3 py-2 text-sm focus:border-teal-600 focus:outline-none"
+              placeholder="Tìm tên thuốc hoặc hoạt chất..."
+              className="w-full h-9 rounded-md border border-zinc-200 bg-zinc-50/50 pl-8 pr-3 text-[13px] focus:border-zinc-900 focus:bg-white focus:outline-none"
             />
           </div>
 
-          <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+          <div className="divide-y divide-zinc-100 max-h-[460px] overflow-y-auto pr-1">
             {filteredProducts.map((product) => (
               <div
                 key={product.ProductID}
-                className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3 hover:border-teal-400 transition"
+                className="flex items-center justify-between gap-3 py-2.5 px-1 hover:bg-zinc-50/80 transition-colors"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="font-bold text-sm text-slate-800 truncate">
+                  <div className="font-medium text-[13px] text-zinc-900 truncate">
                     {product.ProductName}
                   </div>
-                  <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                    <span className="font-bold text-teal-700">
+                  <div className="text-xs text-zinc-500 flex items-center gap-2 mt-0.5 tabular-nums">
+                    <span className="font-medium text-zinc-800">
                       {product.Price.toLocaleString('vi-VN')} ₫/{product.Unit}
                     </span>
-                    <span>•</span>
-                    <span>Tồn kho: {product.Quantity}</span>
+                    <span className="text-zinc-300">•</span>
+                    <span>Tồn: {product.Quantity}</span>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleAddToCart(product)}
-                  className="inline-flex items-center gap-1 rounded-xl bg-teal-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-teal-700 shrink-0"
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-900 hover:text-white hover:border-zinc-900 transition-colors shrink-0"
                 >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>Chọn</span>
+                  <Plus className="h-3 w-3" />
+                  <span>Thêm</span>
                 </button>
               </div>
             ))}
           </div>
         </div>
 
-        {/* CỘT PHẢI: FORM HÓA ĐƠN (FORM 5) & FORM THANH TOÁN (FORM 6) */}
+        {/* VÙNG PHẢI: PHIẾU BÁN HÀNG & THANH TOÁN */}
         <form
           onSubmit={handleCreateInvoiceAndPay}
-          className="lg:col-span-7 rounded-2xl bg-white p-5 shadow-sm border border-slate-200 space-y-5"
+          className="lg:col-span-7 rounded-lg bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.02)] border border-zinc-200/80 space-y-5"
         >
-          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-            <Receipt className="h-5 w-5 text-teal-600" />
-            <h2 className="text-base font-extrabold text-slate-900">
-              2. Form Lập Hóa Đơn Bán Thuốc (POS) & Form Thanh Toán
-            </h2>
+          <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+            <h2 className="text-sm font-semibold text-zinc-900">Phiếu xuất bán lẻ & Thanh toán</h2>
+            <span className="text-xs text-zinc-400">Tự động trừ kho sau khi xác nhận</span>
           </div>
 
-          {/* Thông tin bệnh nhân / khách hàng */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
-                Họ tên Bệnh nhân / Khách hàng *
+              <label className="block text-xs font-medium text-zinc-700 mb-1">
+                Khách hàng / Bệnh nhân <span className="text-rose-500">*</span>
               </label>
               <input
                 type="text"
                 required
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
-                placeholder="VD: Nguyễn Thị Lan Anh"
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-teal-600 focus:outline-none"
+                placeholder="Nhập họ tên khách hàng"
+                className="w-full h-9 rounded-md border border-zinc-200 px-3 text-[13px] focus:border-zinc-900 focus:outline-none"
               />
             </div>
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
-                Số điện thoại liên hệ
+              <label className="block text-xs font-medium text-zinc-700 mb-1">
+                Số điện thoại
               </label>
               <input
                 type="text"
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(e.target.value)}
-                placeholder="VD: 0912345678"
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-teal-600 focus:outline-none"
+                placeholder="0912..."
+                className="w-full h-9 rounded-md border border-zinc-200 px-3 text-[13px] tabular-nums focus:border-zinc-900 focus:outline-none"
               />
             </div>
             <div className="sm:col-span-2">
-              <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
-                Ghi chú chẩn đoán / triệu chứng lâm sàng
+              <label className="block text-xs font-medium text-zinc-700 mb-1">
+                Ghi chú lâm sàng / Lưu ý đơn thuốc
               </label>
               <input
                 type="text"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="VD: Đau họng, sốt nhẹ 38 độ, không dị ứng kháng sinh..."
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-teal-600 focus:outline-none"
+                placeholder="Nhập ghi chú triệu chứng hoặc hướng dẫn sử dụng chung..."
+                className="w-full h-9 rounded-md border border-zinc-200 px-3 text-[13px] focus:border-zinc-900 focus:outline-none"
               />
             </div>
           </div>
 
-          {/* Danh sách thuốc trong hóa đơn */}
           <div className="space-y-2">
-            <div className="text-xs font-bold uppercase text-slate-500">
-              Chi tiết đơn thuốc ({cart.length} mặt hàng)
+            <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+              <span>Danh mục sản phẩm trong đơn ({cart.length})</span>
+              {cart.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setCart([])}
+                  className="text-xs text-zinc-500 hover:text-zinc-900"
+                >
+                  Làm trống đơn
+                </button>
+              )}
             </div>
+
             {cart.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-xs text-slate-400">
-                Chưa có thuốc nào trong hóa đơn. Hãy bấm nút "Chọn" ở danh sách bên trái.
+              <div className="rounded-md border border-dashed border-zinc-200 py-8 text-center text-xs text-zinc-400">
+                Chọn dược phẩm từ danh mục bên trái để thêm vào phiếu bán hàng
               </div>
             ) : (
-              <div className="space-y-2 max-h-60 overflow-y-auto">
+              <div className="divide-y divide-zinc-200/70 rounded-md border border-zinc-200 max-h-60 overflow-y-auto">
                 {cart.map((line) => (
-                  <div
-                    key={line.product.ProductID}
-                    className="rounded-xl bg-slate-50 p-3 border border-slate-200 space-y-2"
-                  >
+                  <div key={line.product.ProductID} className="p-3 space-y-2 bg-white">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-sm text-slate-800">
+                      <span className="font-medium text-[13px] text-zinc-900">
                         {line.product.ProductName}
                       </span>
                       <div className="flex items-center gap-2">
@@ -290,18 +295,18 @@ export const InvoicePaymentPage: React.FC = () => {
                               )
                             );
                           }}
-                          className="w-16 rounded-lg border border-slate-300 px-2 py-1 text-center text-xs font-bold"
+                          className="h-7 w-14 rounded border border-zinc-200 px-2 text-center text-xs font-medium tabular-nums"
                         />
-                        <span className="text-xs text-slate-500">{line.product.Unit}</span>
-                        <span className="text-xs font-extrabold text-teal-700 w-24 text-right">
+                        <span className="text-xs text-zinc-500 w-8">{line.product.Unit}</span>
+                        <span className="text-[13px] font-medium text-zinc-900 w-24 text-right tabular-nums">
                           {(line.product.Price * line.quantity).toLocaleString('vi-VN')} ₫
                         </span>
                         <button
                           type="button"
                           onClick={() => handleRemoveCartItem(line.product.ProductID)}
-                          className="text-rose-500 hover:text-rose-700 p-1"
+                          className="text-zinc-400 hover:text-rose-600 p-1"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     </div>
@@ -318,8 +323,8 @@ export const InvoicePaymentPage: React.FC = () => {
                           )
                         );
                       }}
-                      placeholder="Chỉ dẫn liều dùng (VD: Sáng 1 viên, Tối 1 viên sau ăn)"
-                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600"
+                      placeholder="Liều dùng..."
+                      className="w-full h-7 rounded border border-zinc-200 bg-zinc-50/60 px-2.5 text-xs text-zinc-600 focus:bg-white focus:outline-none"
                     />
                   </div>
                 ))}
@@ -327,23 +332,20 @@ export const InvoicePaymentPage: React.FC = () => {
             )}
           </div>
 
-          {/* FORM THANH TOÁN (FORM 6) */}
-          <div className="rounded-2xl bg-slate-900 p-4 text-white space-y-4">
+          {/* KHU VỰC THANH TOÁN */}
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50/70 p-4 space-y-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-teal-400">
-                <CreditCard className="h-4 w-4" />
-                <span>Phương Thức Thanh Toán (Form Thanh Toán)</span>
-              </div>
-              <div className="text-lg font-extrabold text-teal-300">
-                Tổng cộng: {totalAmount.toLocaleString('vi-VN')} ₫
+              <span className="text-xs font-medium text-zinc-600">Phương thức thanh toán</span>
+              <div className="text-base font-semibold text-zinc-900 tabular-nums">
+                Tổng thanh toán: {totalAmount.toLocaleString('vi-VN')} ₫
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-3 gap-2">
               {[
-                { id: 'VIETQR', label: 'Chuyển khoản VietQR', icon: QrCode },
-                { id: 'CASH', label: 'Tiền mặt tại quầy', icon: Banknote },
-                { id: 'CARD', label: 'Thẻ ATM / Visa', icon: CreditCard },
+                { id: 'VIETQR', label: 'Chuyển khoản QR', icon: QrCode },
+                { id: 'CASH', label: 'Tiền mặt', icon: Banknote },
+                { id: 'CARD', label: 'Thẻ ngân hàng', icon: CreditCard },
               ].map((m) => {
                 const Icon = m.icon;
                 const active = paymentMethod === m.id;
@@ -352,13 +354,13 @@ export const InvoicePaymentPage: React.FC = () => {
                     key={m.id}
                     type="button"
                     onClick={() => setPaymentMethod(m.id as 'VIETQR' | 'CASH' | 'CARD')}
-                    className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-xs font-bold border transition ${
+                    className={`flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium border transition-colors ${
                       active
-                        ? 'bg-teal-600 border-teal-400 text-white shadow'
-                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                        ? 'bg-zinc-900 border-zinc-900 text-white'
+                        : 'bg-white border-zinc-200 text-zinc-700 hover:bg-zinc-100'
                     }`}
                   >
-                    <Icon className="h-4 w-4" />
+                    <Icon className="h-3.5 w-3.5" />
                     <span>{m.label}</span>
                   </button>
                 );
@@ -366,21 +368,21 @@ export const InvoicePaymentPage: React.FC = () => {
             </div>
 
             {paymentMethod === 'VIETQR' && totalAmount > 0 && (
-              <div className="flex flex-col sm:flex-row items-center gap-4 rounded-xl bg-white p-3 text-slate-800">
+              <div className="flex items-center gap-4 rounded-md bg-white p-3 border border-zinc-200">
                 <img
                   src={vietQrUrl}
-                  alt="VietQR Payment"
-                  className="h-32 w-32 rounded-lg border border-slate-200 object-contain shrink-0"
+                  alt="VietQR"
+                  className="h-28 w-28 rounded border border-zinc-100 object-contain shrink-0"
                 />
-                <div className="text-xs space-y-1">
-                  <div className="font-extrabold text-teal-700 text-sm">
-                    Mã QR Thanh Toán Động (VietQR)
+                <div className="text-xs space-y-1 text-zinc-600">
+                  <div className="font-semibold text-zinc-900 text-[13px]">
+                    Quét mã VietQR để thanh toán
                   </div>
-                  <p className="text-slate-600">
-                    Số tiền tự động điền: <strong>{totalAmount.toLocaleString('vi-VN')} VNĐ</strong>
+                  <p className="tabular-nums">
+                    Số tiền: <strong className="text-zinc-900">{totalAmount.toLocaleString('vi-VN')} VNĐ</strong>
                   </p>
-                  <p className="text-slate-500">
-                    Nội dung CK: <code>THANH TOAN THUOC {customerName || 'KHACH LE'}</code>
+                  <p className="text-zinc-400">
+                    Nội dung chuyển khoản được điền tự động theo phiếu xuất
                   </p>
                 </div>
               </div>
@@ -389,60 +391,63 @@ export const InvoicePaymentPage: React.FC = () => {
             <button
               type="submit"
               disabled={submitting || cart.length === 0}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-teal-500 py-3 text-sm font-extrabold text-slate-950 hover:bg-teal-400 disabled:opacity-40 transition"
+              className="w-full inline-flex h-10 items-center justify-center gap-2 rounded-md bg-zinc-900 text-[13px] font-medium text-white hover:bg-zinc-800 disabled:opacity-40 transition-colors"
             >
-              <CheckCircle2 className="h-5 w-5" />
+              <Check className="h-4 w-4" />
               <span>
                 {submitting
-                  ? 'Đang xử lý thanh toán...'
-                  : `Xác Nhận Thanh Toán & Xuất Hóa Đơn (${totalAmount.toLocaleString('vi-VN')} ₫)`}
+                  ? 'Đang xử lý giao dịch...'
+                  : `Hoàn tất thanh toán (${totalAmount.toLocaleString('vi-VN')} ₫)`}
               </span>
             </button>
           </div>
         </form>
       </div>
 
-      {/* LỊCH SỬ HÓA ĐƠN ĐÃ XUẤT */}
-      <div className="rounded-2xl bg-white p-5 shadow-sm border border-slate-200 space-y-3">
-        <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-700">
-          Lịch Sử Hóa Đơn & Giao Dịch Thanh Toán ({invoices.length})
-        </h3>
+      {/* LỊCH SỬ GIAO DỊCH */}
+      <div className="rounded-lg bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)] border border-zinc-200/80 overflow-hidden">
+        <div className="border-b border-zinc-200/80 px-4 py-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-zinc-900">Sổ giao dịch hóa đơn gần đây</h3>
+          <span className="text-xs text-zinc-400 tabular-nums">{invoices.length} hóa đơn</span>
+        </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full text-left text-[13px]">
             <thead>
-              <tr className="border-b border-slate-200 text-slate-500 uppercase">
-                <th className="py-2.5 px-3">Mã HĐ</th>
-                <th className="py-2.5 px-3">Khách hàng</th>
-                <th className="py-2.5 px-3">Danh sách thuốc</th>
-                <th className="py-2.5 px-3">Phương thức TT</th>
-                <th className="py-2.5 px-3">Tổng tiền</th>
-                <th className="py-2.5 px-3">Thời gian</th>
+              <tr className="border-b border-zinc-200/80 bg-zinc-50/60 text-xs font-medium text-zinc-500">
+                <th className="py-2.5 px-4 font-medium">Mã chứng từ</th>
+                <th className="py-2.5 px-4 font-medium">Khách hàng</th>
+                <th className="py-2.5 px-4 font-medium">Chi tiết dược phẩm</th>
+                <th className="py-2.5 px-4 font-medium">Hình thức</th>
+                <th className="py-2.5 px-4 font-medium">Giá trị</th>
+                <th className="py-2.5 px-4 font-medium">Thời gian</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-zinc-200/60">
               {invoices.map((inv) => (
-                <tr key={inv.InvoiceID} className="hover:bg-slate-50">
-                  <td className="py-3 px-3 font-mono font-bold text-teal-700">{inv.InvoiceCode}</td>
-                  <td className="py-3 px-3">
-                    <div className="font-bold text-slate-800">{inv.CustomerName}</div>
-                    <div className="text-slate-500">{inv.CustomerPhone}</div>
+                <tr key={inv.InvoiceID} className="hover:bg-zinc-50/70">
+                  <td className="py-3 px-4 font-mono text-xs font-medium text-zinc-700 tabular-nums">
+                    {inv.InvoiceCode}
                   </td>
-                  <td className="py-3 px-3">
+                  <td className="py-3 px-4">
+                    <div className="font-medium text-zinc-900">{inv.CustomerName}</div>
+                    <div className="text-xs text-zinc-400 tabular-nums">{inv.CustomerPhone}</div>
+                  </td>
+                  <td className="py-3 px-4 text-xs text-zinc-600 space-y-0.5">
                     {inv.items.map((it) => (
-                      <div key={it.ItemID} className="text-slate-700">
-                        • {it.product?.ProductName} (x{it.Quantity}) — <em>{it.DosageNote}</em>
+                      <div key={it.ItemID}>
+                        {it.product?.ProductName} <span className="text-zinc-400">×{it.Quantity}</span>
                       </div>
                     ))}
                   </td>
-                  <td className="py-3 px-3">
-                    <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 font-bold text-emerald-700 border border-emerald-200">
+                  <td className="py-3 px-4">
+                    <span className="inline-flex items-center rounded bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
                       {inv.payment?.PaymentMethod || 'PAID'}
                     </span>
                   </td>
-                  <td className="py-3 px-3 font-extrabold text-slate-900">
+                  <td className="py-3 px-4 font-medium text-zinc-900 tabular-nums">
                     {inv.TotalAmount.toLocaleString('vi-VN')} ₫
                   </td>
-                  <td className="py-3 px-3 text-slate-500">
+                  <td className="py-3 px-4 text-xs text-zinc-500 tabular-nums">
                     {new Date(inv.CreateDate).toLocaleString('vi-VN')}
                   </td>
                 </tr>

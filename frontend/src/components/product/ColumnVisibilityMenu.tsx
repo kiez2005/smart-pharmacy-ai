@@ -1,6 +1,6 @@
 import React from 'react';
 import { Table } from '@tanstack/react-table';
-import { Columns, Eye, EyeOff } from 'lucide-react';
+import { SlidersHorizontal, Check } from 'lucide-react';
 import { Product } from '../../types/product';
 
 interface ColumnVisibilityMenuProps {
@@ -10,16 +10,16 @@ interface ColumnVisibilityMenuProps {
 }
 
 const COLUMN_LABELS: Record<string, string> = {
-  ProductID: 'Mã SP (ProductID)',
-  PathImage: 'Hình ảnh (PathImage)',
-  ProductName: 'Tên thuốc (ProductName)',
-  ProductType: 'Nhóm thuốc (ProductType)',
-  Quantity: 'Số lượng (Quantity)',
-  Unit: 'Đơn vị (Unit)',
-  Price: 'Đơn giá (Price)',
-  Description: 'Mô tả (Description)',
-  CreateDate: 'Ngày tạo (CreateDate)',
-  UpdateDate: 'Ngày sửa (UpdateDate)',
+  ProductID: 'Mã SKU',
+  PathImage: 'Ảnh minh họa',
+  ProductName: 'Tên dược phẩm',
+  ProductType: 'Nhóm dược lý',
+  Quantity: 'Tồn kho',
+  Unit: 'Đơn vị tính',
+  Price: 'Giá bán lẻ',
+  Description: 'Hoạt chất & Chỉ định',
+  CreateDate: 'Ngày khởi tạo',
+  UpdateDate: 'Cập nhật cuối',
 };
 
 export const ColumnVisibilityMenu: React.FC<ColumnVisibilityMenuProps> = ({
@@ -32,54 +32,49 @@ export const ColumnVisibilityMenu: React.FC<ColumnVisibilityMenuProps> = ({
       <button
         type="button"
         onClick={onToggle}
-        className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-        title="Cấu hình Ẩn/Hiện cột của Table (Phím tắt: Alt + K)"
+        className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.02)] hover:bg-zinc-50 transition-colors"
       >
-        <Columns className="h-4 w-4 text-teal-600" />
-        <span>Ẩn/Hiện Cột (Alt+K)</span>
+        <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-500" strokeWidth={1.75} />
+        <span>Cột hiển thị</span>
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-white p-3 shadow-xl border border-slate-200 z-40">
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Cấu hình cột (Yêu cầu #10)
-            </span>
+        <div className="absolute right-0 mt-1.5 w-56 rounded-lg bg-white p-1.5 shadow-lg border border-zinc-200 z-40">
+          <div className="flex items-center justify-between px-2 py-1.5 mb-1 border-b border-zinc-100">
+            <span className="text-[11px] font-medium text-zinc-500">Tùy chỉnh cột dữ liệu</span>
             <button
               type="button"
               onClick={() => table.toggleAllColumnsVisible(true)}
-              className="text-xs font-semibold text-teal-600 hover:underline"
+              className="text-[11px] font-medium text-zinc-900 hover:underline"
             >
-              Hiện tất cả
+              Mặc định
             </button>
           </div>
 
-          <div className="space-y-1 max-h-64 overflow-y-auto">
+          <div className="space-y-0.5 max-h-64 overflow-y-auto">
             {table
               .getAllLeafColumns()
               .filter((col) => col.id !== 'select' && col.id !== 'actions')
               .map((column) => {
                 const isVisible = column.getIsVisible();
                 return (
-                  <label
+                  <button
                     key={column.id}
-                    className="flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                    type="button"
+                    onClick={column.getToggleVisibilityHandler()}
+                    className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-[13px] text-zinc-700 hover:bg-zinc-100/80 transition-colors"
                   >
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={isVisible}
-                        onChange={column.getToggleVisibilityHandler()}
-                        className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
-                      />
-                      <span>{COLUMN_LABELS[column.id] || column.id}</span>
-                    </div>
-                    {isVisible ? (
-                      <Eye className="h-3.5 w-3.5 text-teal-600" />
-                    ) : (
-                      <EyeOff className="h-3.5 w-3.5 text-slate-400" />
-                    )}
-                  </label>
+                    <span>{COLUMN_LABELS[column.id] || column.id}</span>
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded border ${
+                        isVisible
+                          ? 'border-zinc-900 bg-zinc-900 text-white'
+                          : 'border-zinc-300 bg-white'
+                      }`}
+                    >
+                      {isVisible && <Check className="h-3 w-3" strokeWidth={2.5} />}
+                    </span>
+                  </button>
                 );
               })}
           </div>

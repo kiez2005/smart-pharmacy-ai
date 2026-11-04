@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LogIn, UserPlus, KeyRound, ShieldCheck } from 'lucide-react';
+import { LogOut, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { UserProfile } from '../types/forms';
 import { formsApi } from '../services/forms.api';
@@ -28,7 +28,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     try {
       if (mode === 'LOGIN') {
         const res = await formsApi.login(email, password);
-        toast.success(`Chào mừng ${res.user.FullName} đã đăng nhập!`);
+        toast.success(`Đã đăng nhập: ${res.user.FullName}`);
         onAuthSuccess(res.user, res.token);
       } else {
         const res = await formsApi.register({
@@ -37,13 +37,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           Password: password,
           Phone: phone,
         });
-        toast.success(`Đăng ký thành công tài khoản ${res.user.FullName}!`);
+        toast.success(`Đã khởi tạo tài khoản: ${res.user.FullName}`);
         onAuthSuccess(res.user, res.token);
       }
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Lỗi xác thực tài khoản';
+        'Không thể xác thực tài khoản';
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -52,108 +52,117 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
   if (currentUser) {
     return (
-      <div className="mx-auto max-w-lg rounded-2xl bg-white p-6 shadow-sm border border-slate-200 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-100 text-teal-700">
-            <ShieldCheck className="h-6 w-6" />
+      <div className="mx-auto max-w-md rounded-lg bg-white p-6 shadow-[0_1px_2px_rgba(0,0,0,0.02)] border border-zinc-200/80 space-y-5">
+        <div className="flex items-center gap-3.5">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-100 text-zinc-700">
+            <User className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-base font-extrabold text-slate-900">{currentUser.FullName}</h2>
-            <p className="text-xs text-slate-500">
-              {currentUser.Email} • Vai trò: <strong>{currentUser.Role}</strong>
+            <h2 className="text-sm font-semibold text-zinc-900">{currentUser.FullName}</h2>
+            <p className="text-xs text-zinc-500">
+              {currentUser.Email} • Phân quyền: <span className="font-medium text-zinc-700">{currentUser.Role}</span>
             </p>
           </div>
         </div>
         <button
           type="button"
           onClick={onLogout}
-          className="w-full rounded-xl border border-rose-300 bg-rose-50 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
+          className="w-full inline-flex h-9 items-center justify-center gap-2 rounded-md border border-zinc-200 bg-white text-[13px] font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
         >
-          Đăng xuất tài khoản
+          <LogOut className="h-3.5 w-3.5" />
+          <span>Đăng xuất phiên làm việc</span>
         </button>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-md rounded-2xl bg-white p-6 shadow-sm border border-slate-200 space-y-5">
-      {/* Chuyển đổi giữa Form Đăng nhập & Form Đăng ký */}
-      <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1">
+    <div className="mx-auto max-w-sm rounded-lg bg-white p-6 shadow-[0_1px_2px_rgba(0,0,0,0.02)] border border-zinc-200/80 space-y-5">
+      <div>
+        <h2 className="text-base font-semibold text-zinc-900">
+          {mode === 'LOGIN' ? 'Đăng nhập hệ thống' : 'Tạo tài khoản nhân sự mới'}
+        </h2>
+        <p className="text-xs text-zinc-500 mt-0.5">
+          {mode === 'LOGIN'
+            ? 'Nhập thông tin tài khoản dược sĩ để truy cập'
+            : 'Đăng ký tài khoản mới vào hệ thống quản trị nhà thuốc'}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-1 rounded-md bg-zinc-100 p-1">
         <button
           type="button"
           onClick={() => setMode('LOGIN')}
-          className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition ${
-            mode === 'LOGIN' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600'
+          className={`rounded py-1.5 text-xs font-medium transition-colors ${
+            mode === 'LOGIN' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-600'
           }`}
         >
-          <LogIn className="h-4 w-4" />
-          <span>Form Đăng Nhập</span>
+          Đăng nhập
         </button>
         <button
           type="button"
           onClick={() => setMode('REGISTER')}
-          className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition ${
-            mode === 'REGISTER' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600'
+          className={`rounded py-1.5 text-xs font-medium transition-colors ${
+            mode === 'REGISTER' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-600'
           }`}
         >
-          <UserPlus className="h-4 w-4" />
-          <span>Form Đăng Ký</span>
+          Đăng ký tài khoản
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-3.5">
         {mode === 'REGISTER' && (
           <div>
-            <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
-              Họ và tên Dược sĩ / Khách hàng *
+            <label className="block text-xs font-medium text-zinc-700 mb-1">
+              Họ và tên <span className="text-rose-500">*</span>
             </label>
             <input
               type="text"
               required
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              placeholder="VD: Nguyễn Văn Trung"
-              className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-teal-600 focus:outline-none"
+              placeholder="Nguyễn Văn A"
+              className="w-full h-9 rounded-md border border-zinc-200 px-3 text-[13px] focus:border-zinc-900 focus:outline-none"
             />
           </div>
         )}
 
         <div>
-          <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
-            Địa chỉ Email *
+          <label className="block text-xs font-medium text-zinc-700 mb-1">
+            Email công vụ <span className="text-rose-500">*</span>
           </label>
           <input
             type="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-teal-600 focus:outline-none"
+            className="w-full h-9 rounded-md border border-zinc-200 px-3 text-[13px] focus:border-zinc-900 focus:outline-none"
           />
         </div>
 
         <div>
-          <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
-            Mật khẩu *
+          <label className="block text-xs font-medium text-zinc-700 mb-1">
+            Mật khẩu <span className="text-rose-500">*</span>
           </label>
           <input
             type="password"
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-teal-600 focus:outline-none"
+            className="w-full h-9 rounded-md border border-zinc-200 px-3 text-[13px] focus:border-zinc-900 focus:outline-none"
           />
         </div>
 
         {mode === 'REGISTER' && (
           <div>
-            <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
+            <label className="block text-xs font-medium text-zinc-700 mb-1">
               Số điện thoại
             </label>
             <input
               type="text"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-teal-600 focus:outline-none"
+              className="w-full h-9 rounded-md border border-zinc-200 px-3 text-[13px] focus:border-zinc-900 focus:outline-none"
             />
           </div>
         )}
@@ -161,20 +170,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         <button
           type="submit"
           disabled={loading}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-teal-600 py-2.5 text-sm font-bold text-white hover:bg-teal-700 disabled:opacity-50"
+          className="w-full h-9 rounded-md bg-zinc-900 text-[13px] font-medium text-white hover:bg-zinc-800 disabled:opacity-50 transition-colors"
         >
-          <KeyRound className="h-4 w-4" />
-          <span>{mode === 'LOGIN' ? 'Đăng Nhập Hệ Thống' : 'Đăng Ký Tài Khoản Mới'}</span>
+          {mode === 'LOGIN' ? 'Tiếp tục' : 'Hoàn tất đăng ký'}
         </button>
       </form>
-
-      {mode === 'LOGIN' && (
-        <div className="rounded-xl bg-teal-50 p-3 border border-teal-200 text-xs text-teal-800 space-y-1">
-          <div className="font-bold">Tài khoản Demo tạo sẵn trong Seed DB:</div>
-          <div>• Email: <code>trung.d18cnpm5@epu.edu.vn</code></div>
-          <div>• Mật khẩu: <code>123456</code></div>
-        </div>
-      )}
     </div>
   );
 };
