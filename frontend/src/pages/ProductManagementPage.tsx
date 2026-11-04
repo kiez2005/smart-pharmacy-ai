@@ -847,7 +847,14 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
               </span>
             )}
             <ColumnVisibilityMenu
-              table={table}
+              columnVisibility={columnVisibility}
+              onToggleColumn={(colId) =>
+                setColumnVisibility((prev) => ({
+                  ...prev,
+                  [colId]: prev[colId] === false ? true : false,
+                }))
+              }
+              onResetAll={() => setColumnVisibility({})}
               isOpen={isColumnMenuOpen}
               onToggle={() => setIsColumnMenuOpen((prev) => !prev)}
             />

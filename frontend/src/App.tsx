@@ -124,8 +124,8 @@ export const App: React.FC = () => {
     <div className="min-h-screen bg-[#fafafa] text-zinc-900 flex">
       <Toaster position="bottom-right" />
 
-      {/* ENTERPRISE SIDEBAR (12 Phân hệ Chuẩn Doanh Nghiệp) */}
-      <aside className="hidden md:flex w-64 flex-col border-r border-zinc-200/80 bg-white shrink-0 select-none">
+      {/* ENTERPRISE SIDEBAR (12 Phân hệ Chuẩn Doanh Nghiệp — Cố định khi cuộn trang) */}
+      <aside className="hidden md:flex w-64 flex-col border-r border-zinc-200/80 bg-white shrink-0 select-none sticky top-0 h-screen">
         {/* Brand Header */}
         <div className="h-14 flex items-center gap-2.5 border-b border-zinc-200/80 px-4">
           <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-900 text-white">
