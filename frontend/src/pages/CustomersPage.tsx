@@ -1,23 +1,43 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Users,
-  Plus,
-  Search,
   AlertTriangle,
   HeartPulse,
   Award,
   Pencil,
+  Copy,
+  Trash2,
+  Eye,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { enterpriseApi } from '../services/enterprise.api';
 import { CustomerRecord } from '../types/enterprise';
+import {
+  ColumnConfig,
+  EnterprisePagination,
+  EnterpriseToolbar,
+} from '../components/common/EnterpriseDataToolbar';
+
+const CUSTOMER_COLUMNS: ColumnConfig[] = [
+  { id: 'CustomerCode', label: 'Mã bệnh nhân' },
+  { id: 'FullName', label: 'Họ tên & Liên hệ' },
+  { id: 'Allergies', label: 'Tiền sử dị ứng thuốc' },
+  { id: 'ChronicCond', label: 'Bệnh lý nền' },
+  { id: 'LoyaltyPoints', label: 'Điểm tích lũy' },
+];
 
 export const CustomersPage: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [search, setSearch] = useState<string>('');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord | null>(null);
+
+  // 11 Chức năng Data Grid
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({});
 
   // Modal Tạo / Sửa Hồ sơ Bệnh nhân
   const [showModal, setShowModal] = useState<boolean>(false);
@@ -37,8 +57,12 @@ export const CustomersPage: React.FC = () => {
     try {
       const list = await enterpriseApi.getCustomers();
       setCustomers(list);
+      setSelectedIds([]);
       if (list.length > 0 && !selectedCustomer) {
         setSelectedCustomer(list[0]);
+      } else if (selectedCustomer) {
+        const updated = list.find((c) => c.CustomerID === selectedCustomer.CustomerID);
+        if (updated) setSelectedCustomer(updated);
       }
     } catch {
       toast.error('Không thể tải hồ sơ bệnh nhân');
@@ -100,6 +124,56 @@ export const CustomersPage: React.FC = () => {
     }
   };
 
+  const handleDeleteOne = async (c: CustomerRecord) => {
+    if (!window.confirm(`Xác nhận xóa hồ sơ bệnh nhân "${c.FullName}"?`)) return;
+    try {
+      await enterpriseApi.deleteRecord('customers', c.CustomerID);
+      toast.success(`Đã xóa hồ sơ ${c.CustomerCode}`);
+      await loadCustomers();
+    } catch {
+      toast.error('Bệnh nhân đã có hóa đơn liên kết, không thể xóa');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) {
+      toast.info('Vui lòng chọn ít nhất 1 hồ sơ bệnh nhân');
+      return;
+    }
+    if (!window.confirm(`Xác nhận xóa ${selectedIds.length} hồ sơ đã chọn?`)) return;
+    try {
+      const count = await enterpriseApi.bulkDelete('customers', selectedIds);
+      toast.success(`Đã xóa ${count} hồ sơ bệnh nhân`);
+      await loadCustomers();
+    } catch {
+      toast.error('Không thể xóa hồ sơ đã có hóa đơn');
+    }
+  };
+
+  const handleCloneOne = async (c: CustomerRecord) => {
+    try {
+      await enterpriseApi.cloneRecord('customers', c.CustomerID);
+      toast.success(`Đã nhân bản hồ sơ "${c.FullName}"`);
+      await loadCustomers();
+    } catch {
+      toast.error('Không thể nhân bản hồ sơ bệnh nhân');
+    }
+  };
+
+  const handleBulkClone = async () => {
+    if (selectedIds.length === 0) {
+      toast.info('Vui lòng chọn ít nhất 1 hồ sơ để nhân bản');
+      return;
+    }
+    try {
+      const count = await enterpriseApi.bulkClone('customers', selectedIds);
+      toast.success(`Đã nhân bản ${count} hồ sơ bệnh nhân`);
+      await loadCustomers();
+    } catch {
+      toast.error('Không thể nhân bản hàng loạt');
+    }
+  };
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return customers;
@@ -112,75 +186,119 @@ export const CustomersPage: React.FC = () => {
     );
   }, [customers, search]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pagedCustomers = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize]
+  );
+
   const formatVND = (val: number) =>
     new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-            Hồ Sơ Bệnh Nhân, Tiền Sử Dị Ứng Thuốc & Lịch Sử Điều Trị (Patient CRM)
-          </h1>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            Lưu trữ thông tin dị ứng hoạt chất, bệnh lý nền mãn tính và lịch sử đơn thuốc giúp cảnh báo tự động tại quầy POS.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={openCreateModal}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          <span>Mở Hồ sơ Bệnh nhân mới</span>
-        </button>
-      </div>
-
-      {/* Thanh tìm kiếm */}
-      <div className="rounded-lg border border-zinc-200 bg-white p-3.5 shadow-2xs flex items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm theo họ tên, số điện thoại, mã BN hoặc hoạt chất dị ứng..."
-            className="w-full h-8 rounded-md border border-zinc-300 pl-9 pr-3 text-xs"
-          />
-        </div>
-        <div className="text-xs text-zinc-500">
-          Tổng số: <strong className="text-zinc-900">{customers.length}</strong> hồ sơ bệnh nhân
-        </div>
-      </div>
+      {/* Thanh công cụ 11 chức năng chuẩn Doanh nghiệp */}
+      <EnterpriseToolbar
+        entity="customers"
+        title="Hồ Sơ Bệnh Nhân, Tiền Sử Dị Ứng Thuốc & Lịch Sử Điều Trị (Patient CRM)"
+        subtitle="Lưu trữ thông tin dị ứng hoạt chất, bệnh lý nền (đầy đủ 11 chức năng CRUD, Nhân bản, Import/Export Excel/JSON/XML, Ẩn/Hiện cột)."
+        createLabel="Mở Hồ sơ mới (Alt+N)"
+        search={search}
+        onSearchChange={(val) => {
+          setSearch(val);
+          setPage(1);
+        }}
+        searchPlaceholder="Tìm theo họ tên, SĐT, mã BN hoặc hoạt chất dị ứng... (Alt + F)"
+        columns={CUSTOMER_COLUMNS}
+        visibleColumns={visibleColumns}
+        onToggleColumn={(colId) =>
+          setVisibleColumns((prev) => ({
+            ...prev,
+            [colId]: prev[colId] === false ? true : false,
+          }))
+        }
+        selectedCount={selectedIds.length}
+        onClearSelection={() => setSelectedIds([])}
+        onOpenCreate={openCreateModal}
+        onBulkDelete={() => void handleBulkDelete()}
+        onBulkClone={() => void handleBulkClone()}
+        onEditSelected={() => {
+          if (selectedIds.length === 1) {
+            const found = customers.find((c) => c.CustomerID === selectedIds[0]);
+            if (found) openEditModal(found);
+          }
+        }}
+        onViewSelected={() => {
+          if (selectedIds.length === 1) {
+            const found = customers.find((c) => c.CustomerID === selectedIds[0]);
+            if (found) setSelectedCustomer(found);
+          }
+        }}
+        onCloneSelected={() => {
+          if (selectedIds.length === 1) {
+            const found = customers.find((c) => c.CustomerID === selectedIds[0]);
+            if (found) void handleCloneOne(found);
+          }
+        }}
+        onReload={loadCustomers}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Danh sách Bệnh nhân */}
+        {/* Danh sách Bệnh nhân chuẩn 11 chức năng */}
         <div className="lg:col-span-7 rounded-lg border border-zinc-200 bg-white shadow-2xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-zinc-200 bg-zinc-50/70 text-[11px] font-medium text-zinc-500">
-                  <th className="py-2.5 px-3.5">Mã BN</th>
-                  <th className="py-2.5 px-3.5">Họ tên & Liên hệ</th>
-                  <th className="py-2.5 px-3.5">Tiền sử Dị ứng thuốc</th>
-                  <th className="py-2.5 px-3.5">Bệnh lý nền</th>
-                  <th className="py-2.5 px-3.5 text-right">Điểm</th>
+                  <th className="py-2.5 px-3 w-8">
+                    <input
+                      type="checkbox"
+                      checked={
+                        pagedCustomers.length > 0 &&
+                        pagedCustomers.every((c) => selectedIds.includes(c.CustomerID))
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedIds(pagedCustomers.map((c) => c.CustomerID));
+                        } else {
+                          setSelectedIds([]);
+                        }
+                      }}
+                      className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
+                    />
+                  </th>
+                  {visibleColumns.CustomerCode !== false && (
+                    <th className="py-2.5 px-3">Mã BN</th>
+                  )}
+                  {visibleColumns.FullName !== false && (
+                    <th className="py-2.5 px-3">Họ tên & Liên hệ</th>
+                  )}
+                  {visibleColumns.Allergies !== false && (
+                    <th className="py-2.5 px-3">Tiền sử Dị ứng thuốc</th>
+                  )}
+                  {visibleColumns.ChronicCond !== false && (
+                    <th className="py-2.5 px-3">Bệnh lý nền</th>
+                  )}
+                  {visibleColumns.LoyaltyPoints !== false && (
+                    <th className="py-2.5 px-3 text-right">Điểm</th>
+                  )}
+                  <th className="py-2.5 px-3 text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200/60 text-xs">
                 {loading ? (
                   <tr>
-                    <td colSpan={5} className="py-10 text-center text-zinc-400">
+                    <td colSpan={7} className="py-10 text-center text-zinc-400">
                       Đang tải hồ sơ bệnh nhân...
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((c) => {
+                  pagedCustomers.map((c) => {
                     const hasAllergy =
                       c.Allergies &&
                       c.Allergies !== 'Không ghi nhận' &&
-                      c.Allergies !== 'Không';
+                      c.Allergies !== 'Không' &&
+                      c.Allergies !== 'Không có';
                     const isSelected = selectedCustomer?.CustomerID === c.CustomerID;
                     return (
                       <tr
@@ -190,28 +308,94 @@ export const CustomersPage: React.FC = () => {
                           isSelected ? 'bg-zinc-100/90' : 'hover:bg-zinc-50'
                         }`}
                       >
-                        <td className="py-3 px-3.5 font-mono font-semibold text-zinc-700">
-                          {c.CustomerCode}
+                        <td
+                          className="py-3 px-3"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(c.CustomerID)}
+                            onChange={() =>
+                              setSelectedIds((prev) =>
+                                prev.includes(c.CustomerID)
+                                  ? prev.filter((id) => id !== c.CustomerID)
+                                  : [...prev, c.CustomerID]
+                              )
+                            }
+                            className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
+                          />
                         </td>
-                        <td className="py-3 px-3.5">
-                          <div className="font-semibold text-zinc-900">{c.FullName}</div>
-                          <div className="text-[11px] text-zinc-500">
-                            {c.Phone} · {c.Gender} ({c.BirthYear})
+                        {visibleColumns.CustomerCode !== false && (
+                          <td className="py-3 px-3 font-mono font-semibold text-zinc-700">
+                            {c.CustomerCode}
+                          </td>
+                        )}
+                        {visibleColumns.FullName !== false && (
+                          <td className="py-3 px-3">
+                            <div className="font-semibold text-zinc-900">{c.FullName}</div>
+                            <div className="text-[11px] text-zinc-500">
+                              {c.Phone} · {c.Gender} ({c.BirthYear})
+                            </div>
+                          </td>
+                        )}
+                        {visibleColumns.Allergies !== false && (
+                          <td className="py-3 px-3">
+                            {hasAllergy ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 border border-rose-200/60">
+                                <AlertTriangle className="h-3 w-3" />
+                                {c.Allergies}
+                              </span>
+                            ) : (
+                              <span className="text-zinc-500">Không ghi nhận</span>
+                            )}
+                          </td>
+                        )}
+                        {visibleColumns.ChronicCond !== false && (
+                          <td className="py-3 px-3 text-zinc-700">{c.ChronicCond || 'Không'}</td>
+                        )}
+                        {visibleColumns.LoyaltyPoints !== false && (
+                          <td className="py-3 px-3 text-right font-semibold text-zinc-900 tabular-nums">
+                            {c.LoyaltyPoints}
+                          </td>
+                        )}
+                        <td
+                          className="py-3 px-3 text-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="inline-flex items-center justify-end gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedCustomer(c)}
+                              title="Xem hồ sơ (Alt+V)"
+                              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(c)}
+                              title="Chỉnh sửa (Alt+E)"
+                              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleCloneOne(c)}
+                              title="Nhân bản (Alt+C)"
+                              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteOne(c)}
+                              title="Xóa (Alt+H)"
+                              className="rounded p-1 text-zinc-400 hover:bg-rose-50 hover:text-rose-600"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
                           </div>
-                        </td>
-                        <td className="py-3 px-3.5">
-                          {hasAllergy ? (
-                            <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 border border-rose-200/60">
-                              <AlertTriangle className="h-3 w-3" />
-                              {c.Allergies}
-                            </span>
-                          ) : (
-                            <span className="text-zinc-500">Không ghi nhận</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3.5 text-zinc-700">{c.ChronicCond || 'Không'}</td>
-                        <td className="py-3 px-3.5 text-right font-semibold text-zinc-900 tabular-nums">
-                          {c.LoyaltyPoints}
                         </td>
                       </tr>
                     );
@@ -220,6 +404,15 @@ export const CustomersPage: React.FC = () => {
               </tbody>
             </table>
           </div>
+
+          <EnterprisePagination
+            page={page}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={filtered.length}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         </div>
 
         {/* Chi tiết Hồ sơ Bệnh án & Đơn thuốc cũ */}
@@ -250,7 +443,7 @@ export const CustomersPage: React.FC = () => {
                   className="inline-flex h-7 items-center gap-1 rounded border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                 >
                   <Pencil className="h-3 w-3" />
-                  <span>Cập nhật</span>
+                  <span>Cập nhật (Alt+E)</span>
                 </button>
               </div>
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Truck,
   Plus,
@@ -6,20 +6,58 @@ import {
   FilePlus2,
   Trash2,
   CheckCircle2,
-  Phone,
-  MapPin,
+  Eye,
+  Pencil,
+  Copy,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { enterpriseApi } from '../services/enterprise.api';
 import { productApi } from '../services/product.api';
 import { PurchaseOrderRecord, SupplierRecord } from '../types/enterprise';
 import { Product } from '../types/product';
+import {
+  ColumnConfig,
+  EnterprisePagination,
+  EnterpriseToolbar,
+} from '../components/common/EnterpriseDataToolbar';
+
+const SUPPLIER_COLUMNS: ColumnConfig[] = [
+  { id: 'SupplierCode', label: 'Mã NCC' },
+  { id: 'SupplierName', label: 'Tên nhà phân phối' },
+  { id: 'ContactPerson', label: 'Đại diện liên hệ' },
+  { id: 'Phone', label: 'Số điện thoại' },
+  { id: 'TaxCode', label: 'Mã số thuế' },
+  { id: 'Address', label: 'Địa chỉ kho / trụ sở' },
+  { id: 'Status', label: 'Chứng nhận GDP' },
+];
 
 export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRecord[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Tìm kiếm, Phân trang, Chọn Checkbox & Ẩn/hiện cột cho bảng Nhà cung cấp
+  const [search, setSearch] = useState<string>('');
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({});
+
+  // Modal Thêm / Sửa / Xem Chi tiết Nhà Cung Cấp
+  const [showSupplierModal, setShowSupplierModal] = useState<boolean>(false);
+  const [editingSupplier, setEditingSupplier] = useState<SupplierRecord | null>(null);
+  const [viewingSupplier, setViewingSupplier] = useState<SupplierRecord | null>(null);
+  const [supplierForm, setSupplierForm] = useState({
+    SupplierCode: '',
+    SupplierName: '',
+    ContactPerson: '',
+    Phone: '',
+    Email: '',
+    TaxCode: '',
+    Address: '',
+  });
 
   // Form Tạo Phiếu Nhập Kho
   const [selectedSupplierId, setSelectedSupplierId] = useState<number>(0);
@@ -35,17 +73,6 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
   >([]);
   const [submittingPo, setSubmittingPo] = useState<boolean>(false);
 
-  // Modal Thêm Nhà Cung Cấp
-  const [showSupplierModal, setShowSupplierModal] = useState<boolean>(false);
-  const [newSupplier, setNewSupplier] = useState({
-    SupplierName: '',
-    ContactPerson: '',
-    Phone: '',
-    Email: '',
-    TaxCode: '',
-    Address: '',
-  });
-
   const loadAll = async () => {
     setLoading(true);
     try {
@@ -57,6 +84,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
       setSuppliers(supList);
       setPurchaseOrders(poList);
       setProducts(prodRes.items);
+      setSelectedIds([]);
       if (supList.length > 0 && selectedSupplierId === 0) {
         setSelectedSupplierId(supList[0].SupplierID);
       }
@@ -84,6 +112,135 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const filteredSuppliers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter(
+      (s) =>
+        s.SupplierName.toLowerCase().includes(q) ||
+        s.SupplierCode.toLowerCase().includes(q) ||
+        s.Phone.toLowerCase().includes(q) ||
+        (s.ContactPerson || '').toLowerCase().includes(q) ||
+        (s.Address || '').toLowerCase().includes(q)
+    );
+  }, [suppliers, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSuppliers.length / pageSize));
+  const pagedSuppliers = useMemo(
+    () => filteredSuppliers.slice((page - 1) * pageSize, page * pageSize),
+    [filteredSuppliers, page, pageSize]
+  );
+
+  const handleToggleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(pagedSuppliers.map((s) => s.SupplierID));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const handleToggleRow = (id: number) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+  };
+
+  const openCreateModal = () => {
+    setEditingSupplier(null);
+    setSupplierForm({
+      SupplierCode: `NCC-${Math.floor(1000 + Math.random() * 9000)}`,
+      SupplierName: '',
+      ContactPerson: '',
+      Phone: '',
+      Email: '',
+      TaxCode: '',
+      Address: '',
+    });
+    setShowSupplierModal(true);
+  };
+
+  const openEditModal = (sup: SupplierRecord) => {
+    setEditingSupplier(sup);
+    setSupplierForm({
+      SupplierCode: sup.SupplierCode,
+      SupplierName: sup.SupplierName,
+      ContactPerson: sup.ContactPerson || '',
+      Phone: sup.Phone,
+      Email: sup.Email || '',
+      TaxCode: sup.TaxCode || '',
+      Address: sup.Address || '',
+    });
+    setShowSupplierModal(true);
+  };
+
+  const handleSaveSupplier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supplierForm.SupplierName.trim() || !supplierForm.Phone.trim()) return;
+    try {
+      if (editingSupplier) {
+        await enterpriseApi.updateSupplier(editingSupplier.SupplierID, supplierForm);
+        toast.success(`Đã cập nhật nhà phân phối "${supplierForm.SupplierName}"`);
+      } else {
+        await enterpriseApi.createSupplier(supplierForm);
+        toast.success(`Đã thêm nhà phân phối "${supplierForm.SupplierName}"`);
+      }
+      setShowSupplierModal(false);
+      await loadAll();
+    } catch {
+      toast.error('Không thể lưu thông tin nhà cung cấp');
+    }
+  };
+
+  const handleDeleteOne = async (sup: SupplierRecord) => {
+    if (!window.confirm(`Xác nhận xóa nhà cung cấp "${sup.SupplierName}"?`)) return;
+    try {
+      await enterpriseApi.deleteRecord('suppliers', sup.SupplierID);
+      toast.success(`Đã xóa nhà cung cấp ${sup.SupplierCode}`);
+      await loadAll();
+    } catch {
+      toast.error('Nhà cung cấp đã có phiếu nhập kho liên kết, không thể xóa');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) {
+      toast.info('Vui lòng chọn ít nhất 1 dòng trong bảng');
+      return;
+    }
+    if (!window.confirm(`Xác nhận xóa ${selectedIds.length} nhà cung cấp đã chọn?`)) return;
+    try {
+      const count = await enterpriseApi.bulkDelete('suppliers', selectedIds);
+      toast.success(`Đã xóa ${count} nhà cung cấp`);
+      await loadAll();
+    } catch {
+      toast.error('Một số nhà cung cấp đã có phiếu nhập kho liên kết');
+    }
+  };
+
+  const handleCloneOne = async (sup: SupplierRecord) => {
+    try {
+      await enterpriseApi.cloneRecord('suppliers', sup.SupplierID);
+      toast.success(`Đã nhân bản nhà phân phối "${sup.SupplierName}"`);
+      await loadAll();
+    } catch {
+      toast.error('Không thể nhân bản nhà cung cấp');
+    }
+  };
+
+  const handleBulkClone = async () => {
+    if (selectedIds.length === 0) {
+      toast.info('Vui lòng chọn ít nhất 1 dòng để nhân bản');
+      return;
+    }
+    try {
+      const count = await enterpriseApi.bulkClone('suppliers', selectedIds);
+      toast.success(`Đã nhân bản ${count} nhà cung cấp`);
+      await loadAll();
+    } catch {
+      toast.error('Lỗi khi nhân bản hàng loạt');
+    }
+  };
+
   const handleAddPoLine = () => {
     if (products.length === 0) return;
     const target = products[poItems.length % products.length];
@@ -97,10 +254,6 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
         ImportPrice: Math.round(target.Price * 0.75),
       },
     ]);
-  };
-
-  const handleRemovePoLine = (idx: number) => {
-    setPoItems((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const handleCreatePurchaseOrder = async (e: React.FormEvent) => {
@@ -128,27 +281,6 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
     }
   };
 
-  const handleCreateSupplier = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSupplier.SupplierName.trim() || !newSupplier.Phone.trim()) return;
-    try {
-      const created = await enterpriseApi.createSupplier(newSupplier);
-      toast.success(`Đã thêm nhà phân phối "${created.SupplierName}"`);
-      setShowSupplierModal(false);
-      setNewSupplier({
-        SupplierName: '',
-        ContactPerson: '',
-        Phone: '',
-        Email: '',
-        TaxCode: '',
-        Address: '',
-      });
-      await loadAll();
-    } catch {
-      toast.error('Không thể thêm nhà cung cấp');
-    }
-  };
-
   const formatVND = (val: number) =>
     new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
 
@@ -156,70 +288,192 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-            Quản lý Nhà Cung Cấp & Lập Phiếu Nhập Kho (Purchase Orders)
-          </h1>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            Quản lý đối tác phân phối dược phẩm GPP, kiểm soát số lô sản xuất, hạn dùng và tự động cộng tồn kho khi nhập hàng.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowSupplierModal(true)}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          <span>Thêm Nhà phân phối mới</span>
-        </button>
-      </div>
+      {/* Thanh công cụ 11 chức năng chuẩn Doanh nghiệp */}
+      <EnterpriseToolbar
+        entity="suppliers"
+        title="Quản lý Nhà Cung Cấp & Lập Phiếu Nhập Kho (Purchase Orders)"
+        subtitle="Quản lý đối tác phân phối dược phẩm chuẩn GDP (11 chức năng CRUD, Nhân bản, Import/Export, Ẩn/Hiện cột) và nhập hàng cộng tồn kho."
+        createLabel="Thêm Nhà phân phối (Alt+N)"
+        search={search}
+        onSearchChange={(val) => {
+          setSearch(val);
+          setPage(1);
+        }}
+        searchPlaceholder="Tìm theo mã NCC, tên công ty dược, người liên hệ hoặc SĐT... (Alt + F)"
+        columns={SUPPLIER_COLUMNS}
+        visibleColumns={visibleColumns}
+        onToggleColumn={(colId) =>
+          setVisibleColumns((prev) => ({
+            ...prev,
+            [colId]: prev[colId] === false ? true : false,
+          }))
+        }
+        selectedCount={selectedIds.length}
+        onClearSelection={() => setSelectedIds([])}
+        onOpenCreate={openCreateModal}
+        onBulkDelete={() => void handleBulkDelete()}
+        onBulkClone={() => void handleBulkClone()}
+        onEditSelected={() => {
+          if (selectedIds.length === 1) {
+            const found = suppliers.find((s) => s.SupplierID === selectedIds[0]);
+            if (found) openEditModal(found);
+          }
+        }}
+        onViewSelected={() => {
+          if (selectedIds.length === 1) {
+            const found = suppliers.find((s) => s.SupplierID === selectedIds[0]);
+            if (found) setViewingSupplier(found);
+          }
+        }}
+        onCloneSelected={() => {
+          if (selectedIds.length === 1) {
+            const found = suppliers.find((s) => s.SupplierID === selectedIds[0]);
+            if (found) void handleCloneOne(found);
+          }
+        }}
+        onReload={loadAll}
+      />
 
-      {/* Danh sách Nhà phân phối */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {suppliers.map((sup) => (
-          <div
-            key={sup.SupplierID}
-            className="rounded-lg border border-zinc-200 bg-white p-4 shadow-2xs flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="rounded bg-zinc-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-zinc-700">
-                  {sup.SupplierCode}
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200/60">
-                  <CheckCircle2 className="h-3 w-3" />
-                  Đạt chuẩn GDP
-                </span>
-              </div>
-              <h3 className="mt-2 text-[13px] font-semibold text-zinc-900 line-clamp-2">
-                {sup.SupplierName}
-              </h3>
-              <p className="mt-1 text-xs text-zinc-500">
-                Đại diện: <span className="text-zinc-700 font-medium">{sup.ContactPerson || 'Phòng Kinh doanh'}</span>
-              </p>
-            </div>
-            <div className="mt-3 pt-2.5 border-t border-zinc-100 space-y-1 text-[11px] text-zinc-500">
-              <div className="flex items-center gap-1.5">
-                <Phone className="h-3 w-3 text-zinc-400" />
-                <span>{sup.Phone}</span>
-                {sup.TaxCode && <span className="text-zinc-400">· MST: {sup.TaxCode}</span>}
-              </div>
-              {sup.Address && (
-                <div className="flex items-center gap-1.5 truncate">
-                  <MapPin className="h-3 w-3 text-zinc-400 shrink-0" />
-                  <span className="truncate">{sup.Address}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
+      {/* Bảng dữ liệu Nhà cung cấp chuẩn 11 chức năng */}
+      <div className="rounded-lg border border-zinc-200 bg-white shadow-2xs overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-zinc-200 bg-zinc-50/80 text-[11px] font-medium text-zinc-500">
+                <th className="py-2.5 px-3.5 w-9">
+                  <input
+                    type="checkbox"
+                    checked={
+                      pagedSuppliers.length > 0 &&
+                      pagedSuppliers.every((s) => selectedIds.includes(s.SupplierID))
+                    }
+                    onChange={(e) => handleToggleSelectAll(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
+                  />
+                </th>
+                {visibleColumns.SupplierCode !== false && <th className="py-2.5 px-3.5">Mã NCC</th>}
+                {visibleColumns.SupplierName !== false && (
+                  <th className="py-2.5 px-3.5">Tên nhà phân phối dược phẩm</th>
+                )}
+                {visibleColumns.ContactPerson !== false && (
+                  <th className="py-2.5 px-3.5">Đại diện liên hệ</th>
+                )}
+                {visibleColumns.Phone !== false && <th className="py-2.5 px-3.5">Điện thoại</th>}
+                {visibleColumns.TaxCode !== false && <th className="py-2.5 px-3.5">Mã số thuế</th>}
+                {visibleColumns.Address !== false && (
+                  <th className="py-2.5 px-3.5">Địa chỉ trụ sở / kho</th>
+                )}
+                {visibleColumns.Status !== false && <th className="py-2.5 px-3.5">Tiêu chuẩn</th>}
+                <th className="py-2.5 px-3.5 text-right">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-200/60 text-xs">
+              {pagedSuppliers.map((sup) => (
+                <tr key={sup.SupplierID} className="hover:bg-zinc-50/80">
+                  <td className="py-2.5 px-3.5">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(sup.SupplierID)}
+                      onChange={() => handleToggleRow(sup.SupplierID)}
+                      className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
+                    />
+                  </td>
+                  {visibleColumns.SupplierCode !== false && (
+                    <td className="py-2.5 px-3.5 font-mono font-semibold text-zinc-700">
+                      {sup.SupplierCode}
+                    </td>
+                  )}
+                  {visibleColumns.SupplierName !== false && (
+                    <td className="py-2.5 px-3.5 font-semibold text-zinc-900">
+                      <button
+                        type="button"
+                        onClick={() => setViewingSupplier(sup)}
+                        className="hover:text-teal-700 text-left"
+                      >
+                        {sup.SupplierName}
+                      </button>
+                    </td>
+                  )}
+                  {visibleColumns.ContactPerson !== false && (
+                    <td className="py-2.5 px-3.5 text-zinc-600">
+                      {sup.ContactPerson || 'Phòng Kinh doanh'}
+                    </td>
+                  )}
+                  {visibleColumns.Phone !== false && (
+                    <td className="py-2.5 px-3.5 font-mono text-zinc-700">{sup.Phone}</td>
+                  )}
+                  {visibleColumns.TaxCode !== false && (
+                    <td className="py-2.5 px-3.5 font-mono text-zinc-500">
+                      {sup.TaxCode || '---'}
+                    </td>
+                  )}
+                  {visibleColumns.Address !== false && (
+                    <td className="py-2.5 px-3.5 text-zinc-600 max-w-[220px] truncate">
+                      {sup.Address}
+                    </td>
+                  )}
+                  {visibleColumns.Status !== false && (
+                    <td className="py-2.5 px-3.5">
+                      <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200/60">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Đạt GDP
+                      </span>
+                    </td>
+                  )}
+                  <td className="py-2.5 px-3.5 text-right">
+                    <div className="inline-flex items-center justify-end gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setViewingSupplier(sup)}
+                        title="Xem chi tiết (Alt+V)"
+                        className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(sup)}
+                        title="Chỉnh sửa (Alt+E)"
+                        className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCloneOne(sup)}
+                        title="Nhân bản (Alt+C)"
+                        className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteOne(sup)}
+                        title="Xóa (Alt+H)"
+                        className="rounded p-1.5 text-zinc-400 hover:bg-rose-50 hover:text-rose-600"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <EnterprisePagination
+          page={page}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalItems={filteredSuppliers.length}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       {/* Khu vực Lập Phiếu Nhập Kho & Lịch sử Nhập kho */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Form Lập Phiếu Nhập Kho */}
         <form
           onSubmit={handleCreatePurchaseOrder}
           className="lg:col-span-7 rounded-lg border border-zinc-200 bg-white p-5 shadow-2xs space-y-4"
@@ -228,7 +482,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
             <div className="flex items-center gap-2">
               <FilePlus2 className="h-4 w-4 text-zinc-800" />
               <h2 className="text-sm font-semibold text-zinc-900">
-                Lập Phiếu Nhập Kho Dược Phẩm Mới
+                Lập Phiếu Nhập Kho Dược Phẩm Mới (Tự Động Cộng Tồn Kho)
               </h2>
             </div>
             <button
@@ -249,7 +503,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
               <select
                 value={selectedSupplierId}
                 onChange={(e) => setSelectedSupplierId(Number(e.target.value))}
-                className="w-full h-9 rounded-md border border-zinc-300 bg-white px-3 text-xs text-zinc-900 focus:border-zinc-900 focus:outline-none"
+                className="w-full h-9 rounded-md border border-zinc-300 bg-white px-3 text-xs text-zinc-900"
               >
                 {suppliers.map((s) => (
                   <option key={s.SupplierID} value={s.SupplierID}>
@@ -266,12 +520,11 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 type="text"
                 value={poNote}
                 onChange={(e) => setPoNote(e.target.value)}
-                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-xs text-zinc-900 focus:border-zinc-900 focus:outline-none"
+                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-xs text-zinc-900"
               />
             </div>
           </div>
 
-          {/* Chi tiết các dòng thuốc nhập */}
           <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
             {poItems.map((item, idx) => (
               <div
@@ -377,7 +630,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 <div className="col-span-2 sm:col-span-1 flex justify-end">
                   <button
                     type="button"
-                    onClick={() => handleRemovePoLine(idx)}
+                    onClick={() => setPoItems((prev) => prev.filter((_, i) => i !== idx))}
                     disabled={poItems.length <= 1}
                     className="h-8 w-8 inline-flex items-center justify-center rounded text-zinc-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"
                   >
@@ -456,28 +709,32 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                     </div>
                   ))}
                 </div>
-
-                <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1">
-                  <span>Người lập: {po.CreatedBy || 'DS. Nguyễn Văn Trung'}</span>
-                  <span>{new Date(po.CreateDate).toLocaleString('vi-VN')}</span>
-                </div>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Modal Thêm Nhà phân phối */}
+      {/* Modal Thêm / Sửa Nhà phân phối */}
       {showSupplierModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
           <form
-            onSubmit={handleCreateSupplier}
+            onSubmit={handleSaveSupplier}
             className="w-full max-w-md rounded-lg bg-white shadow-xl border border-zinc-200 overflow-hidden"
           >
-            <div className="border-b border-zinc-200 px-5 py-3.5">
+            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-3.5">
               <h3 className="text-sm font-semibold text-zinc-900">
-                Thêm Đối tác Phân phối Dược phẩm
+                {editingSupplier
+                  ? 'Cập nhật Đối tác Phân phối'
+                  : 'Thêm Đối tác Phân phối Dược phẩm'}
               </h3>
+              <button
+                type="button"
+                onClick={() => setShowSupplierModal(false)}
+                className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
             <div className="p-5 space-y-3 text-xs">
               <div>
@@ -487,9 +744,9 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 <input
                   type="text"
                   required
-                  value={newSupplier.SupplierName}
+                  value={supplierForm.SupplierName}
                   onChange={(e) =>
-                    setNewSupplier({ ...newSupplier, SupplierName: e.target.value })
+                    setSupplierForm({ ...supplierForm, SupplierName: e.target.value })
                   }
                   placeholder="VD: Công ty CP Dược phẩm Imexpharm"
                   className="w-full h-8 rounded border border-zinc-300 px-2.5"
@@ -501,9 +758,8 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                   <input
                     type="text"
                     required
-                    value={newSupplier.Phone}
-                    onChange={(e) => setNewSupplier({ ...newSupplier, Phone: e.target.value })}
-                    placeholder="0283..."
+                    value={supplierForm.Phone}
+                    onChange={(e) => setSupplierForm({ ...supplierForm, Phone: e.target.value })}
                     className="w-full h-8 rounded border border-zinc-300 px-2.5"
                   />
                 </div>
@@ -511,9 +767,10 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                   <label className="block font-medium text-zinc-700 mb-1">Mã số thuế</label>
                   <input
                     type="text"
-                    value={newSupplier.TaxCode}
-                    onChange={(e) => setNewSupplier({ ...newSupplier, TaxCode: e.target.value })}
-                    placeholder="0100..."
+                    value={supplierForm.TaxCode}
+                    onChange={(e) =>
+                      setSupplierForm({ ...supplierForm, TaxCode: e.target.value })
+                    }
                     className="w-full h-8 rounded border border-zinc-300 px-2.5"
                   />
                 </div>
@@ -522,11 +779,10 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 <label className="block font-medium text-zinc-700 mb-1">Người liên hệ</label>
                 <input
                   type="text"
-                  value={newSupplier.ContactPerson}
+                  value={supplierForm.ContactPerson}
                   onChange={(e) =>
-                    setNewSupplier({ ...newSupplier, ContactPerson: e.target.value })
+                    setSupplierForm({ ...supplierForm, ContactPerson: e.target.value })
                   }
-                  placeholder="Họ tên trình dược viên / quản lý"
                   className="w-full h-8 rounded border border-zinc-300 px-2.5"
                 />
               </div>
@@ -534,9 +790,10 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 <label className="block font-medium text-zinc-700 mb-1">Địa chỉ trụ sở / kho</label>
                 <input
                   type="text"
-                  value={newSupplier.Address}
-                  onChange={(e) => setNewSupplier({ ...newSupplier, Address: e.target.value })}
-                  placeholder="Số nhà, đường, quận/huyện, tỉnh/thành..."
+                  value={supplierForm.Address}
+                  onChange={(e) =>
+                    setSupplierForm({ ...supplierForm, Address: e.target.value })
+                  }
                   className="w-full h-8 rounded border border-zinc-300 px-2.5"
                 />
               </div>
@@ -557,6 +814,61 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Modal Xem Chi Tiết Nhà phân phối (Alt+V) */}
+      {viewingSupplier && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
+          <div className="w-full max-w-md rounded-lg bg-white shadow-xl border border-zinc-200 overflow-hidden">
+            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-3.5">
+              <h3 className="text-sm font-semibold text-zinc-900">
+                Hồ sơ Nhà phân phối ({viewingSupplier.SupplierCode})
+              </h3>
+              <button
+                type="button"
+                onClick={() => setViewingSupplier(null)}
+                className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-2.5 text-xs">
+              <div>
+                <span className="text-zinc-500">Tên doanh nghiệp: </span>
+                <strong className="text-zinc-900">{viewingSupplier.SupplierName}</strong>
+              </div>
+              <div>
+                <span className="text-zinc-500">Đại diện liên hệ: </span>
+                <span className="text-zinc-800">{viewingSupplier.ContactPerson}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500">Số điện thoại: </span>
+                <span className="font-mono text-zinc-800">{viewingSupplier.Phone}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500">Mã số thuế: </span>
+                <span className="font-mono text-zinc-800">{viewingSupplier.TaxCode || '---'}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500">Địa chỉ kho: </span>
+                <span className="text-zinc-800">{viewingSupplier.Address}</span>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-zinc-100 px-5 py-3 bg-zinc-50">
+              <button
+                type="button"
+                onClick={() => {
+                  const s = viewingSupplier;
+                  setViewingSupplier(null);
+                  openEditModal(s);
+                }}
+                className="h-8 rounded bg-zinc-900 px-3 text-xs font-medium text-white"
+              >
+                Chỉnh sửa (Alt+E)
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

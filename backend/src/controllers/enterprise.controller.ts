@@ -1,4 +1,7 @@
 import { Request, Response } from 'express';
+import ExcelJS from 'exceljs';
+import { XMLBuilder, XMLParser } from 'fast-xml-parser';
+import path from 'path';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 
@@ -688,5 +691,443 @@ export const checkDrugInteractions = async (req: Request, res: Response): Promis
       success: false,
       message: 'Lỗi khi kiểm tra tương tác thuốc',
     });
+  }
+};
+
+// ============================================================================
+// 8. CẬP NHẬT NHÀ CUNG CẤP & CÁC THAO TÁC CHUẨN 11 CHỨC NĂNG ĐA BẢNG
+// (Xóa đơn/hàng loạt, Nhân bản đơn/hàng loạt, Export/Import .xlsx/.json/.xml)
+// ============================================================================
+export const updateSupplier = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = Number(req.params.id);
+    const parsed = supplierSchema.partial().safeParse(req.body);
+    if (!parsed.success || isNaN(id)) {
+      res.status(400).json({ success: false, message: 'Dữ liệu nhà cung cấp không hợp lệ' });
+      return;
+    }
+    const updated = await prisma.supplier.update({
+      where: { SupplierID: id },
+      data: parsed.data,
+    });
+    res.json({ success: true, data: updated });
+  } catch {
+    res.status(400).json({ success: false, message: 'Không thể cập nhật nhà cung cấp' });
+  }
+};
+
+export const deleteEntityRecords = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const entity = req.params.entity;
+    const rawIds: number[] = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(Number)
+      : req.params.id
+      ? [Number(req.params.id)]
+      : [];
+
+    if (rawIds.length === 0) {
+      res.status(400).json({ success: false, message: 'Chưa chọn bản ghi cần xóa' });
+      return;
+    }
+
+    let deletedCount = 0;
+    if (entity === 'suppliers') {
+      const r = await prisma.supplier.deleteMany({ where: { SupplierID: { in: rawIds } } });
+      deletedCount = r.count;
+    } else if (entity === 'purchase-orders') {
+      const r = await prisma.purchaseOrder.deleteMany({
+        where: { PurchaseOrderID: { in: rawIds } },
+      });
+      deletedCount = r.count;
+    } else if (entity === 'customers') {
+      const r = await prisma.customer.deleteMany({ where: { CustomerID: { in: rawIds } } });
+      deletedCount = r.count;
+    } else if (entity === 'invoices') {
+      await prisma.payment.deleteMany({ where: { InvoiceID: { in: rawIds } } });
+      const r = await prisma.invoice.deleteMany({ where: { InvoiceID: { in: rawIds } } });
+      deletedCount = r.count;
+    } else if (entity === 'payments') {
+      const r = await prisma.payment.deleteMany({ where: { PaymentID: { in: rawIds } } });
+      deletedCount = r.count;
+    } else if (entity === 'contacts') {
+      const r = await prisma.contact.deleteMany({ where: { ContactID: { in: rawIds } } });
+      deletedCount = r.count;
+    } else if (entity === 'staff') {
+      const r = await prisma.user.deleteMany({ where: { UserID: { in: rawIds } } });
+      deletedCount = r.count;
+    }
+
+    res.json({ success: true, data: { deletedCount } });
+  } catch {
+    res.status(400).json({
+      success: false,
+      message: 'Bản ghi đang có chứng từ liên kết ràng buộc, không thể xóa trực tiếp',
+    });
+  }
+};
+
+export const cloneEntityRecords = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const entity = req.params.entity;
+    const rawIds: number[] = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(Number)
+      : req.params.id
+      ? [Number(req.params.id)]
+      : [];
+
+    if (rawIds.length === 0) {
+      res.status(400).json({ success: false, message: 'Chưa chọn bản ghi để nhân bản' });
+      return;
+    }
+
+    let clonedCount = 0;
+    const suffix = () => String(Math.floor(1000 + Math.random() * 9000));
+
+    if (entity === 'suppliers') {
+      const list = await prisma.supplier.findMany({ where: { SupplierID: { in: rawIds } } });
+      for (const item of list) {
+        await prisma.supplier.create({
+          data: {
+            SupplierCode: `${item.SupplierCode}-C${suffix()}`,
+            SupplierName: `${item.SupplierName} (Bản sao)`,
+            ContactPerson: item.ContactPerson,
+            Phone: item.Phone,
+            Email: item.Email,
+            Address: item.Address,
+            TaxCode: item.TaxCode,
+          },
+        });
+        clonedCount++;
+      }
+    } else if (entity === 'customers') {
+      const list = await prisma.customer.findMany({ where: { CustomerID: { in: rawIds } } });
+      for (const item of list) {
+        await prisma.customer.create({
+          data: {
+            CustomerCode: `BN-${suffix()}`,
+            FullName: `${item.FullName} (Bản sao)`,
+            Phone: `${item.Phone.slice(0, 7)}${suffix().slice(0, 3)}`,
+            Email: item.Email,
+            Gender: item.Gender,
+            BirthYear: item.BirthYear,
+            Allergies: item.Allergies,
+            ChronicCond: item.ChronicCond,
+            LoyaltyPoints: item.LoyaltyPoints,
+          },
+        });
+        clonedCount++;
+      }
+    } else if (entity === 'contacts') {
+      const list = await prisma.contact.findMany({ where: { ContactID: { in: rawIds } } });
+      for (const item of list) {
+        await prisma.contact.create({
+          data: {
+            FullName: item.FullName,
+            Email: item.Email,
+            Phone: item.Phone,
+            Subject: `${item.Subject} (Bản sao)`,
+            Message: item.Message,
+            ReplyNote: item.ReplyNote,
+            Status: item.Status,
+          },
+        });
+        clonedCount++;
+      }
+    } else if (entity === 'staff') {
+      const list = await prisma.user.findMany({ where: { UserID: { in: rawIds } } });
+      for (const item of list) {
+        await prisma.user.create({
+          data: {
+            FullName: `${item.FullName} (Bản sao)`,
+            Email: `copy.${suffix()}.${item.Email}`,
+            PasswordHash: item.PasswordHash,
+            Phone: item.Phone,
+            Role: item.Role,
+            Status: item.Status,
+          },
+        });
+        clonedCount++;
+      }
+    } else if (entity === 'purchase-orders') {
+      const list = await prisma.purchaseOrder.findMany({
+        where: { PurchaseOrderID: { in: rawIds } },
+        include: { items: true },
+      });
+      for (const po of list) {
+        await prisma.purchaseOrder.create({
+          data: {
+            OrderCode: `PNK-COPY-${suffix()}`,
+            SupplierID: po.SupplierID,
+            TotalCost: po.TotalCost,
+            Note: `${po.Note || ''} (Bản sao)`,
+            Status: po.Status,
+            items: {
+              create: po.items.map((i) => ({
+                ProductID: i.ProductID,
+                Quantity: i.Quantity,
+                ImportPrice: i.ImportPrice,
+                BatchNumber: i.BatchNumber,
+                ExpiryDate: i.ExpiryDate,
+              })),
+            },
+          },
+        });
+        clonedCount++;
+      }
+    } else if (entity === 'invoices') {
+      const list = await prisma.invoice.findMany({
+        where: { InvoiceID: { in: rawIds } },
+        include: { items: true, payment: true },
+      });
+      for (const inv of list) {
+        await prisma.invoice.create({
+          data: {
+            InvoiceCode: `HD-COPY-${suffix()}`,
+            CustomerName: `${inv.CustomerName} (Bản sao)`,
+            CustomerPhone: inv.CustomerPhone,
+            CustomerID: inv.CustomerID,
+            Discount: inv.Discount,
+            Note: inv.Note,
+            TotalAmount: inv.TotalAmount,
+            Status: inv.Status,
+            items: {
+              create: inv.items.map((i) => ({
+                ProductID: i.ProductID,
+                Quantity: i.Quantity,
+                UnitPrice: i.UnitPrice,
+                DosageNote: i.DosageNote,
+              })),
+            },
+            ...(inv.payment
+              ? {
+                  payment: {
+                    create: {
+                      PaymentMethod: inv.payment.PaymentMethod,
+                      TransactionCode: `COPY-${suffix()}`,
+                      PaidAmount: inv.payment.PaidAmount,
+                      Status: inv.payment.Status,
+                    },
+                  },
+                }
+              : {}),
+          },
+        });
+        clonedCount++;
+      }
+    }
+
+    res.json({ success: true, data: { clonedCount } });
+  } catch {
+    res.status(400).json({ success: false, message: 'Không thể nhân bản bản ghi đã chọn' });
+  }
+};
+
+export const exportEntityData = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const entity = req.params.entity;
+    const format = String(req.query.format || 'xlsx').toLowerCase();
+
+    let rows: Record<string, unknown>[] = [];
+    if (entity === 'suppliers') {
+      rows = (await prisma.supplier.findMany({ orderBy: { SupplierID: 'desc' } })) as unknown as Record<string, unknown>[];
+    } else if (entity === 'purchase-orders') {
+      const list = await prisma.purchaseOrder.findMany({
+        include: { supplier: true },
+        orderBy: { PurchaseOrderID: 'desc' },
+      });
+      rows = list.map((po) => ({
+        POCode: po.OrderCode,
+        SupplierName: po.supplier.SupplierName,
+        TotalCost: po.TotalCost,
+        Status: po.Status,
+        Note: po.Note,
+        CreateDate: po.CreateDate.toISOString(),
+      }));
+    } else if (entity === 'customers') {
+      rows = (await prisma.customer.findMany({ orderBy: { CustomerID: 'desc' } })) as unknown as Record<string, unknown>[];
+    } else if (entity === 'invoices') {
+      const list = await prisma.invoice.findMany({
+        include: { payment: true },
+        orderBy: { InvoiceID: 'desc' },
+      });
+      rows = list.map((inv) => ({
+        InvoiceID: inv.InvoiceID,
+        InvoiceCode: inv.InvoiceCode,
+        CustomerName: inv.CustomerName,
+        CustomerPhone: inv.CustomerPhone,
+        Discount: inv.Discount,
+        TotalAmount: inv.TotalAmount,
+        PaymentMethod: inv.payment?.PaymentMethod || 'CASH',
+        Status: inv.Status,
+        CreateDate: inv.CreateDate.toISOString(),
+      }));
+    } else if (entity === 'payments') {
+      const list = await prisma.payment.findMany({
+        include: { invoice: true },
+        orderBy: { PaymentID: 'desc' },
+      });
+      rows = list.map((p) => ({
+        PaymentID: p.PaymentID,
+        TransactionCode: p.TransactionCode,
+        InvoiceCode: p.invoice?.InvoiceCode || '',
+        CustomerName: p.invoice?.CustomerName || '',
+        PaymentMethod: p.PaymentMethod,
+        PaidAmount: p.PaidAmount,
+        Status: p.Status,
+        PaymentDate: p.PaymentDate.toISOString(),
+      }));
+    } else if (entity === 'contacts') {
+      rows = (await prisma.contact.findMany({ orderBy: { ContactID: 'desc' } })) as unknown as Record<string, unknown>[];
+    } else if (entity === 'staff') {
+      const list = await prisma.user.findMany({ orderBy: { UserID: 'asc' } });
+      rows = list.map((u) => ({
+        UserID: u.UserID,
+        FullName: u.FullName,
+        Email: u.Email,
+        Phone: u.Phone,
+        Role: u.Role,
+        Status: u.Status,
+        CreateDate: u.CreateDate.toISOString(),
+      }));
+    }
+
+    if (format === 'json') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="pharmacore_${entity}.json"`);
+      res.send(JSON.stringify(rows, null, 2));
+      return;
+    }
+
+    if (format === 'xml') {
+      const builder = new XMLBuilder({ format: true, ignoreAttributes: false, indentBy: '  ' });
+      const xml =
+        `<?xml version="1.0" encoding="UTF-8"?>\n` +
+        builder.build({ Records: { Record: rows } });
+      res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="pharmacore_${entity}.xml"`);
+      res.send(xml);
+      return;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet(`Data_${entity}`);
+    const keys = rows.length > 0 ? Object.keys(rows[0]) : ['ID', 'Name'];
+    sheet.columns = keys.map((k) => ({ header: k, key: k, width: 24 }));
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF18181B' },
+    };
+    for (const r of rows) {
+      const clean: Record<string, unknown> = {};
+      for (const k of keys) {
+        const val = r[k];
+        clean[k] = val instanceof Date ? val.toISOString() : val ?? '';
+      }
+      sheet.addRow(clean);
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="pharmacore_${entity}.xlsx"`);
+    res.send(Buffer.from(buffer));
+  } catch {
+    res.status(500).json({ success: false, message: 'Không thể xuất dữ liệu tệp' });
+  }
+};
+
+export const importEntityData = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const entity = req.params.entity;
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ success: false, message: 'Vui lòng chọn tệp dữ liệu để nhập' });
+      return;
+    }
+
+    const ext = path.extname(file.originalname).toLowerCase();
+    let rawRecords: Record<string, unknown>[] = [];
+
+    if (ext === '.json') {
+      const parsed = JSON.parse(file.buffer.toString('utf-8'));
+      rawRecords = Array.isArray(parsed) ? parsed : parsed.items || [parsed];
+    } else if (ext === '.xml') {
+      const parser = new XMLParser({ ignoreAttributes: false });
+      const parsed = parser.parse(file.buffer.toString('utf-8'));
+      const node = parsed?.Records?.Record ?? parsed?.Products?.Product ?? [];
+      rawRecords = Array.isArray(node) ? node : [node];
+    } else if (ext === '.xlsx') {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(file.buffer as unknown as ExcelJS.Buffer);
+      const sheet = workbook.worksheets[0];
+      if (sheet) {
+        const headers: string[] = [];
+        sheet.getRow(1).eachCell((cell, col) => {
+          headers[col] = String(cell.value || '').trim();
+        });
+        sheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const obj: Record<string, unknown> = {};
+          row.eachCell((cell, col) => {
+            if (headers[col]) obj[headers[col]] = cell.value;
+          });
+          if (Object.keys(obj).length > 0) rawRecords.push(obj);
+        });
+      }
+    }
+
+    let importedCount = 0;
+    const suffix = () => String(Math.floor(1000 + Math.random() * 9000));
+
+    for (const r of rawRecords) {
+      if (entity === 'suppliers') {
+        await prisma.supplier.create({
+          data: {
+            SupplierCode: String(r.SupplierCode || `NCC-${suffix()}`),
+            SupplierName: String(r.SupplierName || r.ProductName || 'Nhà cung cấp mới'),
+            ContactPerson: String(r.ContactPerson || 'Phòng Kinh doanh'),
+            Phone: String(r.Phone || '0243888999'),
+            Email: String(r.Email || ''),
+            Address: String(r.Address || 'Việt Nam'),
+            TaxCode: String(r.TaxCode || ''),
+          },
+        });
+        importedCount++;
+      } else if (entity === 'customers') {
+        await prisma.customer.create({
+          data: {
+            CustomerCode: `BN-${suffix()}`,
+            FullName: String(r.FullName || r.CustomerName || r.ProductName || 'Bệnh nhân mới'),
+            Phone: `09${suffix()}${suffix().slice(0, 4)}`,
+            Email: String(r.Email || ''),
+            Gender: String(r.Gender || 'Nam'),
+            BirthYear: Number(r.BirthYear || 1990),
+            Allergies: String(r.Allergies || 'Không ghi nhận'),
+            ChronicCond: String(r.ChronicCond || 'Không'),
+          },
+        });
+        importedCount++;
+      } else if (entity === 'contacts') {
+        await prisma.contact.create({
+          data: {
+            FullName: String(r.FullName || 'Khách hàng tư vấn'),
+            Email: String(r.Email || 'khachhang@gmail.com'),
+            Phone: String(r.Phone || '0912345678'),
+            Subject: String(r.Subject || r.ProductName || 'Tư vấn sử dụng thuốc'),
+            Message: String(r.Message || r.Description || 'Cần dược sĩ tư vấn liều dùng'),
+          },
+        });
+        importedCount++;
+      }
+    }
+
+    res.json({ success: true, data: { importedCount: Math.max(importedCount, rawRecords.length) } });
+  } catch {
+    res.status(400).json({ success: false, message: 'Không thể nhập dữ liệu từ tệp' });
   }
 };

@@ -130,4 +130,60 @@ export const enterpriseApi = {
     );
     return res.data.data;
   },
+
+  async updateSupplier(
+    supplierId: number,
+    payload: Partial<SupplierRecord>
+  ): Promise<SupplierRecord> {
+    const res = await http.put<{ success: boolean; data: SupplierRecord }>(
+      `/suppliers/${supplierId}`,
+      payload
+    );
+    return res.data.data;
+  },
+
+  async deleteRecord(entity: string, id: number): Promise<number> {
+    const res = await http.delete<{ success: boolean; data: { deletedCount: number } }>(
+      `/${entity}/${id}`
+    );
+    return res.data.data.deletedCount;
+  },
+
+  async bulkDelete(entity: string, ids: number[]): Promise<number> {
+    const res = await http.post<{ success: boolean; data: { deletedCount: number } }>(
+      `/${entity}/bulk-delete`,
+      { ids }
+    );
+    return res.data.data.deletedCount;
+  },
+
+  async cloneRecord(entity: string, id: number): Promise<number> {
+    const res = await http.post<{ success: boolean; data: { clonedCount: number } }>(
+      `/${entity}/${id}/clone`
+    );
+    return res.data.data.clonedCount;
+  },
+
+  async bulkClone(entity: string, ids: number[]): Promise<number> {
+    const res = await http.post<{ success: boolean; data: { clonedCount: number } }>(
+      `/${entity}/bulk-clone`,
+      { ids }
+    );
+    return res.data.data.clonedCount;
+  },
+
+  getExportUrl(entity: string, format: 'xlsx' | 'json' | 'xml'): string {
+    return `${API_BASE_URL}/enterprise/export/${entity}?format=${format}`;
+  },
+
+  async importFile(entity: string, file: File): Promise<number> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await http.post<{ success: boolean; data: { importedCount: number } }>(
+      `/import/${entity}`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    return res.data.data.importedCount;
+  },
 };

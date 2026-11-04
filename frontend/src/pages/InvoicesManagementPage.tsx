@@ -1,16 +1,32 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   FileText,
-  Search,
   RotateCcw,
   Printer,
   CheckCircle2,
   XCircle,
   QrCode,
+  Eye,
+  Copy,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formsApi } from '../services/forms.api';
+import { enterpriseApi } from '../services/enterprise.api';
 import { InvoiceRecord } from '../types/forms';
+import {
+  ColumnConfig,
+  EnterprisePagination,
+  EnterpriseToolbar,
+} from '../components/common/EnterpriseDataToolbar';
+
+const INVOICE_COLUMNS: ColumnConfig[] = [
+  { id: 'InvoiceCode', label: 'Mã chứng từ' },
+  { id: 'CustomerName', label: 'Bệnh nhân / Khách hàng' },
+  { id: 'PaymentMethod', label: 'Kênh thanh toán' },
+  { id: 'TotalAmount', label: 'Tổng thanh toán' },
+  { id: 'Status', label: 'Trạng thái' },
+];
 
 export const InvoicesManagementPage: React.FC = () => {
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
@@ -20,11 +36,18 @@ export const InvoicesManagementPage: React.FC = () => {
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceRecord | null>(null);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
 
+  // 11 Chức năng Data Grid
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({});
+
   const loadInvoices = async () => {
     setLoading(true);
     try {
       const list = await formsApi.listInvoices();
       setInvoices(list);
+      setSelectedIds([]);
       if (list.length > 0 && !selectedInvoice) {
         setSelectedInvoice(list[0]);
       } else if (selectedInvoice) {
@@ -68,6 +91,56 @@ export const InvoicesManagementPage: React.FC = () => {
     }
   };
 
+  const handleDeleteOne = async (inv: InvoiceRecord) => {
+    if (!window.confirm(`Xác nhận xóa chứng từ hóa đơn ${inv.InvoiceCode}?`)) return;
+    try {
+      await enterpriseApi.deleteRecord('invoices', inv.InvoiceID);
+      toast.success(`Đã xóa hóa đơn ${inv.InvoiceCode}`);
+      await loadInvoices();
+    } catch {
+      toast.error('Không thể xóa chứng từ hóa đơn');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) {
+      toast.info('Vui lòng chọn ít nhất 1 hóa đơn trong bảng');
+      return;
+    }
+    if (!window.confirm(`Xác nhận xóa ${selectedIds.length} hóa đơn đã chọn?`)) return;
+    try {
+      const count = await enterpriseApi.bulkDelete('invoices', selectedIds);
+      toast.success(`Đã xóa ${count} hóa đơn`);
+      await loadInvoices();
+    } catch {
+      toast.error('Không thể xóa hàng loạt hóa đơn');
+    }
+  };
+
+  const handleCloneOne = async (inv: InvoiceRecord) => {
+    try {
+      await enterpriseApi.cloneRecord('invoices', inv.InvoiceID);
+      toast.success(`Đã nhân bản hóa đơn ${inv.InvoiceCode}`);
+      await loadInvoices();
+    } catch {
+      toast.error('Không thể nhân bản hóa đơn');
+    }
+  };
+
+  const handleBulkClone = async () => {
+    if (selectedIds.length === 0) {
+      toast.info('Vui lòng chọn ít nhất 1 hóa đơn để nhân bản');
+      return;
+    }
+    try {
+      const count = await enterpriseApi.bulkClone('invoices', selectedIds);
+      toast.success(`Đã nhân bản ${count} hóa đơn`);
+      await loadInvoices();
+    } catch {
+      toast.error('Không thể nhân bản hàng loạt');
+    }
+  };
+
   const filtered = useMemo(() => {
     return invoices.filter((inv) => {
       const matchStatus = statusFilter === 'ALL' || inv.Status === statusFilter;
@@ -81,63 +154,89 @@ export const InvoicesManagementPage: React.FC = () => {
     });
   }, [invoices, statusFilter, search]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pagedInvoices = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize]
+  );
+
   const formatVND = (val: number) =>
     new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-            Quản lý Hóa Đơn Xuất Bán & Hoàn Trả Hàng (Invoices & Refunds)
-          </h1>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            Tra cứu lịch sử đơn thuốc xuất bán, in lại phiếu hướng dẫn liều dùng GPP và xử lý hoàn trả tự động cộng lại tồn kho.
-          </p>
-        </div>
-      </div>
-
-      {/* Bộ lọc & Tìm kiếm */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3.5 shadow-2xs">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm theo mã hóa đơn (HD-...), tên bệnh nhân hoặc SĐT..."
-            className="w-full h-8 rounded-md border border-zinc-300 pl-9 pr-3 text-xs text-zinc-900 focus:border-zinc-900 focus:outline-none"
-          />
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          {[
-            { id: 'ALL', label: `Tất cả (${invoices.length})` },
-            {
-              id: 'COMPLETED',
-              label: `Hoàn tất (${invoices.filter((i) => i.Status === 'COMPLETED').length})`,
-            },
-            {
-              id: 'CANCELLED',
-              label: `Đã hoàn trả (${invoices.filter((i) => i.Status === 'CANCELLED').length})`,
-            },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setStatusFilter(tab.id)}
-              className={`h-8 rounded-md px-3 text-xs font-medium transition-colors ${
-                statusFilter === tab.id
-                  ? 'bg-zinc-900 text-white'
-                  : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200/70'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Thanh công cụ 11 chức năng chuẩn Doanh nghiệp */}
+      <EnterpriseToolbar
+        entity="invoices"
+        title="Quản lý Hóa Đơn Xuất Bán & Hoàn Trả Hàng (Invoices & Refunds)"
+        subtitle="Tra cứu lịch sử đơn thuốc xuất bán, nhân bản đơn mẫu, xuất báo cáo Excel/JSON/XML, ẩn/hiện cột và hoàn trả tự động cộng lại tồn kho."
+        createLabel="Nhân bản Đơn mẫu (Alt+N)"
+        search={search}
+        onSearchChange={(val) => {
+          setSearch(val);
+          setPage(1);
+        }}
+        searchPlaceholder="Tìm theo mã hóa đơn (HD-...), tên bệnh nhân hoặc SĐT... (Alt + F)"
+        columns={INVOICE_COLUMNS}
+        visibleColumns={visibleColumns}
+        onToggleColumn={(colId) =>
+          setVisibleColumns((prev) => ({
+            ...prev,
+            [colId]: prev[colId] === false ? true : false,
+          }))
+        }
+        selectedCount={selectedIds.length}
+        onClearSelection={() => setSelectedIds([])}
+        onOpenCreate={() => {
+          if (invoices.length > 0) void handleCloneOne(invoices[0]);
+        }}
+        onBulkDelete={() => void handleBulkDelete()}
+        onBulkClone={() => void handleBulkClone()}
+        onViewSelected={() => {
+          if (selectedIds.length === 1) {
+            const found = invoices.find((i) => i.InvoiceID === selectedIds[0]);
+            if (found) setSelectedInvoice(found);
+          }
+        }}
+        onCloneSelected={() => {
+          if (selectedIds.length === 1) {
+            const found = invoices.find((i) => i.InvoiceID === selectedIds[0]);
+            if (found) void handleCloneOne(found);
+          }
+        }}
+        onReload={loadInvoices}
+        extraFilters={
+          <div className="flex items-center gap-1.5">
+            {[
+              { id: 'ALL', label: `Tất cả (${invoices.length})` },
+              {
+                id: 'COMPLETED',
+                label: `Hoàn tất (${invoices.filter((i) => i.Status === 'COMPLETED').length})`,
+              },
+              {
+                id: 'CANCELLED',
+                label: `Đã hoàn trả (${invoices.filter((i) => i.Status === 'CANCELLED').length})`,
+              },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setStatusFilter(tab.id);
+                  setPage(1);
+                }}
+                className={`h-8 rounded-md px-3 text-xs font-medium transition-colors ${
+                  statusFilter === tab.id
+                    ? 'bg-zinc-900 text-white'
+                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200/70'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       {/* Bảng Hóa đơn & Chi tiết Hóa đơn */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
@@ -146,28 +245,56 @@ export const InvoicesManagementPage: React.FC = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-zinc-200 bg-zinc-50/70 text-[11px] font-medium text-zinc-500">
-                  <th className="py-2.5 px-3.5">Mã chứng từ</th>
-                  <th className="py-2.5 px-3.5">Bệnh nhân / Khách hàng</th>
-                  <th className="py-2.5 px-3.5">Thanh toán</th>
-                  <th className="py-2.5 px-3.5 text-right">Tổng tiền</th>
-                  <th className="py-2.5 px-3.5 text-right">Trạng thái</th>
+                  <th className="py-2.5 px-3 w-8">
+                    <input
+                      type="checkbox"
+                      checked={
+                        pagedInvoices.length > 0 &&
+                        pagedInvoices.every((i) => selectedIds.includes(i.InvoiceID))
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedIds(pagedInvoices.map((i) => i.InvoiceID));
+                        } else {
+                          setSelectedIds([]);
+                        }
+                      }}
+                      className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
+                    />
+                  </th>
+                  {visibleColumns.InvoiceCode !== false && (
+                    <th className="py-2.5 px-3">Mã chứng từ</th>
+                  )}
+                  {visibleColumns.CustomerName !== false && (
+                    <th className="py-2.5 px-3">Bệnh nhân / Khách hàng</th>
+                  )}
+                  {visibleColumns.PaymentMethod !== false && (
+                    <th className="py-2.5 px-3">Thanh toán</th>
+                  )}
+                  {visibleColumns.TotalAmount !== false && (
+                    <th className="py-2.5 px-3 text-right">Tổng tiền</th>
+                  )}
+                  {visibleColumns.Status !== false && (
+                    <th className="py-2.5 px-3 text-right">Trạng thái</th>
+                  )}
+                  <th className="py-2.5 px-3 text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200/60 text-xs">
                 {loading ? (
                   <tr>
-                    <td colSpan={5} className="py-10 text-center text-zinc-400">
+                    <td colSpan={7} className="py-10 text-center text-zinc-400">
                       Đang tải danh sách chứng từ hóa đơn...
                     </td>
                   </tr>
-                ) : filtered.length === 0 ? (
+                ) : pagedInvoices.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-10 text-center text-zinc-400">
+                    <td colSpan={7} className="py-10 text-center text-zinc-400">
                       Không tìm thấy hóa đơn phù hợp.
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((inv) => {
+                  pagedInvoices.map((inv) => {
                     const isSelected = selectedInvoice?.InvoiceID === inv.InvoiceID;
                     return (
                       <tr
@@ -177,40 +304,98 @@ export const InvoicesManagementPage: React.FC = () => {
                           isSelected ? 'bg-zinc-100/90' : 'hover:bg-zinc-50'
                         }`}
                       >
-                        <td className="py-3 px-3.5">
-                          <div className="font-mono font-semibold text-zinc-900">
-                            {inv.InvoiceCode}
-                          </div>
-                          <div className="text-[11px] text-zinc-400">
-                            {new Date(inv.CreateDate).toLocaleString('vi-VN')}
-                          </div>
+                        <td
+                          className="py-3 px-3"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(inv.InvoiceID)}
+                            onChange={() =>
+                              setSelectedIds((prev) =>
+                                prev.includes(inv.InvoiceID)
+                                  ? prev.filter((id) => id !== inv.InvoiceID)
+                                  : [...prev, inv.InvoiceID]
+                              )
+                            }
+                            className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
+                          />
                         </td>
-                        <td className="py-3 px-3.5">
-                          <div className="font-medium text-zinc-900">{inv.CustomerName}</div>
-                          <div className="text-[11px] text-zinc-500">
-                            {inv.CustomerPhone || 'Khách lẻ'} · {inv.items.length} mặt hàng
-                          </div>
-                        </td>
-                        <td className="py-3 px-3.5">
-                          <span className="rounded bg-zinc-100 px-2 py-0.5 font-mono text-[11px] font-medium text-zinc-700">
-                            {inv.payment?.PaymentMethod || 'CASH'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3.5 text-right font-semibold text-zinc-900 tabular-nums">
-                          {formatVND(inv.TotalAmount)}
-                        </td>
-                        <td className="py-3 px-3.5 text-right">
-                          {inv.Status === 'CANCELLED' ? (
-                            <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 border border-rose-200/60">
-                              <XCircle className="h-3 w-3" />
-                              Đã hoàn trả
+                        {visibleColumns.InvoiceCode !== false && (
+                          <td className="py-3 px-3">
+                            <div className="font-mono font-semibold text-zinc-900">
+                              {inv.InvoiceCode}
+                            </div>
+                            <div className="text-[11px] text-zinc-400">
+                              {new Date(inv.CreateDate).toLocaleString('vi-VN')}
+                            </div>
+                          </td>
+                        )}
+                        {visibleColumns.CustomerName !== false && (
+                          <td className="py-3 px-3">
+                            <div className="font-medium text-zinc-900">{inv.CustomerName}</div>
+                            <div className="text-[11px] text-zinc-500">
+                              {inv.CustomerPhone || 'Khách lẻ'} · {inv.items.length} mặt hàng
+                            </div>
+                          </td>
+                        )}
+                        {visibleColumns.PaymentMethod !== false && (
+                          <td className="py-3 px-3">
+                            <span className="rounded bg-zinc-100 px-2 py-0.5 font-mono text-[11px] font-medium text-zinc-700">
+                              {inv.payment?.PaymentMethod || 'CASH'}
                             </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200/60">
-                              <CheckCircle2 className="h-3 w-3" />
-                              Hoàn tất
-                            </span>
-                          )}
+                          </td>
+                        )}
+                        {visibleColumns.TotalAmount !== false && (
+                          <td className="py-3 px-3 text-right font-semibold text-zinc-900 tabular-nums">
+                            {formatVND(inv.TotalAmount)}
+                          </td>
+                        )}
+                        {visibleColumns.Status !== false && (
+                          <td className="py-3 px-3 text-right">
+                            {inv.Status === 'CANCELLED' ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 border border-rose-200/60">
+                                <XCircle className="h-3 w-3" />
+                                Hoàn trả
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200/60">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Hoàn tất
+                              </span>
+                            )}
+                          </td>
+                        )}
+                        <td
+                          className="py-3 px-3 text-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="inline-flex items-center justify-end gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedInvoice(inv)}
+                              title="Xem chi tiết (Alt+V)"
+                              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleCloneOne(inv)}
+                              title="Nhân bản (Alt+C)"
+                              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteOne(inv)}
+                              title="Xóa (Alt+H)"
+                              className="rounded p-1 text-zinc-400 hover:bg-rose-50 hover:text-rose-600"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -219,6 +404,15 @@ export const InvoicesManagementPage: React.FC = () => {
               </tbody>
             </table>
           </div>
+
+          <EnterprisePagination
+            page={page}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={filtered.length}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         </div>
 
         {/* Chi tiết Phiếu Xuất Thuốc GPP */}
