@@ -840,7 +840,7 @@ export const cloneEntityRecords = async (req: Request, res: Response): Promise<v
           data: {
             FullName: `${item.FullName} (Bản sao)`,
             Email: `copy.${suffix()}.${item.Email}`,
-            PasswordHash: item.PasswordHash,
+            Password: item.Password,
             Phone: item.Phone,
             Role: item.Role,
             Status: item.Status,
