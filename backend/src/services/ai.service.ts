@@ -116,20 +116,50 @@ class AiGatewayService {
       // Tự động chuyển sang Fallback trên Node.js nếu Python AI Service chưa bật
     }
 
-    // Fallback xử lý trực tiếp trên Node.js
+    // Fallback & Custom Text Parsing trực tiếp trên Node.js
     const lowerHint = `${originalName} ${presetHint}`.toLowerCase();
-    const fallbackDetected = lowerHint.includes('da-day')
-      ? [
+    let fallbackDetected: Array<{ keyword: string; quantity: number; dosage: string }> = [];
+
+    if (presetHint && presetHint.includes('\n')) {
+      const lines = presetHint
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 3);
+      for (const line of lines) {
+        const hit = fuse.search(line)[0];
+        if (hit) {
+          const qtyMatch = line.match(/(\d+)\s*(hộp|vỉ|viên|chai|tuýp|ống|gói)/i);
+          fallbackDetected.push({
+            keyword: hit.item.ProductName,
+            quantity: qtyMatch ? Math.max(1, Number(qtyMatch[1])) : 1,
+            dosage: line,
+          });
+        }
+      }
+    }
+
+    if (fallbackDetected.length === 0) {
+      if (lowerHint.includes('da-day') || lowerHint.includes('dạ dày')) {
+        fallbackDetected = [
           { keyword: 'Phosphalugel', quantity: 1, dosage: 'Uống 1 gói sau ăn hoặc khi đau thượng vị' },
           { keyword: 'Omeprazol 20mg', quantity: 1, dosage: 'Uống 1 viên trước ăn sáng 30 phút' },
           { keyword: 'Enterogermina', quantity: 1, dosage: 'Sáng 1 ống, Chiều 1 ống' },
-        ]
-      : [
+        ];
+      } else if (lowerHint.includes('khang-sinh') || lowerHint.includes('viêm họng')) {
+        fallbackDetected = [
+          { keyword: 'Augmentin 1g', quantity: 1, dosage: 'Uống 1 viên x 2 lần/ngày sau ăn' },
+          { keyword: 'Efferalgan 500mg', quantity: 1, dosage: 'Pha 1 viên sủi khi sốt > 38.5°C' },
+          { keyword: 'Alpha Choay', quantity: 1, dosage: 'Ngậm dưới lưỡi 2 viên x 2 lần/ngày' },
+        ];
+      } else {
+        fallbackDetected = [
           { keyword: 'Panadol Extra', quantity: 1, dosage: 'Uống 1 viên khi sốt > 38.5°C (cách 4-6h)' },
           { keyword: 'Siro Ho Prospan', quantity: 1, dosage: 'Uống 5ml x 3 lần/ngày sau ăn' },
           { keyword: 'Strepsils Cool', quantity: 2, dosage: 'Ngậm 1 viên mỗi 3-4 giờ' },
           { keyword: 'Berocca', quantity: 1, dosage: 'Pha 1 viên sủi uống buổi sáng' },
         ];
+      }
+    }
 
     const b64Preview = `data:image/png;base64,${fileBuffer.toString('base64')}`;
 
