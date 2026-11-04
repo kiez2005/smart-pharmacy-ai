@@ -1,0 +1,111 @@
+name: Smart Pharmacy AI - CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  # ==========================================================================
+  # JOB 1: KIỂM THỬ & BUILD CORE BACKEND (NODE.JS + TYPESCRIPT + PRISMA SQLITE)
+  # ==========================================================================
+  backend-ci:
+    name: Backend CI (Node.js + Prisma + TypeScript)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Backend Dependencies
+        run: npm ci
+
+      - name: Prepare Environment (.env)
+        run: cp .env.example .env
+
+      - name: Generate Prisma Client & Push SQLite Schema
+        run: npx prisma db push
+
+      - name: Seed 35 Sample Pharmacy Products
+        run: npm run db:seed
+
+      - name: TypeScript Compile & Build Check
+        run: npm run build
+
+  # ==========================================================================
+  # JOB 2: KIỂM THỬ & BUILD FRONTEND (REACT + TYPESCRIPT + VITE)
+  # (Tự động chạy khi thư mục frontend/ được khởi tạo ở Sprint 3)
+  # ==========================================================================
+  frontend-ci:
+    name: Frontend CI (React + TypeScript + Vite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Check if Frontend exists
+        id: check_fe
+        run: |
+          if [ -f "frontend/package.json" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node.js 22
+        if: steps.check_fe.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install & Build Frontend
+        if: steps.check_fe.outputs.exists == 'true'
+        working-directory: ./frontend
+        run: |
+          npm ci
+          npm run build
+
+  # ==========================================================================
+  # JOB 3: KIỂM THỬ PYTHON AI MICROSERVICE (FASTAPI + OPENCV + SCIKIT-LEARN)
+  # (Tự động chạy khi thư mục ai-service/ được khởi tạo ở Sprint 5)
+  # ==========================================================================
+  ai-service-ci:
+    name: AI Service CI (Python FastAPI + OpenCV + ML)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Check if AI Service exists
+        id: check_ai
+        run: |
+          if [ -f "ai-service/requirements.txt" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Python 3.11
+        if: steps.check_ai.outputs.exists == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python Dependencies & Syntax Check
+        if: steps.check_ai.outputs.exists == 'true'
+        working-directory: ./ai-service
+        run: |
+          pip install -r requirements.txt
+          python -m py_compile main.py

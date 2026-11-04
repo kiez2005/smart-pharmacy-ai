@@ -1,0 +1,112 @@
+// Prisma Schema cho Hệ thống Quản lý Nhà thuốc & Kinh doanh Dược phẩm Thông minh (D18CNPM5)
+// Đảm bảo 100% đúng 10 trường bắt buộc của bảng Product trong Sheet "Yêu cầu bài tập lớn"
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// 1. MODULE QUẢN LÝ SẢN PHẨM (PRODUCT) - Chuẩn 10 trường bắt buộc theo đề bài
+// (ProductID, ProductName, PathImage, ProductType, Quantity, Unit, Price, Description, CreateDate, UpdateDate)
+// ============================================================================
+model Product {
+  ProductID    Int      @id @default(autoincrement())
+  ProductName  String
+  PathImage    String   @default("https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400&auto=format&fit=crop&q=80")
+  ProductType  String   // Nhóm thuốc: Giảm đau - Hạ sốt, Kháng sinh, Tiêu hóa, Hô hấp, Vitamin & Khoáng chất, Tim mạch, Dụng cụ y tế
+  Quantity     Int      @default(0)
+  Unit         String   // Đơn vị tính: Hộp, Vỉ, Viên, Chai, Tuýp, Gói
+  Price        Float    @default(0)
+  Description  String   // Mô tả: Hoạt chất, công dụng, chỉ định, liều dùng, chống chỉ định
+  CreateDate   DateTime @default(now())
+  UpdateDate   DateTime @updatedAt
+
+  // Quan hệ với chi tiết hóa đơn
+  invoiceItems InvoiceItem[]
+}
+
+// ============================================================================
+// 2. MODULE NGƯỜI DÙNG (ĐĂNG KÝ & ĐĂNG NHẬP - FORM 1 & 2)
+// ============================================================================
+model User {
+  UserID     Int       @id @default(autoincrement())
+  FullName   String
+  Email      String    @unique
+  Password   String
+  Phone      String?
+  Role       String    @default("PHARMACIST") // ADMIN | PHARMACIST | CUSTOMER
+  CreateDate DateTime  @default(now())
+
+  invoices   Invoice[]
+  contacts   Contact[]
+}
+
+// ============================================================================
+// 3. MODULE HÓA ĐƠN BÁN THUỐC (INVOICE & INVOICE_ITEM - FORM 5)
+// ============================================================================
+model Invoice {
+  InvoiceID     Int           @id @default(autoincrement())
+  InvoiceCode   String        @unique
+  CustomerName  String
+  CustomerPhone String?
+  Note          String?       // Ghi chú đơn thuốc hoặc chẩn đoán sơ bộ
+  TotalAmount   Float         @default(0)
+  Status        String        @default("PENDING") // PENDING | PAID | CANCELLED
+  CreateDate    DateTime      @default(now())
+  UpdateDate    DateTime      @updatedAt
+
+  UserID        Int?
+  user          User?         @relation(fields: [UserID], references: [UserID])
+  items         InvoiceItem[]
+  payment       Payment?
+}
+
+model InvoiceItem {
+  ItemID      Int     @id @default(autoincrement())
+  InvoiceID   Int
+  ProductID   Int
+  Quantity    Int     @default(1)
+  UnitPrice   Float   @default(0)
+  DosageNote  String? // Liều dùng: VD "Sáng 1 viên, Tối 1 viên sau ăn"
+
+  invoice     Invoice @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
+  product     Product @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)
+}
+
+// ============================================================================
+// 4. MODULE THANH TOÁN (PAYMENT - FORM 6)
+// ============================================================================
+model Payment {
+  PaymentID       Int      @id @default(autoincrement())
+  InvoiceID       Int      @unique
+  PaymentMethod   String   @default("CASH") // CASH | VIETQR | CARD
+  TransactionCode String?
+  PaidAmount      Float    @default(0)
+  Status          String   @default("COMPLETED") // PENDING | COMPLETED | FAILED
+  PaymentDate     DateTime @default(now())
+
+  invoice         Invoice  @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
+}
+
+// ============================================================================
+// 5. MODULE LIÊN HỆ & TƯ VẤN DƯỢC SĨ (CONTACT - FORM 7)
+// ============================================================================
+model Contact {
+  ContactID   Int      @id @default(autoincrement())
+  FullName    String
+  Email       String
+  Phone       String
+  Subject     String
+  Message     String
+  ReplyNote   String?
+  Status      String   @default("NEW") // NEW | REPLIED | CLOSED
+  CreateDate  DateTime @default(now())
+
+  UserID      Int?
+  user        User?    @relation(fields: [UserID], references: [UserID])
+}

@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+build/
+
+# Environment variables
+.env
+.env.local
+**/.env
+
+# SQLite database files (generated automatically via npm run db:push && npm run db:seed)
+*.db
+*.db-journal
+**/prisma/*.db
+**/prisma/*.db-journal
+
+# Python AI Service
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
