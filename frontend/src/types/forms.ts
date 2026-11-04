@@ -5,7 +5,8 @@ export interface UserProfile {
   FullName: string;
   Email: string;
   Phone?: string;
-  Role: 'ADMIN' | 'PHARMACIST' | 'CUSTOMER';
+  Role: 'ADMIN' | 'PHARMACIST' | 'CASHIER' | 'CUSTOMER';
+  CreateDate?: string;
 }
 
 export interface InvoiceItemRecord {
@@ -24,26 +25,54 @@ export interface PaymentRecord {
   PaymentMethod: 'CASH' | 'VIETQR' | 'CARD';
   TransactionCode?: string;
   PaidAmount: number;
-  Status: string;
+  Status: 'PAID' | 'REFUNDED' | string;
   PaymentDate: string;
+  invoice?: {
+    InvoiceID: number;
+    InvoiceCode: string;
+    CustomerName: string;
+    CustomerPhone?: string;
+    Status: string;
+  };
+}
+
+export interface CustomerRecord {
+  CustomerID: number;
+  CustomerCode: string;
+  FullName: string;
+  Phone: string;
+  Email?: string;
+  BirthYear?: number;
+  Gender?: string;
+  Allergies?: string;
+  ChronicCond?: string;
+  LoyaltyPoints: number;
+  CreateDate: string;
+  invoices?: InvoiceRecord[];
 }
 
 export interface InvoiceRecord {
   InvoiceID: number;
   InvoiceCode: string;
+  CustomerID?: number | null;
   CustomerName: string;
   CustomerPhone?: string;
-  Note?: string;
+  SubTotal?: number;
+  Discount?: number;
   TotalAmount: number;
-  Status: string;
+  Status: 'COMPLETED' | 'CANCELLED' | string;
+  Note?: string;
   CreateDate: string;
+  customer?: CustomerRecord | null;
   items: InvoiceItemRecord[];
   payment?: PaymentRecord;
 }
 
 export interface CreateInvoicePayload {
+  CustomerID?: number | null;
   CustomerName: string;
   CustomerPhone: string;
+  Discount?: number;
   Note: string;
   PaymentMethod: 'CASH' | 'VIETQR' | 'CARD';
   items: Array<{

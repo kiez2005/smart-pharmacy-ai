@@ -39,7 +39,13 @@ import { ProductDetailModal } from '../components/product/ProductDetailModal';
 import { ColumnVisibilityMenu } from '../components/product/ColumnVisibilityMenu';
 import { ShortcutLegendBar } from '../components/product/ShortcutLegendBar';
 
-export const ProductManagementPage: React.FC = () => {
+interface ProductManagementPageProps {
+  onOpenStockCard?: (productId: number) => void;
+}
+
+export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
+  onOpenStockCard,
+}) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [page, setPage] = useState<number>(1);
@@ -79,6 +85,8 @@ export const ProductManagementPage: React.FC = () => {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
   const [isListeningVoice, setIsListeningVoice] = useState<boolean>(false);
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
+  const [importingFile, setImportingFile] = useState<boolean>(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -249,17 +257,25 @@ export const ProductManagementPage: React.FC = () => {
     toast.success(`Đang xuất tệp dữ liệu .${format}`);
   }, []);
 
-  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setPendingImportFile(file);
+    e.target.value = '';
+  };
+
+  const handleConfirmImport = async () => {
+    if (!pendingImportFile) return;
+    setImportingFile(true);
     try {
-      const count = await productApi.importFile(file);
-      toast.success(`Đã nhập thành công ${count} bản ghi từ "${file.name}"`);
+      const count = await productApi.importFile(pendingImportFile);
+      toast.success(`Đã nhập thành công ${count} bản ghi từ "${pendingImportFile.name}"`);
+      setPendingImportFile(null);
       await loadProducts();
     } catch {
       toast.error('Tệp nhập vào không hợp lệ (.xlsx, .json, .xml)');
     } finally {
-      e.target.value = '';
+      setImportingFile(false);
     }
   };
 
@@ -556,6 +572,16 @@ export const ProductManagementPage: React.FC = () => {
           const item = row.original;
           return (
             <div className="flex items-center justify-end gap-0.5">
+              {onOpenStockCard && (
+                <button
+                  type="button"
+                  onClick={() => onOpenStockCard(item.ProductID)}
+                  title="Xem Hồ sơ & Thẻ kho Nhập/Xuất"
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-900 hover:text-white transition-colors mr-1"
+                >
+                  Thẻ kho
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setViewingProduct(item)}
@@ -956,6 +982,64 @@ export const ProductManagementPage: React.FC = () => {
         onEdit={handleOpenEdit}
         onClone={(item) => void handleCloneOne(item)}
       />
+
+      {/* Modal Xác nhận & Xem trước Tệp Import */}
+      {pendingImportFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
+          <div className="w-full max-w-md rounded-lg bg-white shadow-xl border border-zinc-200 overflow-hidden">
+            <div className="border-b border-zinc-200 px-5 py-3.5">
+              <h3 className="text-sm font-semibold text-zinc-900">
+                Xác nhận Nhập Dữ liệu Danh mục
+              </h3>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Kiểm tra thông tin tệp trước khi đồng bộ vào cơ sở dữ liệu kho
+              </p>
+            </div>
+            <div className="p-5 space-y-3 text-xs">
+              <div className="rounded-md bg-zinc-50 p-3 border border-zinc-200/80 space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Tên tệp dữ liệu:</span>
+                  <span className="font-mono font-semibold text-zinc-900">
+                    {pendingImportFile.name}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Định dạng nhận diện:</span>
+                  <span className="uppercase font-semibold text-emerald-700">
+                    {pendingImportFile.name.split('.').pop()}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Dung lượng tệp:</span>
+                  <span className="tabular-nums text-zinc-800">
+                    {(pendingImportFile.size / 1024).toFixed(2)} KB
+                  </span>
+                </div>
+              </div>
+              <p className="text-zinc-500 leading-relaxed">
+                Hệ thống sẽ kiểm tra cấu trúc 10 trường dữ liệu chuẩn (`ProductName`, `ProductType`, `Quantity`, `Unit`, `Price`, `Description`...) và tự động đồng bộ vào chỉ mục tìm kiếm.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3 bg-zinc-50/50">
+              <button
+                type="button"
+                onClick={() => setPendingImportFile(null)}
+                className="h-8 rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                disabled={importingFile}
+                onClick={() => void handleConfirmImport()}
+                className="h-8 rounded-md bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+              >
+                {importingFile ? 'Đang nhập dữ liệu...' : 'Xác nhận Nhập vào Kho'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Floating Bulk Action Bar khi chọn Checkbox */}
       <ShortcutLegendBar

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { X, Upload, Image as ImageIcon } from 'lucide-react';
 import { Product, ProductFormValues } from '../../types/product';
 
 interface ProductFormModalProps {
@@ -42,6 +42,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 }) => {
   const [values, setValues] = useState<ProductFormValues>(DEFAULT_VALUES);
   const [submitting, setSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (editingProduct) {
@@ -74,6 +75,18 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   });
 
   if (!isOpen) return null;
+
+  const handleLocalImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setValues((prev) => ({ ...prev, PathImage: reader.result as string }));
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleFormSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -191,17 +204,48 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
               />
             </div>
 
+            {/* Hình ảnh sản phẩm: Tải file từ máy tính HOẶC nhập URL */}
             <div className="sm:col-span-2">
               <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
-                Liên kết ảnh sản phẩm
+                Hình ảnh sản phẩm (`PathImage` — Tải ảnh từ máy tính hoặc dán URL)
               </label>
-              <input
-                type="url"
-                value={values.PathImage}
-                onChange={(e) => setValues({ ...values, PathImage: e.target.value })}
-                placeholder="https://..."
-                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
-              />
+              <div className="flex items-center gap-3">
+                <div className="h-12 w-12 shrink-0 rounded-md border border-zinc-200 bg-zinc-50 overflow-hidden flex items-center justify-center">
+                  {values.PathImage ? (
+                    <img
+                      src={values.PathImage}
+                      alt="Preview"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <ImageIcon className="h-5 w-5 text-zinc-400" />
+                  )}
+                </div>
+                <div className="flex-1 flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={values.PathImage}
+                    onChange={(e) => setValues({ ...values, PathImage: e.target.value })}
+                    placeholder="https://... hoặc chọn ảnh từ máy tính"
+                    className="flex-1 h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
+                  />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleLocalImageSelect}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+                  >
+                    <Upload className="h-3.5 w-3.5 text-zinc-500" />
+                    <span>Chọn tệp ảnh</span>
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="sm:col-span-2">

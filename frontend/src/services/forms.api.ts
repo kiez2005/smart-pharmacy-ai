@@ -47,6 +47,13 @@ export const formsApi = {
     return res.data.data;
   },
 
+  async cancelInvoice(invoiceId: number): Promise<InvoiceRecord> {
+    const res = await http.post<{ success: boolean; data: InvoiceRecord }>(
+      `/invoices/${invoiceId}/cancel`
+    );
+    return res.data.data;
+  },
+
   // Form Liên hệ & Tư vấn Dược sĩ
   async listContacts(): Promise<ContactRecord[]> {
     const res = await http.get<{ success: boolean; data: ContactRecord[] }>('/contacts');
