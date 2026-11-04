@@ -399,38 +399,38 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
       {/* Bottom Table with 2 Tabs: FEFO Near-Expiry Batch Control & Low Stock Alert */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-50/50">
-          <div className="flex items-center gap-2">
+        <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-50/50">
+          <div className="flex flex-wrap items-center gap-2 overflow-x-auto max-w-full pb-1 sm:pb-0">
             <button
               type="button"
               onClick={() => setActiveAlertTab('fefo')}
-              className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold transition-all ${
+              className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-all ${
                 activeAlertTab === 'fefo'
                   ? 'bg-teal-600 text-white shadow-sm'
                   : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 shadow-sm'
               }`}
             >
               <CalendarClock className="h-3.5 w-3.5" />
-              <span>Kiểm soát Lô Cận Date - FEFO ({FEFO_BATCH_ALERTS.length})</span>
+              <span>Kiểm soát FEFO ({FEFO_BATCH_ALERTS.length})</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveAlertTab('lowstock')}
-              className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold transition-all ${
+              className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-all ${
                 activeAlertTab === 'lowstock'
                   ? 'bg-teal-600 text-white shadow-sm'
                   : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 shadow-sm'
               }`}
             >
               <AlertTriangle className="h-3.5 w-3.5" />
-              <span>Cảnh báo Tồn kho dưới định mức ({data.lowStockProducts.length})</span>
+              <span>Cảnh báo tồn kho ({data.lowStockProducts.length})</span>
             </button>
           </div>
 
           <button
             type="button"
             onClick={onNavigateToImports}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3.5 text-xs font-semibold text-teal-700 hover:bg-teal-100 shadow-sm transition-colors"
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3.5 text-xs font-semibold text-teal-700 hover:bg-teal-100 shadow-sm transition-colors"
           >
             <Truck className="h-3.5 w-3.5 text-teal-600" />
             <span>Tạo Phiếu Nhập Kho Bổ Sung</span>

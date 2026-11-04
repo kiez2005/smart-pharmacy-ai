@@ -504,9 +504,9 @@ export const InvoicesManagementPage: React.FC = () => {
       {/* SLIDE-OVER RIGHT DRAWER: Chi tiết Phiếu Xuất Thuốc GPP & Hoàn Trả Kho */}
       {selectedInvoice && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
-          <div className="w-full max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
+          <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
             <div>
-              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70 sticky top-0 z-10">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10 shrink-0">
                 <div>
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4 text-teal-600" />
@@ -527,7 +527,7 @@ export const InvoicesManagementPage: React.FC = () => {
                 </button>
               </div>
 
-              <div className="p-6 space-y-5 text-xs">
+              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs">
                 <div className="rounded-xl bg-slate-50 p-4 border border-slate-200/80 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-slate-500">Họ tên người bệnh:</span>
@@ -624,7 +624,7 @@ export const InvoicesManagementPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 flex items-center justify-between gap-2 sticky bottom-0">
+            <div className="border-t border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50 flex flex-wrap items-center justify-between gap-2 sticky bottom-0 shrink-0">
               <div className="flex items-center gap-2">
                 <button
                   type="button"

@@ -221,7 +221,7 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -235,7 +235,7 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
             className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
           >
             <Upload className="h-3.5 w-3.5 text-slate-500" />
-            <span>Tải ảnh đơn thuốc từ máy</span>
+            <span>Tải ảnh đơn thuốc</span>
           </button>
           <button
             type="button"
@@ -244,7 +244,7 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
             className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 shadow-sm"
           >
             <ScanLine className="h-3.5 w-3.5" />
-            <span>{scanning ? 'Đang xử lý OpenCV...' : 'Chạy Quét OCR & Đối Chiếu Kho'}</span>
+            <span>{scanning ? 'Đang xử lý OpenCV...' : 'Quét OCR & Đối Chiếu Kho'}</span>
           </button>
         </div>
       </div>

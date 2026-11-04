@@ -700,12 +700,12 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
 
       {/* Modal Lập Phiếu Nhập Kho Mới */}
       {showCreatePoModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
           <form
             onSubmit={handleCreatePurchaseOrder}
-            className="w-full max-w-3xl rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
+            className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 bg-slate-50/70">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 bg-slate-50/70 shrink-0">
               <div className="flex items-center gap-2">
                 <FilePlus2 className="h-4 w-4 text-teal-600" />
                 <h3 className="text-sm font-bold text-slate-900">
@@ -721,7 +721,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
               </button>
             </div>
 
-            <div className="p-5 space-y-4">
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -883,7 +883,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-between border-t border-slate-200 px-5 py-3.5 bg-slate-50">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-slate-200 px-4 sm:px-5 py-3.5 bg-slate-50 shrink-0">
               <div>
                 <span className="text-xs text-slate-500">Tổng giá trị phiếu nhập: </span>
                 <span className="text-base font-bold text-teal-700 tabular-nums">
@@ -914,12 +914,12 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
 
       {/* Modal Thêm / Sửa Nhà phân phối */}
       {showSupplierModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
           <form
             onSubmit={handleSaveSupplier}
-            className="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200 overflow-hidden"
+            className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-xl border border-slate-200 overflow-hidden"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 {editingSupplier
                   ? 'Cập nhật Đối tác Phân phối'
@@ -933,7 +933,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="p-5 space-y-3 text-xs">
+            <div className="p-4 sm:p-5 space-y-3 text-xs overflow-y-auto flex-1">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
                   Tên công ty dược phẩm *
@@ -995,7 +995,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-3 bg-slate-50/50">
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 sm:px-5 py-3 bg-slate-50/50 shrink-0">
               <button
                 type="button"
                 onClick={() => setShowSupplierModal(false)}
@@ -1017,9 +1017,9 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
       {/* SLIDE-OVER RIGHT DRAWER: Xem Chi tiết Nhà phân phối & Lịch sử Nhập hàng */}
       {viewingSupplier && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
-          <div className="w-full max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
+          <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
             <div>
-              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70 sticky top-0 z-10">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10">
                 <div>
                   <span className="font-mono text-xs font-bold text-teal-700">
                     {viewingSupplier.SupplierCode}
@@ -1037,7 +1037,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 </button>
               </div>
 
-              <div className="p-6 space-y-5 text-xs">
+              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs">
                 <div className="rounded-xl bg-slate-50 p-4 border border-slate-200/80 space-y-2.5">
                   <div className="text-sm font-bold text-slate-900">
                     {viewingSupplier.SupplierName}
@@ -1104,7 +1104,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 flex items-center justify-end gap-2 sticky bottom-0">
+            <div className="border-t border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50 flex items-center justify-end gap-2 sticky bottom-0 shrink-0">
               <button
                 type="button"
                 onClick={() => {
@@ -1131,9 +1131,9 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
       {/* SLIDE-OVER RIGHT DRAWER: Biên bản Kiểm nhập Thuốc Chuẩn GPP (Printable PO) */}
       {viewingPo && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
-          <div className="w-full max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
+          <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
             <div>
-              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70 sticky top-0 z-10">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10">
                 <div>
                   <span className="font-mono text-xs font-bold text-teal-700">
                     {viewingPo.POCode}
@@ -1151,7 +1151,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 </button>
               </div>
 
-              <div className="p-6 space-y-5 text-xs">
+              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs">
                 <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-slate-500">Nhà phân phối:</span>
@@ -1221,7 +1221,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 flex items-center justify-between sticky bottom-0">
+            <div className="border-t border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50 flex items-center justify-between sticky bottom-0 shrink-0">
               <button
                 type="button"
                 onClick={() => window.print()}

@@ -15,6 +15,7 @@ import {
   Shield,
   Keyboard,
   X,
+  Menu,
   Building2,
   ChevronRight,
   RefreshCw,
@@ -67,13 +68,14 @@ export const App: React.FC = () => {
   const [selectedStockCardProductId, setSelectedStockCardProductId] = useState<number>(1);
   const [posInitialCart, setPosInitialCart] = useState<PosCartItem[] | undefined>(undefined);
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [selectedBranch, setSelectedBranch] = useState<string>('CS1 - Nhà thuốc Trung Tâm (GPP)');
   const [syncingNationalPortal, setSyncingNationalPortal] = useState<boolean>(false);
 
   const [currentUser, setCurrentUser] = useState<UserProfile | null>({
     UserID: 1,
     FullName: 'DS. Nguyễn Văn Trung',
-    Email: 'trung.d18cnpm5@epu.edu.vn',
+    Email: 'trung.nguyen@pharmacore.vn',
     Role: 'ADMIN',
   });
 
@@ -251,19 +253,148 @@ export const App: React.FC = () => {
         </div>
       </aside>
 
+      {/* MOBILE NAVIGATION DRAWER (Slide-over từ bên trái trên thiết bị di động & máy tính bảng) */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-50 flex md:hidden bg-slate-950/50 backdrop-blur-[2px]">
+          <div className="w-72 max-w-[85vw] bg-white h-full shadow-2xl flex flex-col justify-between border-r border-slate-200 animate-in slide-in-from-left duration-200">
+            <div>
+              {/* Mobile Drawer Header */}
+              <div className="h-14 flex items-center justify-between border-b border-slate-200 px-4 bg-slate-50/50">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-600 text-white shadow-xs">
+                    <Building2 className="h-4 w-4" strokeWidth={2} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-slate-900 leading-tight">PharmaCore ERP</div>
+                    <div className="text-[10px] font-semibold text-teal-600">Chuẩn GPP Bộ Y Tế</div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/60 text-slate-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Mobile Branch Selector */}
+              <div className="p-3 border-b border-slate-100 bg-teal-50/40">
+                <div className="text-[10px] font-bold text-teal-800 uppercase tracking-wider mb-1">
+                  Cơ sở đang trực
+                </div>
+                <select
+                  value={selectedBranch}
+                  onChange={(e) => {
+                    setSelectedBranch(e.target.value);
+                    toast.info(`Đã chuyển sang: ${e.target.value}`);
+                  }}
+                  className="w-full h-8 rounded-lg border border-teal-200 bg-white px-2 text-xs font-semibold text-slate-800 focus:outline-none"
+                >
+                  <option value="CS1 - Nhà thuốc Trung Tâm (GPP)">CS1 - Nhà thuốc Trung Tâm (GPP)</option>
+                  <option value="CS2 - Nhà thuốc Đa Khoa Quận 1">CS2 - Nhà thuốc Đa Khoa Quận 1</option>
+                  <option value="Kho Tổng Dược Phẩm GDP">Kho Tổng Dược Phẩm GDP</option>
+                </select>
+              </div>
+
+              {/* Mobile Navigation Links */}
+              <nav className="p-3 space-y-4 max-h-[calc(100vh-210px)] overflow-y-auto">
+                {navGroups.map((group) => (
+                  <div key={group.groupLabel} className="space-y-1">
+                    <div className="px-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      {group.groupLabel}
+                    </div>
+                    {group.items.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = activeTab === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveTab(item.id);
+                            setIsMobileMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs font-semibold transition-colors ${
+                            isActive
+                              ? 'bg-teal-600 text-white shadow-xs'
+                              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2.5">
+                            <Icon className={`h-4 w-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                            <span>{item.label}</span>
+                          </span>
+                          {item.badge && (
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+                                isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                              }`}
+                            >
+                              {item.badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </nav>
+            </div>
+
+            {/* Mobile Footer Pharmacist Info */}
+            <div className="p-3 border-t border-slate-200 bg-slate-50">
+              <div
+                onClick={() => {
+                  setActiveTab('AUTH');
+                  setIsMobileMenuOpen(false);
+                }}
+                className="cursor-pointer flex items-center gap-2.5 rounded-lg bg-white p-2 border border-slate-200 shadow-2xs"
+              >
+                <div className="h-8 w-8 shrink-0 rounded-full bg-teal-600 text-xs font-bold text-white flex items-center justify-center">
+                  NT
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-slate-900 truncate">
+                    {currentUser ? currentUser.FullName : 'Chưa đăng nhập'}
+                  </div>
+                  <div className="text-[10px] text-teal-700 truncate">
+                    {currentUser ? `Quyền: ${currentUser.Role}` : 'Đăng nhập'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MAIN CONTENT SHELL */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Enterprise Topbar with National Pharmacy Portal Status & Branch Switcher */}
-        <header className="sticky top-0 z-20 h-14 border-b border-slate-200/80 bg-white/95 backdrop-blur px-6 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-[13px] min-w-0">
-            <span className="text-slate-400 font-medium hidden sm:inline">PharmaCore</span>
-            <ChevronRight className="h-3.5 w-3.5 text-slate-300 hidden sm:inline" />
-            <span className="text-slate-500 hidden lg:inline">{activeGroup?.groupLabel}</span>
-            <ChevronRight className="h-3.5 w-3.5 text-slate-300 hidden lg:inline" />
-            <span className="font-semibold text-slate-900 truncate">{activeLabel}</span>
+        {/* Enterprise Topbar with Mobile Hamburger, Portal Status & Quick POS */}
+        <header className="sticky top-0 z-20 h-14 border-b border-slate-200/80 bg-white/95 backdrop-blur px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Mobile Hamburger Button */}
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="md:hidden inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-2xs hover:bg-slate-50 transition-colors"
+              title="Mở menu danh mục"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+
+            <div className="flex items-center gap-1.5 text-xs sm:text-[13px] min-w-0">
+              <span className="text-slate-400 font-medium hidden sm:inline">PharmaCore</span>
+              <ChevronRight className="h-3.5 w-3.5 text-slate-300 hidden sm:inline" />
+              <span className="text-slate-500 hidden lg:inline">{activeGroup?.groupLabel}</span>
+              <ChevronRight className="h-3.5 w-3.5 text-slate-300 hidden lg:inline" />
+              <span className="font-bold text-slate-900 truncate max-w-[150px] xs:max-w-[200px] sm:max-w-none">
+                {activeLabel}
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {/* Chọn Cơ sở / Chi nhánh nhà thuốc */}
             <div className="hidden xl:flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 h-9 text-xs text-slate-700 shadow-2xs">
               <MapPin className="h-3.5 w-3.5 text-teal-600" />
@@ -290,7 +421,7 @@ export const App: React.FC = () => {
               type="button"
               onClick={handleSyncNationalPortal}
               title="Nhấn để đồng bộ tức thời với Cổng Dược Quốc Gia (duocquocgia.com.vn)"
-              className="hidden sm:inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 text-xs font-medium text-emerald-800 hover:bg-emerald-100 shadow-2xs transition-colors"
+              className="hidden lg:inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 text-xs font-medium text-emerald-800 hover:bg-emerald-100 shadow-2xs transition-colors"
             >
               <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
               <span>Cổng Dược QG: Online</span>
@@ -301,34 +432,20 @@ export const App: React.FC = () => {
               />
             </button>
 
-            {/* Mobile Nav Selector */}
-            <select
-              value={activeTab}
-              onChange={(e) => setActiveTab(e.target.value as ActiveTab)}
-              className="md:hidden h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-2xs"
-            >
-              {navGroups
-                .flatMap((g) => g.items)
-                .map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.label}
-                  </option>
-                ))}
-            </select>
-
             <button
               type="button"
               onClick={() => setActiveTab('POS')}
-              className="hidden sm:inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-2xs transition-colors"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-2.5 sm:px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-2xs transition-colors"
             >
               <ShoppingCart className="h-3.5 w-3.5" />
-              <span>Bán hàng POS</span>
+              <span className="hidden xs:inline">Bán hàng POS</span>
+              <span className="xs:hidden">POS</span>
             </button>
 
             <button
               type="button"
               onClick={() => setShowShortcutsModal(true)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-2xs"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 sm:px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-2xs"
             >
               <Keyboard className="h-3.5 w-3.5 text-slate-400" />
               <span className="hidden sm:inline">Phím tắt</span>
@@ -337,7 +454,7 @@ export const App: React.FC = () => {
         </header>
 
         {/* Workspace Content (12 Modules) */}
-        <main className="flex-1 p-6 max-w-[1480px] w-full mx-auto">
+        <main className="flex-1 p-3.5 sm:p-5 md:p-6 max-w-[1480px] w-full mx-auto">
           {activeTab === 'DASHBOARD' && (
             <DashboardPage
               onOpenStockCard={handleOpenStockCard}

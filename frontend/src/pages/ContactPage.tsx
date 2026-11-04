@@ -503,10 +503,10 @@ export const ContactPage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
           <form
             onSubmit={handleReply}
-            className="w-full max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto"
+            className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto"
           >
             <div>
-              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70 sticky top-0 z-10">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10 shrink-0">
                 <div>
                   <span className="font-mono text-xs font-bold text-teal-700">
                     #TV-{String(selectedContact.ContactID).padStart(3, '0')}
@@ -524,7 +524,7 @@ export const ContactPage: React.FC = () => {
                 </button>
               </div>
 
-              <div className="p-6 space-y-5 text-xs">
+              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs">
                 <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-slate-500">Người bệnh:</span>
@@ -587,7 +587,7 @@ export const ContactPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 flex items-center justify-end gap-2 sticky bottom-0">
+            <div className="border-t border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50 flex items-center justify-end gap-2 sticky bottom-0 shrink-0">
               <button
                 type="button"
                 onClick={() => setSelectedContact(null)}
@@ -609,12 +609,12 @@ export const ContactPage: React.FC = () => {
 
       {/* Modal Tạo Phiếu Tư Vấn Mới (Alt+N) */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
           <form
             onSubmit={handleCreateSubmit}
-            className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
+            className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 Tạo Phiếu Yêu Cầu Tư Vấn Dược Lâm Sàng
               </h3>
@@ -626,7 +626,7 @@ export const ContactPage: React.FC = () => {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="p-5 space-y-3 text-xs">
+            <div className="p-4 sm:p-5 space-y-3 text-xs overflow-y-auto flex-1">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
                   Họ và tên bệnh nhân *
@@ -686,7 +686,7 @@ export const ContactPage: React.FC = () => {
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 bg-slate-50">
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-4 sm:px-5 py-3 bg-slate-50 shrink-0">
               <button
                 type="button"
                 onClick={() => setShowCreateModal(false)}

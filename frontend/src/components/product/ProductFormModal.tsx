@@ -101,10 +101,10 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
-      <div className="w-full max-w-xl rounded-xl bg-white shadow-xl border border-zinc-200 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-2 sm:p-4">
+      <div className="w-full max-w-xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-xl border border-zinc-200 overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-zinc-200 px-4 sm:px-6 py-3.5 shrink-0">
           <div>
             <h2 className="text-base font-semibold text-zinc-900">
               {editingProduct ? 'Cập nhật thông tin dược phẩm' : 'Thêm dược phẩm mới'}
@@ -124,150 +124,152 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleFormSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
-                Tên thương mại & hàm lượng <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                autoFocus
-                value={values.ProductName}
-                onChange={(e) => setValues({ ...values, ProductName: e.target.value })}
-                placeholder="Ví dụ: Panadol Extra 500mg/65mg"
-                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm placeholder:text-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
+        <form onSubmit={handleFormSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
+                  Tên thương mại & hàm lượng <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={values.ProductName}
+                  onChange={(e) => setValues({ ...values, ProductName: e.target.value })}
+                  placeholder="Ví dụ: Panadol Extra 500mg/65mg"
+                  className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm placeholder:text-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
-                Nhóm dược lý
-              </label>
-              <select
-                value={values.ProductType}
-                onChange={(e) => setValues({ ...values, ProductType: e.target.value })}
-                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-              >
-                {PRODUCT_TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ))}
-              </select>
-            </div>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
+                  Nhóm dược lý
+                </label>
+                <select
+                  value={values.ProductType}
+                  onChange={(e) => setValues({ ...values, ProductType: e.target.value })}
+                  className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  {PRODUCT_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
-                Đơn vị quy đổi
-              </label>
-              <select
-                value={values.Unit}
-                onChange={(e) => setValues({ ...values, Unit: e.target.value })}
-                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-              >
-                {PRODUCT_UNITS.map((unit) => (
-                  <option key={unit} value={unit}>
-                    {unit}
-                  </option>
-                ))}
-              </select>
-            </div>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
+                  Đơn vị quy đổi
+                </label>
+                <select
+                  value={values.Unit}
+                  onChange={(e) => setValues({ ...values, Unit: e.target.value })}
+                  className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  {PRODUCT_UNITS.map((unit) => (
+                    <option key={unit} value={unit}>
+                      {unit}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
-                Số lượng tồn kho
-              </label>
-              <input
-                type="number"
-                min={0}
-                required
-                value={values.Quantity}
-                onChange={(e) => setValues({ ...values, Quantity: Number(e.target.value) })}
-                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 tabular-nums shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
+                  Số lượng tồn kho
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  required
+                  value={values.Quantity}
+                  onChange={(e) => setValues({ ...values, Quantity: Number(e.target.value) })}
+                  className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 tabular-nums shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
-                Giá bán niêm yết (VNĐ)
-              </label>
-              <input
-                type="number"
-                min={0}
-                step={500}
-                required
-                value={values.Price}
-                onChange={(e) => setValues({ ...values, Price: Number(e.target.value) })}
-                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 tabular-nums shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
+                  Giá bán niêm yết (VNĐ)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={500}
+                  required
+                  value={values.Price}
+                  onChange={(e) => setValues({ ...values, Price: Number(e.target.value) })}
+                  className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 tabular-nums shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
 
-            {/* Hình ảnh sản phẩm: Tải file từ máy tính HOẶC nhập URL */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
-                Hình ảnh sản phẩm (`PathImage` — Tải ảnh từ máy tính hoặc dán URL)
-              </label>
-              <div className="flex items-center gap-3">
-                <div className="h-12 w-12 shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 overflow-hidden flex items-center justify-center">
-                  {values.PathImage ? (
-                    <img
-                      src={values.PathImage}
-                      alt="Preview"
-                      className="h-full w-full object-cover"
+              {/* Hình ảnh sản phẩm: Tải file từ máy tính HOẶC nhập URL */}
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
+                  Hình ảnh sản phẩm (`PathImage` — Tải ảnh từ máy tính hoặc dán URL)
+                </label>
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-12 shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 overflow-hidden flex items-center justify-center">
+                    {values.PathImage ? (
+                      <img
+                        src={values.PathImage}
+                        alt="Preview"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <ImageIcon className="h-5 w-5 text-zinc-400" />
+                    )}
+                  </div>
+                  <div className="flex-1 flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="text"
+                      value={values.PathImage}
+                      onChange={(e) => setValues({ ...values, PathImage: e.target.value })}
+                      placeholder="https://... hoặc chọn ảnh từ máy tính"
+                      className="flex-1 h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
                     />
-                  ) : (
-                    <ImageIcon className="h-5 w-5 text-zinc-400" />
-                  )}
-                </div>
-                <div className="flex-1 flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    value={values.PathImage}
-                    onChange={(e) => setValues({ ...values, PathImage: e.target.value })}
-                    placeholder="https://... hoặc chọn ảnh từ máy tính"
-                    className="flex-1 h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                  />
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleLocalImageSelect}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-100 shadow-sm"
-                  >
-                    <Upload className="h-3.5 w-3.5 text-zinc-500" />
-                    <span>Chọn tệp ảnh</span>
-                  </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleLocalImageSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-100 shadow-sm"
+                    >
+                      <Upload className="h-3.5 w-3.5 text-zinc-500" />
+                      <span>Chọn tệp ảnh</span>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
-                Hoạt chất, chỉ định & hướng dẫn sử dụng
-              </label>
-              <textarea
-                rows={3}
-                value={values.Description}
-                onChange={(e) => setValues({ ...values, Description: e.target.value })}
-                placeholder="Nhập thành phần hoạt chất, công dụng, liều lượng và lưu ý lâm sàng..."
-                className="w-full rounded-lg border border-zinc-200 p-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-              />
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
+                  Hoạt chất, chỉ định & hướng dẫn sử dụng
+                </label>
+                <textarea
+                  rows={3}
+                  value={values.Description}
+                  onChange={(e) => setValues({ ...values, Description: e.target.value })}
+                  placeholder="Nhập thành phần hoạt chất, công dụng, liều lượng và lưu ý lâm sàng..."
+                  className="w-full rounded-lg border border-zinc-200 p-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
             </div>
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between pt-4 border-t border-zinc-100">
-            <span className="text-xs text-zinc-400">
+          <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-t border-zinc-200 bg-zinc-50/50 shrink-0">
+            <span className="hidden sm:inline text-xs text-zinc-400">
               Nhấn <kbd className="px-1.5 py-0.5 bg-zinc-100 border border-zinc-200 rounded font-mono text-[11px] text-zinc-600">Alt S</kbd> để lưu nhanh
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 ml-auto">
               <button
                 type="button"
                 onClick={onClose}

@@ -517,9 +517,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
       {/* Modal Đăng nhập / Cấp Tài khoản mới */}
       {showAuthModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5 bg-slate-50/70">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
+          <div className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 bg-slate-50/70 shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 {mode === 'LOGIN'
                   ? 'Xác thực Đăng nhập Ca trực'
@@ -534,7 +534,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               </button>
             </div>
 
-            <div className="p-5 space-y-4">
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1">
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
                 <button
                   type="button"

@@ -222,7 +222,7 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
               <span>Xuất tệp</span>
             </button>
             {isExportOpen && (
-              <div className="absolute right-0 mt-1.5 w-48 rounded-lg border border-slate-200 bg-white py-1 shadow-lg z-30 text-xs">
+              <div className="absolute right-0 mt-1.5 w-48 max-w-[calc(100vw-32px)] rounded-lg border border-slate-200 bg-white py-1 shadow-lg z-30 text-xs">
                 <button
                   type="button"
                   onClick={() => handleExport('xlsx')}
@@ -263,7 +263,7 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
               <span>Hiển thị cột</span>
             </button>
             {isColumnOpen && (
-              <div className="absolute right-0 mt-1.5 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg z-30 text-xs space-y-1">
+              <div className="absolute right-0 mt-1.5 w-56 max-w-[calc(100vw-32px)] rounded-lg border border-slate-200 bg-white p-2 shadow-lg z-30 text-xs space-y-1">
                 <div className="px-2 py-1 text-[11px] font-semibold text-slate-400 border-b border-slate-100">
                   Tùy chỉnh cột hiển thị (Alt+K)
                 </div>
@@ -297,8 +297,8 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
       </div>
 
       {/* Thanh Tìm kiếm, Giọng nói & Bộ lọc */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs">
-        <div className="flex items-center gap-2 flex-1 max-w-lg">
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 rounded-xl border border-slate-200/90 bg-white p-3 sm:p-3.5 shadow-2xs">
+        <div className="flex items-center gap-2 flex-1 w-full max-w-full md:max-w-md">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
             <input
@@ -329,12 +329,16 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
               className="inline-flex h-9 shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-600 hover:bg-slate-50 transition-colors"
             >
               <RotateCcw className="h-3 w-3" />
-              <span>Đặt lại</span>
+              <span className="hidden sm:inline">Đặt lại</span>
             </button>
           )}
         </div>
 
-        {extraFilters && <div className="flex items-center gap-2 flex-wrap">{extraFilters}</div>}
+        {extraFilters && (
+          <div className="flex items-center gap-2 overflow-x-auto max-w-full pb-1 md:pb-0">
+            {extraFilters}
+          </div>
+        )}
       </div>
 
       {/* Modal Xem trước & Xác nhận Tệp Import */}
@@ -447,15 +451,15 @@ export const EnterprisePagination: React.FC<EnterprisePaginationProps> = ({
         </span>
       </div>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 sm:pb-0">
         <button
           type="button"
           disabled={page <= 1}
           onClick={() => onPageChange(Math.max(1, page - 1))}
-          className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 sm:px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
-          <span>Trước</span>
+          <span className="hidden xs:inline">Trước</span>
         </button>
 
         {Array.from({ length: Math.max(1, totalPages) }, (_, idx) => idx + 1).map((pageNum) => (
@@ -463,7 +467,7 @@ export const EnterprisePagination: React.FC<EnterprisePaginationProps> = ({
             key={pageNum}
             type="button"
             onClick={() => onPageChange(pageNum)}
-            className={`h-8 min-w-[32px] rounded-lg px-2 text-xs font-semibold tabular-nums transition-colors ${
+            className={`h-8 min-w-[32px] shrink-0 rounded-lg px-2 text-xs font-semibold tabular-nums transition-colors ${
               pageNum === page
                 ? 'bg-teal-600 text-white shadow-2xs'
                 : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
@@ -477,9 +481,9 @@ export const EnterprisePagination: React.FC<EnterprisePaginationProps> = ({
           type="button"
           disabled={page >= totalPages}
           onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-          className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 sm:px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
         >
-          <span>Sau</span>
+          <span className="hidden xs:inline">Sau</span>
           <ChevronRight className="h-3.5 w-3.5" />
         </button>
       </div>

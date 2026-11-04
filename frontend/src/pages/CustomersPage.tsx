@@ -495,9 +495,9 @@ export const CustomersPage: React.FC = () => {
       {/* SLIDE-OVER RIGHT DRAWER: Chi tiết Hồ sơ Bệnh án & Đơn thuốc cũ */}
       {selectedCustomer && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
-          <div className="w-full max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
+          <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
             <div>
-              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70 sticky top-0 z-10">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10 shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="h-10 w-10 rounded-full bg-teal-600 text-white flex items-center justify-center font-bold text-xs shadow-2xs">
                     <Users className="h-5 w-5" />
@@ -520,7 +520,7 @@ export const CustomersPage: React.FC = () => {
                 </button>
               </div>
 
-              <div className="p-6 space-y-5 text-xs">
+              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs">
                 <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 grid grid-cols-2 gap-3">
                   <div>
                     <span className="text-slate-500 block">Số điện thoại:</span>
@@ -607,7 +607,7 @@ export const CustomersPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 flex items-center justify-end gap-2 sticky bottom-0">
+            <div className="border-t border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50 flex items-center justify-end gap-2 sticky bottom-0 shrink-0">
               <button
                 type="button"
                 onClick={() => {
@@ -634,12 +634,12 @@ export const CustomersPage: React.FC = () => {
 
       {/* Modal Thêm / Sửa Hồ sơ Bệnh nhân */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
           <form
             onSubmit={handleSaveCustomer}
-            className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
+            className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 {editingCustomer ? 'Cập nhật Hồ sơ Bệnh nhân' : 'Mở Hồ sơ Bệnh nhân Mới'}
               </h3>
@@ -651,7 +651,7 @@ export const CustomersPage: React.FC = () => {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="p-5 space-y-3 text-xs">
+            <div className="p-4 sm:p-5 space-y-3 text-xs overflow-y-auto flex-1">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
                   Họ và tên bệnh nhân *
@@ -712,7 +712,7 @@ export const CustomersPage: React.FC = () => {
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 bg-slate-50">
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-4 sm:px-5 py-3 bg-slate-50 shrink-0">
               <button
                 type="button"
                 onClick={() => setShowModal(false)}

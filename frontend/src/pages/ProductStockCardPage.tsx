@@ -100,17 +100,17 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
     <div className="space-y-6">
       {/* Top Navigation & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm w-fit"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             <span>Quay lại Danh mục</span>
           </button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-bold tracking-tight text-slate-900">
                 Hồ sơ Dược phẩm, Thẻ Kho & Kiểm Kê (Stock Card)
               </h1>
@@ -126,7 +126,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
         <button
           type="button"
           onClick={() => window.print()}
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm"
+          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm w-fit"
         >
           <Printer className="h-3.5 w-3.5" />
           <span>In Thẻ kho / Tem nhãn SKU</span>
@@ -134,7 +134,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
       </div>
 
       {/* Accounting Stock Card Formula Strip (Tồn đầu -> +Nhập -> -Xuất -> = Tồn cuối) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
           <div className="text-xs font-medium text-slate-500">1. Tồn kho đầu kỳ</div>
           <div className="mt-1.5 text-2xl font-bold text-slate-900 tabular-nums">

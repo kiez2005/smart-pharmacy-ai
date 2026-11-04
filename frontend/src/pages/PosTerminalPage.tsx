@@ -471,8 +471,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
         {/* Cột Phải (5 cols): Giỏ Thuốc Đa Đơn Vị, Cảnh báo Dị ứng & Thanh toán */}
         <form
+          id="pos-cart-panel"
           onSubmit={handleCheckout}
-          className="lg:col-span-5 rounded-xl border border-slate-200 bg-white p-5 shadow-2xs space-y-4"
+          className="lg:col-span-5 rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-2xs space-y-4 scroll-mt-20"
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
@@ -765,11 +766,22 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
         </form>
       </div>
 
+      {/* Nút lối tắt xem giỏ hàng nổi trên Mobile / Tablet */}
+      {cart.length > 0 && (
+        <a
+          href="#pos-cart-panel"
+          className="lg:hidden fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-teal-700/30 hover:bg-teal-700 transition-all active:scale-95"
+        >
+          <ShoppingCart className="h-4 w-4" />
+          <span>Giỏ hàng ({cart.reduce((s, i) => s + i.quantity, 0)}) · {formatVND(finalTotal)}</span>
+        </a>
+      )}
+
       {/* Modal Hóa đơn & Mã VietQR vừa tạo */}
       {completedInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="border-b border-slate-200 px-5 py-3.5 flex items-center justify-between bg-emerald-50/70">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-3 sm:p-4">
+          <div className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="border-b border-slate-200 px-5 py-3.5 flex items-center justify-between bg-emerald-50/70 shrink-0">
               <div className="flex items-center gap-2 text-emerald-900">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                 <h3 className="text-sm font-bold">
@@ -778,7 +790,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               </div>
             </div>
 
-            <div className="p-5 space-y-4 text-xs">
+            <div className="p-4 sm:p-5 space-y-4 text-xs overflow-y-auto flex-1">
               <div className="flex justify-between">
                 <span className="text-slate-500">Bệnh nhân / Khách hàng:</span>
                 <span className="font-bold text-slate-900">{completedInvoice.CustomerName}</span>
@@ -806,13 +818,13 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                       completedInvoice.InvoiceCode
                     )}`}
                     alt="VietQR"
-                    className="mx-auto h-48 w-48 rounded-lg border border-slate-200 bg-white p-1"
+                    className="mx-auto h-44 w-44 sm:h-48 sm:w-48 rounded-lg border border-slate-200 bg-white p-1"
                   />
                 </div>
               )}
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 bg-slate-50">
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-4 sm:px-5 py-3 bg-slate-50 shrink-0">
               <button
                 type="button"
                 onClick={() => window.print()}

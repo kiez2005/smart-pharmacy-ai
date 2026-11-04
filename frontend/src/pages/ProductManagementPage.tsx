@@ -823,7 +823,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
         {/* Toolbar lọc & tìm kiếm */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-slate-200/80 p-3.5">
           <div className="flex flex-1 flex-wrap items-center gap-2">
-            <div className="relative flex-1 min-w-[240px] max-w-md">
+            <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[240px] max-w-md">
               <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 ref={searchInputRef}
@@ -853,7 +853,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 setSelectedType(e.target.value);
                 setPage(1);
               }}
-              className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/15 focus:outline-none transition-all"
+              className="h-9 w-full sm:w-auto rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/15 focus:outline-none transition-all"
             >
               <option value="ALL">Tất cả nhóm dược lý</option>
               {availableTypes.map((type) => (
@@ -869,7 +869,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 setSelectedUnit(e.target.value);
                 setPage(1);
               }}
-              className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/15 focus:outline-none transition-all"
+              className="h-9 w-full sm:w-auto rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/15 focus:outline-none transition-all"
             >
               <option value="ALL">Đơn vị tính</option>
               {availableUnits.map((u) => (
@@ -991,7 +991,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 sm:pb-0">
             <button
               type="button"
               disabled={page <= 1}

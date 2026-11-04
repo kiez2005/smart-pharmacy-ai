@@ -444,9 +444,9 @@ export const PaymentsLedgerPage: React.FC = () => {
       {/* SLIDE-OVER RIGHT DRAWER: Xem Chứng từ Thu/Chi & Mã VietQR Đối soát */}
       {previewQrPayment && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
-          <div className="w-full max-w-md bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
+          <div className="w-full max-w-full sm:max-w-md bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
             <div>
-              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70 sticky top-0 z-10">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10 shrink-0">
                 <div>
                   <span className="font-mono text-xs font-bold text-teal-700">
                     {previewQrPayment.TransactionCode}
@@ -464,7 +464,7 @@ export const PaymentsLedgerPage: React.FC = () => {
                 </button>
               </div>
 
-              <div className="p-6 space-y-5 text-xs">
+              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs">
                 <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-slate-500">Loại chứng từ:</span>
@@ -509,7 +509,7 @@ export const PaymentsLedgerPage: React.FC = () => {
                       previewQrPayment.invoice?.InvoiceCode || 'PHARMACORE'
                     )}`}
                     alt="VietQR"
-                    className="mx-auto h-52 w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xs"
+                    className="mx-auto h-44 w-44 sm:h-52 sm:w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xs"
                   />
                   <div className="text-xs text-slate-600">
                     Giá trị bút toán:{' '}
@@ -521,7 +521,7 @@ export const PaymentsLedgerPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 flex items-center justify-between sticky bottom-0">
+            <div className="border-t border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50 flex items-center justify-between sticky bottom-0 shrink-0">
               <button
                 type="button"
                 onClick={() => window.print()}
