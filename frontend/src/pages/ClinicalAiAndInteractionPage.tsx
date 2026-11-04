@@ -113,10 +113,15 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-          Trợ Lý Dược Lâm Sàng AI & Kiểm Tra Tương Tác Đa Thuốc
-        </h1>
-        <p className="text-xs text-zinc-500 mt-0.5">
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">
+            Trợ Lý Dược Lâm Sàng AI & Kiểm Tra Tương Tác Đa Thuốc
+          </h1>
+          <span className="inline-flex items-center rounded-full bg-teal-50 px-2.5 py-0.5 text-[11px] font-semibold text-teal-700 border border-teal-200">
+            TF-IDF RAG & DDI Check
+          </span>
+        </div>
+        <p className="text-xs text-slate-500 mt-0.5">
           Gợi ý phác đồ điều trị theo triệu chứng bằng Scikit-learn TF-IDF & Cosine Similarity, kết hợp kiểm tra trùng lặp hoạt chất và xung đột dị ứng.
         </p>
       </div>
@@ -165,7 +170,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
             type="button"
             disabled={diagnosing}
             onClick={() => void handleRunDiagnosis()}
-            className="w-full h-9 rounded-md bg-zinc-900 text-xs font-medium text-white hover:bg-zinc-800 inline-flex items-center justify-center gap-1.5 disabled:opacity-50"
+            className="w-full h-9 rounded-lg bg-teal-600 text-xs font-semibold text-white hover:bg-teal-700 inline-flex items-center justify-center gap-1.5 disabled:opacity-50 shadow-xs transition-colors"
           >
             <Send className="h-3.5 w-3.5" />
             <span>
@@ -299,7 +304,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                   type="button"
                   disabled={checkingInteraction}
                   onClick={() => void handleCheckInteractions()}
-                  className="h-9 rounded-md bg-zinc-900 px-4 text-xs font-medium text-white hover:bg-zinc-800 shrink-0"
+                  className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shrink-0 shadow-xs transition-colors"
                 >
                   Kiểm tra ngay
                 </button>

@@ -187,8 +187,8 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
       {/* Header & Action Buttons */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">{title}</h1>
-          <p className="text-xs text-zinc-500 mt-0.5">{subtitle}</p>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">{title}</h1>
+          <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -204,9 +204,9 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             title="Nhập dữ liệu từ tệp Excel, JSON, XML (Alt + I)"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50 shadow-2xs"
+            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-2xs transition-colors"
           >
-            <Upload className="h-3.5 w-3.5 text-zinc-500" />
+            <Upload className="h-3.5 w-3.5 text-slate-500" />
             <span>Nhập dữ liệu</span>
           </button>
 
@@ -216,17 +216,17 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
               type="button"
               onClick={() => setIsExportOpen((p) => !p)}
               title="Xuất dữ liệu ra tệp (Alt + X)"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50 shadow-2xs"
+              className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-2xs transition-colors"
             >
-              <Download className="h-3.5 w-3.5 text-zinc-500" />
+              <Download className="h-3.5 w-3.5 text-slate-500" />
               <span>Xuất tệp</span>
             </button>
             {isExportOpen && (
-              <div className="absolute right-0 mt-1.5 w-48 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg z-30 text-xs">
+              <div className="absolute right-0 mt-1.5 w-48 rounded-lg border border-slate-200 bg-white py-1 shadow-lg z-30 text-xs">
                 <button
                   type="button"
                   onClick={() => handleExport('xlsx')}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-zinc-700 hover:bg-zinc-50"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50"
                 >
                   <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
                   <span>Excel (.xlsx)</span>
@@ -234,7 +234,7 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
                 <button
                   type="button"
                   onClick={() => handleExport('json')}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-zinc-700 hover:bg-zinc-50"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50"
                 >
                   <FileJson className="h-3.5 w-3.5 text-amber-600" />
                   <span>JSON (.json)</span>
@@ -242,7 +242,7 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
                 <button
                   type="button"
                   onClick={() => handleExport('xml')}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-zinc-700 hover:bg-zinc-50"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50"
                 >
                   <FileCode className="h-3.5 w-3.5 text-sky-600" />
                   <span>XML (.xml)</span>
@@ -257,28 +257,28 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
               type="button"
               onClick={() => setIsColumnOpen((p) => !p)}
               title="Tùy chỉnh ẩn/hiện cột (Alt + K)"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50 shadow-2xs"
+              className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-2xs transition-colors"
             >
-              <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-500" />
+              <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500" />
               <span>Hiển thị cột</span>
             </button>
             {isColumnOpen && (
-              <div className="absolute right-0 mt-1.5 w-52 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg z-30 text-xs space-y-1">
-                <div className="px-2 py-1 text-[11px] font-semibold text-zinc-400 border-b border-zinc-100">
+              <div className="absolute right-0 mt-1.5 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg z-30 text-xs space-y-1">
+                <div className="px-2 py-1 text-[11px] font-semibold text-slate-400 border-b border-slate-100">
                   Tùy chỉnh cột hiển thị (Alt+K)
                 </div>
                 {columns.map((col) => (
                   <label
                     key={col.id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-zinc-50 cursor-pointer"
+                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer"
                   >
                     <input
                       type="checkbox"
                       checked={visibleColumns[col.id] !== false}
                       onChange={() => onToggleColumn(col.id)}
-                      className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
+                      className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                     />
-                    <span className="text-zinc-700">{col.label}</span>
+                    <span className="text-slate-700">{col.label}</span>
                   </label>
                 ))}
               </div>
@@ -288,7 +288,7 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
           <button
             type="button"
             onClick={onOpenCreate}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 shadow-2xs"
+            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-xs transition-colors"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>{createLabel}</span>
@@ -297,27 +297,27 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
       </div>
 
       {/* Thanh Tìm kiếm, Giọng nói & Bộ lọc */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-2xs">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs">
         <div className="flex items-center gap-2 flex-1 max-w-lg">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
             <input
               ref={searchInputRef}
               type="text"
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder={searchPlaceholder}
-              className="w-full h-8 rounded-md border border-zinc-300 pl-8 pr-3 text-xs text-zinc-900 focus:border-zinc-900 focus:outline-none"
+              className="w-full h-8.5 rounded-lg border border-slate-300 pl-8 pr-3 text-xs text-slate-900 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/15 focus:outline-none transition-all"
             />
           </div>
           <button
             type="button"
             onClick={handleVoiceSearch}
             title="Tìm kiếm bằng giọng nói Tiếng Việt"
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
+            className={`inline-flex h-8.5 w-8.5 items-center justify-center rounded-lg border transition-colors ${
               isListeningVoice
                 ? 'border-rose-500 bg-rose-50 text-rose-600'
-                : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900'
+                : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-900'
             }`}
           >
             <Mic className="h-3.5 w-3.5" />
@@ -326,7 +326,7 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
             <button
               type="button"
               onClick={() => onSearchChange('')}
-              className="inline-flex h-8 items-center gap-1 rounded-md border border-zinc-200 px-2.5 text-xs text-zinc-600 hover:bg-zinc-50"
+              className="inline-flex h-8.5 items-center gap-1 rounded-lg border border-slate-200 px-2.5 text-xs text-slate-600 hover:bg-slate-50"
             >
               <RotateCcw className="h-3 w-3" />
               <span>Đặt lại</span>
@@ -426,7 +426,7 @@ export const EnterprisePagination: React.FC<EnterprisePaginationProps> = ({
   onPageSizeChange,
 }) => {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-zinc-200/80 px-4 py-3 text-xs text-zinc-500 bg-white">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-slate-200/80 px-4 py-3 text-xs text-slate-500 bg-white">
       <div className="flex items-center gap-2">
         <span>Số dòng hiển thị</span>
         <select
@@ -435,15 +435,15 @@ export const EnterprisePagination: React.FC<EnterprisePaginationProps> = ({
             onPageSizeChange(Number(e.target.value));
             onPageChange(1);
           }}
-          className="h-7 rounded border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-800"
+          className="h-7 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-800 focus:border-teal-600 focus:outline-none"
         >
           <option value={10}>10</option>
           <option value={12}>12</option>
           <option value={15}>15</option>
         </select>
-        <span className="text-zinc-300">|</span>
+        <span className="text-slate-300">|</span>
         <span className="tabular-nums">
-          Trang <strong className="text-zinc-800">{page}</strong> / {Math.max(1, totalPages)} ({totalItems} bản ghi)
+          Trang <strong className="text-slate-800">{page}</strong> / {Math.max(1, totalPages)} ({totalItems} bản ghi)
         </span>
       </div>
 
@@ -452,7 +452,7 @@ export const EnterprisePagination: React.FC<EnterprisePaginationProps> = ({
           type="button"
           disabled={page <= 1}
           onClick={() => onPageChange(Math.max(1, page - 1))}
-          className="inline-flex h-7 items-center gap-1 rounded border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
           <span>Trước</span>
@@ -463,10 +463,10 @@ export const EnterprisePagination: React.FC<EnterprisePaginationProps> = ({
             key={pageNum}
             type="button"
             onClick={() => onPageChange(pageNum)}
-            className={`h-7 min-w-[28px] rounded px-2 text-xs font-medium tabular-nums transition-colors ${
+            className={`h-7 min-w-[28px] rounded-md px-2 text-xs font-semibold tabular-nums transition-colors ${
               pageNum === page
-                ? 'bg-zinc-900 text-white'
-                : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+                ? 'bg-teal-600 text-white shadow-2xs'
+                : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
             }`}
           >
             {pageNum}
@@ -477,7 +477,7 @@ export const EnterprisePagination: React.FC<EnterprisePaginationProps> = ({
           type="button"
           disabled={page >= totalPages}
           onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-          className="inline-flex h-7 items-center gap-1 rounded border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
         >
           <span>Sau</span>
           <ChevronRight className="h-3.5 w-3.5" />

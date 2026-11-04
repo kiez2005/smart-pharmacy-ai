@@ -8,6 +8,8 @@ import {
   Trash2,
   MessageSquare,
   X,
+  Sparkles,
+  ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ContactRecord } from '../types/forms';
@@ -25,6 +27,21 @@ const CONTACT_COLUMNS: ColumnConfig[] = [
   { id: 'Subject', label: 'Chủ đề tư vấn' },
   { id: 'CreateDate', label: 'Ngày gửi' },
   { id: 'Status', label: 'Trạng thái' },
+];
+
+const CLINICAL_REPLY_TEMPLATES = [
+  {
+    label: 'Hướng dẫn uống Kháng sinh',
+    text: 'Chào anh/chị, thuốc kháng sinh cần uống sau bữa ăn 30 phút và duy trì đủ liều từ 5-7 ngày theo chỉ định bác sĩ. Tuyệt đối không tự ý ngưng thuốc sớm dù đã hết triệu chứng để tránh kháng thuốc.',
+  },
+  {
+    label: 'Lưu ý thuốc Dạ dày (PPI)',
+    text: 'Chào anh/chị, nhóm thuốc ức chế axit dạ dày (Esomeprazole/Omeprazole) đạt hiệu quả tối ưu khi uống trước bữa ăn sáng 30-60 phút. Hạn chế đồ chua cay, cà phê và rượu bia trong đợt điều trị.',
+  },
+  {
+    label: 'Xử trí quên liều Huyết áp',
+    text: 'Chào bác, nếu quên uống thuốc huyết áp trong ngày thì uống bổ sung ngay khi nhớ ra. Tuy nhiên nếu đã gần tới giờ uống liều kế tiếp thì bỏ qua liều quên, tuyệt đối không uống gấp đôi liều.',
+  },
 ];
 
 export const ContactPage: React.FC = () => {
@@ -57,10 +74,7 @@ export const ContactPage: React.FC = () => {
       const list = await formsApi.listContacts();
       setContacts(list);
       setSelectedIds([]);
-      if (list.length > 0 && !selectedContact) {
-        setSelectedContact(list[0]);
-        setReplyText(list[0].ReplyNote || '');
-      } else if (selectedContact) {
+      if (selectedContact) {
         const updated = list.find((c) => c.ContactID === selectedContact.ContactID);
         if (updated) {
           setSelectedContact(updated);
@@ -87,6 +101,7 @@ export const ContactPage: React.FC = () => {
       setShowCreateModal(false);
       setFormData({ FullName: '', Email: '', Phone: '', Subject: '', Message: '' });
       setSelectedContact(created);
+      setReplyText('');
       await loadContacts();
     } catch {
       toast.error('Vui lòng kiểm tra lại thông tin liên hệ');
@@ -98,7 +113,7 @@ export const ContactPage: React.FC = () => {
     if (!selectedContact || !replyText.trim()) return;
     try {
       await formsApi.replyContact(selectedContact.ContactID, replyText.trim());
-      toast.success('Đã lưu phản hồi chuyên môn của dược sĩ');
+      toast.success('Đã lưu phản hồi chuyên môn của dược sĩ lâm sàng');
       await loadContacts();
     } catch {
       toast.error('Không thể lưu phản hồi');
@@ -110,6 +125,7 @@ export const ContactPage: React.FC = () => {
     try {
       await enterpriseApi.deleteRecord('contacts', c.ContactID);
       toast.success(`Đã xóa phiếu tư vấn #${c.ContactID}`);
+      if (selectedContact?.ContactID === c.ContactID) setSelectedContact(null);
       await loadContacts();
     } catch {
       toast.error('Không thể xóa phiếu tư vấn');
@@ -175,13 +191,22 @@ export const ContactPage: React.FC = () => {
     [filtered, page, pageSize]
   );
 
+  const pendingCount = useMemo(
+    () => contacts.filter((c) => c.Status === 'NEW').length,
+    [contacts]
+  );
+  const repliedCount = useMemo(
+    () => contacts.filter((c) => c.Status === 'REPLIED').length,
+    [contacts]
+  );
+
   return (
     <div className="space-y-5">
       {/* Thanh công cụ 11 chức năng chuẩn Doanh nghiệp */}
       <EnterpriseToolbar
         entity="contacts"
         title="Trung Tâm Tư Vấn Dược Sĩ & Chăm Sóc Khách Hàng (Clinical Consultations)"
-        subtitle="Tiếp nhận câu hỏi liều dùng, phản hồi chuyên môn (đầy đủ 11 chức năng CRUD, Nhân bản, Import/Export Excel/JSON/XML, Ẩn/Hiện cột)."
+        subtitle="Tiếp nhận câu hỏi liều dùng, phản hồi chuyên môn bằng mẫu lâm sàng nhanh (đầy đủ 11 chức năng CRUD, Nhân bản, Import/Export)."
         createLabel="Tạo Phiếu tư vấn (Alt+N)"
         search={search}
         onSearchChange={(val) => {
@@ -224,11 +249,11 @@ export const ContactPage: React.FC = () => {
               { id: 'ALL', label: `Tất cả (${contacts.length})` },
               {
                 id: 'NEW',
-                label: `Chờ tư vấn (${contacts.filter((c) => c.Status === 'NEW').length})`,
+                label: `Chờ tư vấn (${pendingCount})`,
               },
               {
                 id: 'REPLIED',
-                label: `Đã phản hồi (${contacts.filter((c) => c.Status === 'REPLIED').length})`,
+                label: `Đã phản hồi (${repliedCount})`,
               },
             ].map((t) => (
               <button
@@ -238,10 +263,10 @@ export const ContactPage: React.FC = () => {
                   setStatusFilter(t.id);
                   setPage(1);
                 }}
-                className={`h-8 rounded-md px-3 text-xs font-medium transition-colors ${
+                className={`h-8.5 rounded-lg px-3 text-xs font-semibold transition-all ${
                   statusFilter === t.id
-                    ? 'bg-zinc-900 text-white'
-                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200/70'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
                 }`}
               >
                 {t.label}
@@ -251,323 +276,427 @@ export const ContactPage: React.FC = () => {
         }
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Bảng Danh sách Phiếu Tư vấn chuẩn 11 chức năng */}
-        <div className="lg:col-span-7 rounded-lg border border-zinc-200 bg-white shadow-2xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-zinc-200 bg-zinc-50/70 text-[11px] font-medium text-zinc-500">
-                  <th className="py-2.5 px-3 w-8">
-                    <input
-                      type="checkbox"
-                      checked={
-                        pagedContacts.length > 0 &&
-                        pagedContacts.every((c) => selectedIds.includes(c.ContactID))
-                      }
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedIds(pagedContacts.map((c) => c.ContactID));
-                        } else {
-                          setSelectedIds([]);
-                        }
-                      }}
-                      className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
-                    />
-                  </th>
-                  {visibleColumns.ContactID !== false && <th className="py-2.5 px-3">Mã phiếu</th>}
-                  {visibleColumns.FullName !== false && (
-                    <th className="py-2.5 px-3">Người bệnh / Liên hệ</th>
-                  )}
-                  {visibleColumns.Subject !== false && (
-                    <th className="py-2.5 px-3">Chủ đề cần tư vấn</th>
-                  )}
-                  {visibleColumns.CreateDate !== false && (
-                    <th className="py-2.5 px-3">Ngày gửi</th>
-                  )}
-                  {visibleColumns.Status !== false && (
-                    <th className="py-2.5 px-3 text-right">Trạng thái</th>
-                  )}
-                  <th className="py-2.5 px-3 text-right">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200/60 text-xs">
-                {loading ? (
-                  <tr>
-                    <td colSpan={7} className="py-10 text-center text-zinc-400">
-                      Đang tải danh sách phiếu tư vấn...
-                    </td>
-                  </tr>
-                ) : (
-                  pagedContacts.map((c) => {
-                    const isSelected = selectedContact?.ContactID === c.ContactID;
-                    return (
-                      <tr
-                        key={c.ContactID}
-                        onClick={() => {
-                          setSelectedContact(c);
-                          setReplyText(c.ReplyNote || '');
-                        }}
-                        className={`cursor-pointer transition-colors ${
-                          isSelected ? 'bg-zinc-100/90' : 'hover:bg-zinc-50'
-                        }`}
-                      >
-                        <td
-                          className="py-3 px-3"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.includes(c.ContactID)}
-                            onChange={() =>
-                              setSelectedIds((prev) =>
-                                prev.includes(c.ContactID)
-                                  ? prev.filter((id) => id !== c.ContactID)
-                                  : [...prev, c.ContactID]
-                              )
-                            }
-                            className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
-                          />
-                        </td>
-                        {visibleColumns.ContactID !== false && (
-                          <td className="py-3 px-3 font-mono font-semibold text-zinc-600">
-                            #TV-{String(c.ContactID).padStart(3, '0')}
-                          </td>
-                        )}
-                        {visibleColumns.FullName !== false && (
-                          <td className="py-3 px-3">
-                            <div className="font-semibold text-zinc-900">{c.FullName}</div>
-                            <div className="text-[11px] text-zinc-500">{c.Phone}</div>
-                          </td>
-                        )}
-                        {visibleColumns.Subject !== false && (
-                          <td className="py-3 px-3">
-                            <div className="font-medium text-zinc-900 line-clamp-1">
-                              {c.Subject}
-                            </div>
-                            <div className="text-[11px] text-zinc-500 line-clamp-1">
-                              {c.Message}
-                            </div>
-                          </td>
-                        )}
-                        {visibleColumns.CreateDate !== false && (
-                          <td className="py-3 px-3 text-zinc-500 tabular-nums">
-                            {new Date(c.CreateDate).toLocaleDateString('vi-VN')}
-                          </td>
-                        )}
-                        {visibleColumns.Status !== false && (
-                          <td className="py-3 px-3 text-right">
-                            {c.Status === 'REPLIED' ? (
-                              <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200/60">
-                                <CheckCircle2 className="h-3 w-3" />
-                                Đã phản hồi
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-200/60">
-                                <Clock className="h-3 w-3" />
-                                Chờ xử lý
-                              </span>
-                            )}
-                          </td>
-                        )}
-                        <td
-                          className="py-3 px-3 text-right"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div className="inline-flex items-center justify-end gap-0.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedContact(c);
-                                setReplyText(c.ReplyNote || '');
-                              }}
-                              title="Xem & Phản hồi (Alt+V)"
-                              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleCloneOne(c)}
-                              title="Nhân bản (Alt+C)"
-                              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
-                            >
-                              <Copy className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteOne(c)}
-                              title="Xóa (Alt+H)"
-                              className="rounded p-1 text-zinc-400 hover:bg-rose-50 hover:text-rose-600"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+      {/* 4 Thẻ KPI Tư vấn Dược lâm sàng */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>Tổng phiếu yêu cầu tư vấn</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+              <MessageSquare className="h-4 w-4" />
+            </span>
           </div>
-
-          <EnterprisePagination
-            page={page}
-            totalPages={totalPages}
-            pageSize={pageSize}
-            totalItems={filtered.length}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-          />
+          <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
+            {contacts.length} phiếu
+          </div>
+          <div className="mt-1 text-xs text-slate-500">Từ ứng dụng di động & quầy nhà thuốc</div>
         </div>
 
-        {/* Chi tiết & Form Dược sĩ Phản hồi */}
-        <div className="lg:col-span-5 rounded-lg border border-zinc-200 bg-white p-5 shadow-2xs">
-          {!selectedContact ? (
-            <div className="py-12 text-center text-xs text-zinc-400">
-              Chọn một phiếu tư vấn bên trái để xem câu hỏi và gửi phản hồi chuyên môn
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>Đã phản hồi chuyên môn</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+              <CheckCircle2 className="h-4 w-4" />
+            </span>
+          </div>
+          <div className="mt-2 text-2xl font-bold text-emerald-700 tabular-nums">
+            {repliedCount} phiếu
+          </div>
+          <div className="mt-1 text-xs text-slate-500">Dược sĩ đại học trực tiếp giải đáp</div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>Đang chờ xử lý</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+              <Clock className="h-4 w-4" />
+            </span>
+          </div>
+          <div className="mt-2 text-2xl font-bold text-amber-700 tabular-nums">
+            {pendingCount} phiếu
+          </div>
+          <div className="mt-1 text-xs text-slate-500">Ưu tiên tư vấn đơn thuốc kháng sinh</div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>Cam kết thời gian phản hồi</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+              <ShieldCheck className="h-4 w-4" />
+            </span>
+          </div>
+          <div className="mt-2 text-2xl font-bold text-teal-700 tabular-nums">
+            &lt; 15 phút
+          </div>
+          <div className="mt-1 text-xs text-slate-500">Tiêu chuẩn thực hành tốt nhà thuốc GPP</div>
+        </div>
+      </div>
+
+      {/* BẢNG PHIẾU TƯ VẤN FULL-WIDTH 100% */}
+      <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <th className="py-3 px-4 w-9">
+                  <input
+                    type="checkbox"
+                    checked={
+                      pagedContacts.length > 0 &&
+                      pagedContacts.every((c) => selectedIds.includes(c.ContactID))
+                    }
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedIds(pagedContacts.map((c) => c.ContactID));
+                      } else {
+                        setSelectedIds([]);
+                      }
+                    }}
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600"
+                  />
+                </th>
+                {visibleColumns.ContactID !== false && (
+                  <th className="py-3 px-4 whitespace-nowrap">Mã phiếu</th>
+                )}
+                {visibleColumns.FullName !== false && (
+                  <th className="py-3 px-4 whitespace-nowrap">Người bệnh / Liên hệ</th>
+                )}
+                {visibleColumns.Subject !== false && (
+                  <th className="py-3 px-4 whitespace-nowrap">Chủ đề & Nội dung câu hỏi</th>
+                )}
+                {visibleColumns.CreateDate !== false && (
+                  <th className="py-3 px-4 whitespace-nowrap">Ngày gửi</th>
+                )}
+                {visibleColumns.Status !== false && (
+                  <th className="py-3 px-4 whitespace-nowrap">Trạng thái</th>
+                )}
+                <th className="py-3 px-4 text-right whitespace-nowrap">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200/60 text-[13px]">
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="py-10 text-center text-slate-400">
+                    Đang tải danh sách phiếu tư vấn...
+                  </td>
+                </tr>
+              ) : (
+                pagedContacts.map((c) => (
+                  <tr
+                    key={c.ContactID}
+                    onClick={() => {
+                      setSelectedContact(c);
+                      setReplyText(c.ReplyNote || '');
+                    }}
+                    className="cursor-pointer transition-colors hover:bg-slate-50/80"
+                  >
+                    <td
+                      className="py-3 px-4"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(c.ContactID)}
+                        onChange={() =>
+                          setSelectedIds((prev) =>
+                            prev.includes(c.ContactID)
+                              ? prev.filter((id) => id !== c.ContactID)
+                              : [...prev, c.ContactID]
+                          )
+                        }
+                        className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600"
+                      />
+                    </td>
+                    {visibleColumns.ContactID !== false && (
+                      <td className="py-3 px-4 font-mono text-xs font-bold text-teal-700 whitespace-nowrap">
+                        #TV-{String(c.ContactID).padStart(3, '0')}
+                      </td>
+                    )}
+                    {visibleColumns.FullName !== false && (
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <div className="font-semibold text-slate-900">{c.FullName}</div>
+                        <div className="text-[11px] font-mono text-slate-500">{c.Phone}</div>
+                      </td>
+                    )}
+                    {visibleColumns.Subject !== false && (
+                      <td className="py-3 px-4 max-w-md">
+                        <div className="font-semibold text-slate-900 line-clamp-1">
+                          {c.Subject}
+                        </div>
+                        <div className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
+                          {c.Message}
+                        </div>
+                      </td>
+                    )}
+                    {visibleColumns.CreateDate !== false && (
+                      <td className="py-3 px-4 text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                        {new Date(c.CreateDate).toLocaleDateString('vi-VN')}
+                      </td>
+                    )}
+                    {visibleColumns.Status !== false && (
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        {c.Status === 'REPLIED' ? (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/70">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Đã phản hồi
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200/70">
+                            <Clock className="h-3 w-3" />
+                            Chờ dược sĩ
+                          </span>
+                        )}
+                      </td>
+                    )}
+                    <td
+                      className="py-3 px-4 text-right whitespace-nowrap"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="inline-flex items-center justify-end gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedContact(c);
+                            setReplyText(c.ReplyNote || '');
+                          }}
+                          title="Xem & Phản hồi chuyên môn (Alt+V)"
+                          className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleCloneOne(c)}
+                          title="Nhân bản (Alt+C)"
+                          className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteOne(c)}
+                          title="Xóa (Alt+H)"
+                          className="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <EnterprisePagination
+          page={page}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalItems={filtered.length}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
+      </div>
+
+      {/* SLIDE-OVER RIGHT DRAWER: Chi tiết Câu hỏi & Phản hồi Dược sĩ Lâm sàng */}
+      {selectedContact && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
+          <form
+            onSubmit={handleReply}
+            className="w-full max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto"
+          >
+            <div>
+              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70 sticky top-0 z-10">
+                <div>
+                  <span className="font-mono text-xs font-bold text-teal-700">
+                    #TV-{String(selectedContact.ContactID).padStart(3, '0')}
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Phiếu Tư vấn Dược Lâm Sàng
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedContact(null)}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/60"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5 text-xs">
+                <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Người bệnh:</span>
+                    <strong className="text-slate-900">{selectedContact.FullName}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Số điện thoại / Email:</span>
+                    <span className="font-mono text-slate-800">
+                      {selectedContact.Phone} · {selectedContact.Email}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Chủ đề:</span>
+                    <strong className="text-teal-700">{selectedContact.Subject}</strong>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-bold text-slate-800 mb-1.5">
+                    Nội dung câu hỏi triệu chứng / liều dùng:
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-slate-800 leading-relaxed">
+                    {selectedContact.Message}
+                  </div>
+                </div>
+
+                {/* Mẫu Phản hồi Lâm sàng Nhanh 1-Click */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5 font-bold text-teal-800">
+                    <Sparkles className="h-3.5 w-3.5 text-teal-600" />
+                    <span>Mẫu Phản hồi Chuyên môn Nhanh (1-Click):</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CLINICAL_REPLY_TEMPLATES.map((tpl) => (
+                      <button
+                        key={tpl.label}
+                        type="button"
+                        onClick={() => setReplyText(tpl.text)}
+                        className="rounded-lg border border-teal-200 bg-teal-50/70 px-2.5 py-1 text-[11px] font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors"
+                      >
+                        + {tpl.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-800 mb-1.5">
+                    Nội dung tư vấn của Dược sĩ phụ trách (DS. Nguyễn Văn Trung):
+                  </label>
+                  <textarea
+                    rows={5}
+                    required
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder="Nhập hướng dẫn liều dùng, thời điểm uống thuốc và lưu ý chống chỉ định..."
+                    className="w-full rounded-xl border border-slate-300 p-3 text-xs text-slate-900 focus:border-teal-600 focus:outline-none leading-relaxed"
+                  />
+                </div>
+              </div>
             </div>
-          ) : (
-            <form onSubmit={handleReply} className="space-y-4 text-xs">
-              <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4 text-zinc-900" />
-                  <h2 className="text-sm font-semibold text-zinc-900">
-                    Chi tiết Tư vấn #TV-{String(selectedContact.ContactID).padStart(3, '0')}
-                  </h2>
-                </div>
-              </div>
 
-              <div className="rounded-md bg-zinc-50 p-3 border border-zinc-200/70 space-y-1">
-                <div>
-                  <span className="text-zinc-500">Người gửi: </span>
-                  <strong className="text-zinc-900">{selectedContact.FullName}</strong> (
-                  {selectedContact.Phone} · {selectedContact.Email})
-                </div>
-                <div>
-                  <span className="text-zinc-500">Chủ đề: </span>
-                  <strong className="text-zinc-900">{selectedContact.Subject}</strong>
-                </div>
-              </div>
-
-              <div>
-                <div className="font-medium text-zinc-700 mb-1">Nội dung câu hỏi của bệnh nhân:</div>
-                <div className="rounded-md border border-zinc-200 bg-zinc-50/50 p-3 text-zinc-800 leading-relaxed">
-                  {selectedContact.Message}
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-teal-800 mb-1">
-                  Phản hồi chuyên môn của Dược sĩ lâm sàng:
-                </label>
-                <textarea
-                  rows={4}
-                  required
-                  value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
-                  placeholder="Nhập hướng dẫn liều dùng, thời điểm uống thuốc và lưu ý chống chỉ định..."
-                  className="w-full rounded-md border border-zinc-300 p-3 text-xs text-zinc-900 focus:border-zinc-900 focus:outline-none"
-                />
-              </div>
-
+            <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 flex items-center justify-end gap-2 sticky bottom-0">
+              <button
+                type="button"
+                onClick={() => setSelectedContact(null)}
+                className="h-9 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700"
+              >
+                Đóng
+              </button>
               <button
                 type="submit"
-                className="w-full h-9 rounded-md bg-zinc-900 text-xs font-medium text-white hover:bg-zinc-800 inline-flex items-center justify-center gap-1.5"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shadow-xs"
               >
                 <Send className="h-3.5 w-3.5" />
                 <span>Lưu & Gửi Phản Hồi Tư Vấn</span>
               </button>
-            </form>
-          )}
+            </div>
+          </form>
         </div>
-      </div>
+      )}
 
       {/* Modal Tạo Phiếu Tư Vấn Mới (Alt+N) */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-4">
           <form
             onSubmit={handleCreateSubmit}
-            className="w-full max-w-md rounded-lg bg-white shadow-xl border border-zinc-200 overflow-hidden"
+            className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
           >
-            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-3.5">
-              <h3 className="text-sm font-semibold text-zinc-900">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
+              <h3 className="text-sm font-bold text-slate-900">
                 Tạo Phiếu Yêu Cầu Tư Vấn Dược Lâm Sàng
               </h3>
               <button
                 type="button"
                 onClick={() => setShowCreateModal(false)}
-                className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+                className="rounded p-1 text-slate-400 hover:bg-slate-100"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
             <div className="p-5 space-y-3 text-xs">
               <div>
-                <label className="block font-medium text-zinc-700 mb-1">Họ và tên bệnh nhân *</label>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Họ và tên bệnh nhân *
+                </label>
                 <input
                   type="text"
                   required
                   value={formData.FullName}
                   onChange={(e) => setFormData({ ...formData, FullName: e.target.value })}
-                  className="w-full h-8 rounded border border-zinc-300 px-2.5"
+                  className="w-full h-8.5 rounded-lg border border-slate-300 px-2.5"
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-medium text-zinc-700 mb-1">Số điện thoại *</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Số điện thoại *</label>
                   <input
                     type="text"
                     required
                     value={formData.Phone}
                     onChange={(e) => setFormData({ ...formData, Phone: e.target.value })}
-                    className="w-full h-8 rounded border border-zinc-300 px-2.5"
+                    className="w-full h-8.5 rounded-lg border border-slate-300 px-2.5"
                   />
                 </div>
                 <div>
-                  <label className="block font-medium text-zinc-700 mb-1">Email *</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Email *</label>
                   <input
                     type="email"
                     required
                     value={formData.Email}
                     onChange={(e) => setFormData({ ...formData, Email: e.target.value })}
-                    className="w-full h-8 rounded border border-zinc-300 px-2.5"
+                    className="w-full h-8.5 rounded-lg border border-slate-300 px-2.5"
                   />
                 </div>
               </div>
               <div>
-                <label className="block font-medium text-zinc-700 mb-1">Chủ đề cần tư vấn *</label>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Chủ đề cần tư vấn *
+                </label>
                 <input
                   type="text"
                   required
                   value={formData.Subject}
                   onChange={(e) => setFormData({ ...formData, Subject: e.target.value })}
-                  className="w-full h-8 rounded border border-zinc-300 px-2.5"
+                  className="w-full h-8.5 rounded-lg border border-slate-300 px-2.5"
                 />
               </div>
               <div>
-                <label className="block font-medium text-zinc-700 mb-1">Nội dung câu hỏi *</label>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Nội dung câu hỏi *
+                </label>
                 <textarea
                   rows={3}
                   required
                   value={formData.Message}
                   onChange={(e) => setFormData({ ...formData, Message: e.target.value })}
-                  className="w-full rounded border border-zinc-300 p-2.5"
+                  className="w-full rounded-lg border border-slate-300 p-2.5"
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-2 border-t border-zinc-100 px-5 py-3 bg-zinc-50">
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3 bg-slate-50">
               <button
                 type="button"
                 onClick={() => setShowCreateModal(false)}
-                className="h-8 rounded border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700"
+                className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700"
               >
                 Hủy
               </button>
               <button
                 type="submit"
-                className="h-8 rounded bg-zinc-900 px-4 text-xs font-medium text-white"
+                className="h-8 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700"
               >
                 Lưu Phiếu tư vấn
               </button>

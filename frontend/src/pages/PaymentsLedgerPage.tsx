@@ -8,6 +8,9 @@ import {
   Eye,
   Trash2,
   X,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Printer,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { enterpriseApi } from '../services/enterprise.api';
@@ -19,13 +22,14 @@ import {
 } from '../components/common/EnterpriseDataToolbar';
 
 const PAYMENT_COLUMNS: ColumnConfig[] = [
-  { id: 'TransactionCode', label: 'Mã giao dịch' },
-  { id: 'InvoiceCode', label: 'Hóa đơn tham chiếu' },
-  { id: 'CustomerName', label: 'Khách hàng' },
+  { id: 'TransactionCode', label: 'Mã bút toán' },
+  { id: 'VoucherType', label: 'Loại phiếu thu/chi' },
+  { id: 'InvoiceCode', label: 'Chứng từ gốc' },
+  { id: 'CustomerName', label: 'Đối tượng nộp/nhận' },
   { id: 'PaymentMethod', label: 'Phương thức' },
   { id: 'PaymentDate', label: 'Thời gian ghi nhận' },
   { id: 'PaidAmount', label: 'Số tiền' },
-  { id: 'Status', label: 'Trạng thái' },
+  { id: 'Status', label: 'Trạng thái đối soát' },
 ];
 
 export const PaymentsLedgerPage: React.FC = () => {
@@ -127,15 +131,15 @@ export const PaymentsLedgerPage: React.FC = () => {
       {/* Thanh công cụ 11 chức năng chuẩn Doanh nghiệp */}
       <EnterpriseToolbar
         entity="payments"
-        title="Sổ Quỹ Thanh Toán & Đối Soát Giao Dịch (Payments Ledger)"
-        subtitle="Quản lý dòng tiền thực thu VietQR Napas247, tiền mặt, thẻ ngân hàng, xuất báo cáo đối soát Excel/JSON/XML và tùy chỉnh cột."
+        title="Sổ Quỹ Thu Chi & Đối Soát Giao Dịch (Cashflow & VietQR Ledger)"
+        subtitle="Quản lý dòng tiền Phiếu Thu POS, Phiếu Chi hoàn trả, đối soát tự động giao dịch VietQR Napas247 và xuất sổ quỹ kế toán."
         createLabel="Đối soát VietQR (Alt+N)"
         search={search}
         onSearchChange={(val) => {
           setSearch(val);
           setPage(1);
         }}
-        searchPlaceholder="Tìm theo mã giao dịch (VQR-...), mã hóa đơn hoặc tên khách... (Alt + F)"
+        searchPlaceholder="Tìm theo mã bút toán (VQR-...), mã hóa đơn hoặc tên khách... (Alt + F)"
         columns={PAYMENT_COLUMNS}
         visibleColumns={visibleColumns}
         onToggleColumn={(colId) =>
@@ -162,9 +166,9 @@ export const PaymentsLedgerPage: React.FC = () => {
           <div className="flex items-center gap-1.5">
             {[
               { id: 'ALL', label: 'Tất cả kênh' },
-              { id: 'VIETQR', label: 'VietQR' },
+              { id: 'VIETQR', label: 'VietQR 24/7' },
               { id: 'CASH', label: 'Tiền mặt' },
-              { id: 'CARD', label: 'Thẻ ngân hàng' },
+              { id: 'CARD', label: 'Thẻ POS' },
             ].map((m) => (
               <button
                 key={m.id}
@@ -173,10 +177,10 @@ export const PaymentsLedgerPage: React.FC = () => {
                   setMethodFilter(m.id);
                   setPage(1);
                 }}
-                className={`h-8 rounded-md px-3 text-xs font-medium transition-colors ${
+                className={`h-8.5 rounded-lg px-3 text-xs font-semibold transition-all ${
                   methodFilter === m.id
-                    ? 'bg-zinc-900 text-white'
-                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200/70'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
                 }`}
               >
                 {m.label}
@@ -187,59 +191,67 @@ export const PaymentsLedgerPage: React.FC = () => {
       />
 
       {/* 4 Financial KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
-            <span>Tổng thực thu trong kỳ</span>
-            <Wallet className="h-4 w-4 text-emerald-600" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>Tổng thực thu ròng (Net Cash)</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+              <Wallet className="h-4 w-4" />
+            </span>
           </div>
-          <div className="mt-2 text-2xl font-semibold text-zinc-900 tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-teal-700 tabular-nums">
             {formatVND(stats.totalNet)}
           </div>
-          <p className="mt-1 text-[11px] text-zinc-500">Đã trừ các giao dịch hoàn trả</p>
+          <p className="mt-1 text-xs text-slate-500">Đã cấn trừ các phiếu chi hoàn trả</p>
         </div>
 
-        <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Chuyển khoản VietQR 24/7</span>
-            <QrCode className="h-4 w-4 text-zinc-700" />
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+              <QrCode className="h-4 w-4" />
+            </span>
           </div>
-          <div className="mt-2 text-2xl font-semibold text-zinc-900 tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {formatVND(stats.totalVietQr)}
           </div>
-          <p className="mt-1 text-[11px] text-zinc-500">Đối soát mã giao dịch tự động</p>
+          <p className="mt-1 text-xs text-slate-500">Đối soát tự động qua Napas247</p>
         </div>
 
-        <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
-            <span>Tiền mặt & Thẻ POS</span>
-            <Banknote className="h-4 w-4 text-zinc-500" />
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>Quỹ Tiền mặt & Thẻ POS</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+              <Banknote className="h-4 w-4" />
+            </span>
           </div>
-          <div className="mt-2 text-2xl font-semibold text-zinc-900 tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {formatVND(stats.totalCashAndCard)}
           </div>
-          <p className="mt-1 text-[11px] text-zinc-500">Quỹ tiền mặt tại két thu ngân</p>
+          <p className="mt-1 text-xs text-slate-500">Số dư tiền mặt tại két thu ngân</p>
         </div>
 
-        <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-2xs">
-          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
-            <span>Tổng hoàn tiền (Refunded)</span>
-            <RotateCcw className="h-4 w-4 text-rose-500" />
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>Phiếu Chi Hoàn Tiền (Refund)</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
+              <RotateCcw className="h-4 w-4" />
+            </span>
           </div>
-          <div className="mt-2 text-2xl font-semibold text-rose-600 tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-rose-600 tabular-nums">
             {formatVND(stats.totalRefunded)}
           </div>
-          <p className="mt-1 text-[11px] text-zinc-500">Từ các hóa đơn hủy/trả hàng</p>
+          <p className="mt-1 text-xs text-slate-500">Từ các hóa đơn hủy/nhập trả kho</p>
         </div>
       </div>
 
-      {/* Bảng Sổ Quỹ chuẩn 11 chức năng */}
-      <div className="rounded-lg border border-zinc-200 bg-white shadow-2xs overflow-hidden">
+      {/* Bảng Sổ Quỹ Full-Width 100% */}
+      <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-zinc-200 bg-zinc-50/70 text-[11px] font-medium text-zinc-500">
-                <th className="py-2.5 px-3.5 w-8">
+              <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <th className="py-3 px-4 w-9">
                   <input
                     type="checkbox"
                     checked={
@@ -253,131 +265,167 @@ export const PaymentsLedgerPage: React.FC = () => {
                         setSelectedIds([]);
                       }
                     }}
-                    className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600"
                   />
                 </th>
                 {visibleColumns.TransactionCode !== false && (
-                  <th className="py-2.5 px-3.5">Mã giao dịch</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Mã bút toán</th>
+                )}
+                {visibleColumns.VoucherType !== false && (
+                  <th className="py-3 px-4 whitespace-nowrap">Loại phiếu thu/chi</th>
                 )}
                 {visibleColumns.InvoiceCode !== false && (
-                  <th className="py-2.5 px-3.5">Hóa đơn tham chiếu</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Chứng từ gốc</th>
                 )}
                 {visibleColumns.CustomerName !== false && (
-                  <th className="py-2.5 px-3.5">Khách hàng</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Đối tượng nộp/nhận</th>
                 )}
                 {visibleColumns.PaymentMethod !== false && (
-                  <th className="py-2.5 px-3.5">Phương thức</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Phương thức</th>
                 )}
                 {visibleColumns.PaymentDate !== false && (
-                  <th className="py-2.5 px-3.5">Thời gian ghi nhận</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Thời gian ghi nhận</th>
                 )}
                 {visibleColumns.PaidAmount !== false && (
-                  <th className="py-2.5 px-3.5 text-right">Số tiền</th>
+                  <th className="py-3 px-4 text-right whitespace-nowrap">Số tiền</th>
                 )}
                 {visibleColumns.Status !== false && (
-                  <th className="py-2.5 px-3.5 text-right">Trạng thái</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Trạng thái</th>
                 )}
-                <th className="py-2.5 px-3.5 text-right">Thao tác</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap">Thao tác</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-200/60 text-xs">
+            <tbody className="divide-y divide-slate-200/60 text-[13px]">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-10 text-center text-zinc-400">
+                  <td colSpan={10} className="py-10 text-center text-slate-400">
                     Đang tải sổ quỹ giao dịch...
                   </td>
                 </tr>
               ) : pagedPayments.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-10 text-center text-zinc-400">
+                  <td colSpan={10} className="py-10 text-center text-slate-400">
                     Chưa có bút toán thanh toán phù hợp.
                   </td>
                 </tr>
               ) : (
-                pagedPayments.map((p) => (
-                  <tr key={p.PaymentID} className="hover:bg-zinc-50">
-                    <td className="py-3 px-3.5">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(p.PaymentID)}
-                        onChange={() =>
-                          setSelectedIds((prev) =>
-                            prev.includes(p.PaymentID)
-                              ? prev.filter((id) => id !== p.PaymentID)
-                              : [...prev, p.PaymentID]
-                          )
-                        }
-                        className="h-3.5 w-3.5 rounded border-zinc-300 text-zinc-900"
-                      />
-                    </td>
-                    {visibleColumns.TransactionCode !== false && (
-                      <td className="py-3 px-3.5 font-mono font-semibold text-zinc-900">
-                        {p.TransactionCode || `PAY-${p.PaymentID}`}
+                pagedPayments.map((p) => {
+                  const isRefund = p.Status === 'REFUNDED';
+                  return (
+                    <tr
+                      key={p.PaymentID}
+                      onClick={() => setPreviewQrPayment(p)}
+                      className="hover:bg-slate-50/80 cursor-pointer transition-colors"
+                    >
+                      <td
+                        className="py-3 px-4"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(p.PaymentID)}
+                          onChange={() =>
+                            setSelectedIds((prev) =>
+                              prev.includes(p.PaymentID)
+                                ? prev.filter((id) => id !== p.PaymentID)
+                                : [...prev, p.PaymentID]
+                            )
+                          }
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600"
+                        />
                       </td>
-                    )}
-                    {visibleColumns.InvoiceCode !== false && (
-                      <td className="py-3 px-3.5 font-mono text-zinc-700">
-                        {p.invoice?.InvoiceCode || `#${p.InvoiceID}`}
-                      </td>
-                    )}
-                    {visibleColumns.CustomerName !== false && (
-                      <td className="py-3 px-3.5 font-medium text-zinc-900">
-                        {p.invoice?.CustomerName || 'Khách vãng lai'}
-                      </td>
-                    )}
-                    {visibleColumns.PaymentMethod !== false && (
-                      <td className="py-3 px-3.5">
-                        <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-2 py-0.5 font-mono text-[11px] font-medium text-zinc-800">
-                          {p.PaymentMethod}
-                        </span>
-                      </td>
-                    )}
-                    {visibleColumns.PaymentDate !== false && (
-                      <td className="py-3 px-3.5 text-zinc-500 tabular-nums">
-                        {new Date(p.PaymentDate).toLocaleString('vi-VN')}
-                      </td>
-                    )}
-                    {visibleColumns.PaidAmount !== false && (
-                      <td className="py-3 px-3.5 text-right font-semibold text-zinc-900 tabular-nums">
-                        {formatVND(p.PaidAmount)}
-                      </td>
-                    )}
-                    {visibleColumns.Status !== false && (
-                      <td className="py-3 px-3.5 text-right">
-                        {p.Status === 'REFUNDED' ? (
-                          <span className="inline-flex items-center gap-1 rounded bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 border border-rose-200/60">
-                            Đã hoàn tiền
+                      {visibleColumns.TransactionCode !== false && (
+                        <td className="py-3 px-4 font-mono text-xs font-bold text-slate-900 whitespace-nowrap">
+                          {p.TransactionCode || `PAY-${p.PaymentID}`}
+                        </td>
+                      )}
+                      {visibleColumns.VoucherType !== false && (
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          {isRefund ? (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200">
+                              <ArrowUpRight className="h-3 w-3" />
+                              Phiếu Chi Hoàn Trả
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200">
+                              <ArrowDownLeft className="h-3 w-3" />
+                              Phiếu Thu Bán Lẻ
+                            </span>
+                          )}
+                        </td>
+                      )}
+                      {visibleColumns.InvoiceCode !== false && (
+                        <td className="py-3 px-4 font-mono text-xs font-semibold text-teal-700 whitespace-nowrap">
+                          {p.invoice?.InvoiceCode || `#${p.InvoiceID}`}
+                        </td>
+                      )}
+                      {visibleColumns.CustomerName !== false && (
+                        <td className="py-3 px-4 font-semibold text-slate-900">
+                          {p.invoice?.CustomerName || 'Khách vãng lai'}
+                        </td>
+                      )}
+                      {visibleColumns.PaymentMethod !== false && (
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-slate-800 border border-slate-200/60">
+                            {p.PaymentMethod}
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200/60">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Đã đối soát
-                          </span>
-                        )}
+                        </td>
+                      )}
+                      {visibleColumns.PaymentDate !== false && (
+                        <td className="py-3 px-4 text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                          {new Date(p.PaymentDate).toLocaleString('vi-VN')}
+                        </td>
+                      )}
+                      {visibleColumns.PaidAmount !== false && (
+                        <td
+                          className={`py-3 px-4 text-right font-bold tabular-nums whitespace-nowrap ${
+                            isRefund ? 'text-rose-600' : 'text-teal-700'
+                          }`}
+                        >
+                          {isRefund ? '-' : '+'}
+                          {formatVND(p.PaidAmount)}
+                        </td>
+                      )}
+                      {visibleColumns.Status !== false && (
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          {isRefund ? (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200/60">
+                              Đã xuất quỹ hoàn
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/60">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Đã khớp lệnh
+                            </span>
+                          )}
+                        </td>
+                      )}
+                      <td
+                        className="py-3 px-4 text-right whitespace-nowrap"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="inline-flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewQrPayment(p)}
+                            title="Xem chứng từ VietQR (Alt+V)"
+                            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteOne(p)}
+                            title="Xóa bút toán (Alt+H)"
+                            className="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </td>
-                    )}
-                    <td className="py-3 px-3.5 text-right">
-                      <div className="inline-flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setPreviewQrPayment(p)}
-                          title="Xem chứng từ VietQR (Alt+V)"
-                          className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteOne(p)}
-                          title="Xóa bút toán (Alt+H)"
-                          className="rounded p-1 text-zinc-400 hover:bg-rose-50 hover:text-rose-600"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -393,36 +441,102 @@ export const PaymentsLedgerPage: React.FC = () => {
         />
       </div>
 
-      {/* Modal Xem lại Mã VietQR */}
+      {/* SLIDE-OVER RIGHT DRAWER: Xem Chứng từ Thu/Chi & Mã VietQR Đối soát */}
       {previewQrPayment && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
-          <div className="w-full max-w-sm rounded-lg bg-white shadow-xl border border-zinc-200 overflow-hidden">
-            <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
-              <h3 className="text-xs font-semibold text-zinc-900">
-                Chứng từ Thanh toán ({previewQrPayment.TransactionCode})
-              </h3>
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
+          <div className="w-full max-w-md bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
+            <div>
+              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70 sticky top-0 z-10">
+                <div>
+                  <span className="font-mono text-xs font-bold text-teal-700">
+                    {previewQrPayment.TransactionCode}
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Chứng từ Bút toán Sổ Quỹ & Đối soát
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewQrPayment(null)}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/60"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5 text-xs">
+                <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Loại chứng từ:</span>
+                    <span className="font-bold text-slate-900">
+                      {previewQrPayment.Status === 'REFUNDED'
+                        ? 'Phiếu Chi Hoàn Tiền Khách'
+                        : 'Phiếu Thu Bán Lẻ POS'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Hóa đơn gốc:</span>
+                    <span className="font-mono font-bold text-teal-700">
+                      {previewQrPayment.invoice?.InvoiceCode || `#${previewQrPayment.InvoiceID}`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Người nộp / nhận:</span>
+                    <span className="font-semibold text-slate-900">
+                      {previewQrPayment.invoice?.CustomerName || 'Khách vãng lai'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Phương thức:</span>
+                    <span className="font-mono font-semibold text-slate-800">
+                      {previewQrPayment.PaymentMethod}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Thời gian khớp lệnh:</span>
+                    <span className="tabular-nums text-slate-800">
+                      {new Date(previewQrPayment.PaymentDate).toLocaleString('vi-VN')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 p-4 text-center space-y-3 bg-slate-50/50">
+                  <div className="text-xs font-bold text-slate-700">
+                    Mã QR Chứng từ Đối soát Napas247
+                  </div>
+                  <img
+                    src={`https://img.vietqr.io/image/MB-0388889999-compact2.png?amount=${previewQrPayment.PaidAmount}&addInfo=${encodeURIComponent(
+                      previewQrPayment.invoice?.InvoiceCode || 'PHARMACORE'
+                    )}`}
+                    alt="VietQR"
+                    className="mx-auto h-52 w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xs"
+                  />
+                  <div className="text-xs text-slate-600">
+                    Giá trị bút toán:{' '}
+                    <strong className="text-base font-bold text-teal-700 tabular-nums">
+                      {formatVND(previewQrPayment.PaidAmount)}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 px-6 py-4 bg-slate-50 flex items-center justify-between sticky bottom-0">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                <span>In Phiếu Thu/Chi</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setPreviewQrPayment(null)}
-                className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+                className="h-8.5 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700"
               >
-                <X className="h-4 w-4" />
+                Đóng
               </button>
-            </div>
-            <div className="p-4 text-center space-y-3">
-              <img
-                src={`https://img.vietqr.io/image/MB-0388889999-compact2.png?amount=${previewQrPayment.PaidAmount}&addInfo=${encodeURIComponent(
-                  previewQrPayment.invoice?.InvoiceCode || 'PHARMACORE'
-                )}`}
-                alt="VietQR"
-                className="mx-auto h-52 w-52 rounded border border-zinc-200 p-1"
-              />
-              <div className="text-xs text-zinc-600">
-                Số tiền đối soát:{' '}
-                <strong className="text-zinc-900 tabular-nums">
-                  {formatVND(previewQrPayment.PaidAmount)}
-                </strong>
-              </div>
             </div>
           </div>
         </div>

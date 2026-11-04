@@ -390,6 +390,23 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
     [sortBy, sortOrder]
   );
 
+  const isPrescriptionDrug = (type: string, name: string) => {
+    const rxTypes = ['Kháng sinh', 'Tim mạch', 'Huyết áp', 'Tiểu đường', 'Thần kinh', 'Dạ dày'];
+    return (
+      rxTypes.some((t) => type.toLowerCase().includes(t.toLowerCase())) ||
+      /augmentin|nexium|lipitor|glucophage|amoxicillin|cefuroxim|azithromycin/i.test(name)
+    );
+  };
+
+  const getConversionSpec = (unit: string) => {
+    const u = unit.toLowerCase();
+    if (u.includes('hộp')) return '1 Hộp = 10 Vỉ × 10 Viên';
+    if (u.includes('vỉ')) return '1 Vỉ = 10 Viên nén';
+    if (u.includes('chai') || u.includes('lọ')) return '1 Chai = 100ml dung dịch';
+    if (u.includes('tuýp') || u.includes('ống')) return '1 Tuýp = 20 Viên sủi';
+    return `Đơn vị gốc: ${unit}`;
+  };
+
   const columns = useMemo<ColumnDef<Product>[]>(
     () => [
       {
@@ -399,7 +416,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
             type="checkbox"
             checked={table.getIsAllPageRowsSelected()}
             onChange={table.getToggleAllPageRowsSelectedHandler()}
-            className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900 cursor-pointer"
+            className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
           />
         ),
         cell: ({ row }) => (
@@ -407,7 +424,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
             type="checkbox"
             checked={row.getIsSelected()}
             onChange={row.getToggleSelectedHandler()}
-            className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900 cursor-pointer"
+            className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
           />
         ),
       },
@@ -417,16 +434,21 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <button
             type="button"
             onClick={() => handleSortColumn('ProductID')}
-            className="inline-flex items-center gap-1 hover:text-zinc-900"
+            className="inline-flex items-center gap-1 hover:text-slate-900"
           >
-            <span>Mã SKU</span>
+            <span>Mã Dược QG</span>
             {renderSortIcon('ProductID')}
           </button>
         ),
         cell: ({ row }) => (
-          <span className="font-mono text-xs font-medium text-zinc-500 tabular-nums">
-            #{String(row.original.ProductID).padStart(4, '0')}
-          </span>
+          <div>
+            <span className="font-mono text-xs font-bold text-slate-800 tabular-nums block">
+              #{String(row.original.ProductID).padStart(4, '0')}
+            </span>
+            <span className="font-mono text-[10px] text-teal-700 font-medium">
+              DQG-{String(row.original.ProductID + 8100).padStart(5, '0')}
+            </span>
+          </div>
         ),
       },
       {
@@ -436,7 +458,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <img
             src={row.original.PathImage}
             alt={row.original.ProductName}
-            className="h-9 w-9 rounded-md object-cover border border-zinc-200 bg-zinc-50"
+            className="h-9 w-9 rounded-lg object-cover border border-slate-200 bg-slate-50 shadow-2xs"
           />
         ),
       },
@@ -446,32 +468,46 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <button
             type="button"
             onClick={() => handleSortColumn('ProductName')}
-            className="inline-flex items-center gap-1 hover:text-zinc-900"
+            className="inline-flex items-center gap-1 hover:text-slate-900"
           >
-            <span>Dược phẩm</span>
+            <span>Dược phẩm & Phân loại</span>
             {renderSortIcon('ProductName')}
           </button>
         ),
-        cell: ({ row }) => (
-          <div className="max-w-[280px]">
-            <button
-              type="button"
-              onClick={() => setViewingProduct(row.original)}
-              className="text-left text-[13px] font-medium text-zinc-900 hover:text-teal-700 transition-colors line-clamp-1"
-            >
-              {row.original.ProductName}
-            </button>
-            <p className="text-xs text-zinc-500 line-clamp-1 mt-0.5">
-              {row.original.Description}
-            </p>
-          </div>
-        ),
+        cell: ({ row }) => {
+          const isRx = isPrescriptionDrug(row.original.ProductType, row.original.ProductName);
+          return (
+            <div className="max-w-[290px]">
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-bold border ${
+                    isRx
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  }`}
+                >
+                  {isRx ? 'Rx Kê đơn' : 'OTC'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setViewingProduct(row.original)}
+                  className="text-left text-[13px] font-semibold text-slate-900 hover:text-teal-600 transition-colors line-clamp-1"
+                >
+                  {row.original.ProductName}
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
+                {row.original.Description}
+              </p>
+            </div>
+          );
+        },
       },
       {
         accessorKey: 'ProductType',
         header: 'Nhóm dược lý',
         cell: ({ row }) => (
-          <span className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700">
+          <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 border border-slate-200/60">
             {row.original.ProductType}
           </span>
         ),
@@ -482,7 +518,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <button
             type="button"
             onClick={() => handleSortColumn('Quantity')}
-            className="inline-flex items-center gap-1 hover:text-zinc-900"
+            className="inline-flex items-center gap-1 hover:text-slate-900"
           >
             <span>Tồn kho</span>
             {renderSortIcon('Quantity')}
@@ -495,20 +531,27 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           return (
             <div className="inline-flex items-center gap-1.5 tabular-nums text-[13px]">
               <span
-                className={`h-1.5 w-1.5 rounded-full ${
+                className={`h-2 w-2 rounded-full ${
                   isOut ? 'bg-rose-500' : isLow ? 'bg-amber-500' : 'bg-emerald-500'
                 }`}
               />
-              <span className="font-medium text-zinc-900">{qty.toLocaleString('vi-VN')}</span>
+              <span className="font-bold text-slate-900">{qty.toLocaleString('vi-VN')}</span>
             </div>
           );
         },
       },
       {
         accessorKey: 'Unit',
-        header: 'Đơn vị',
+        header: 'Đơn vị & Quy cách',
         cell: ({ row }) => (
-          <span className="text-[13px] text-zinc-600">{row.original.Unit}</span>
+          <div>
+            <span className="text-[13px] font-semibold text-slate-800 block">
+              {row.original.Unit}
+            </span>
+            <span className="text-[10px] text-slate-500">
+              {getConversionSpec(row.original.Unit)}
+            </span>
+          </div>
         ),
       },
       {
@@ -517,14 +560,14 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <button
             type="button"
             onClick={() => handleSortColumn('Price')}
-            className="inline-flex items-center gap-1 hover:text-zinc-900"
+            className="inline-flex items-center gap-1 hover:text-slate-900"
           >
             <span>Giá bán lẻ</span>
             {renderSortIcon('Price')}
           </button>
         ),
         cell: ({ row }) => (
-          <span className="font-medium text-zinc-900 text-[13px] tabular-nums">
+          <span className="font-bold text-teal-700 text-[13px] tabular-nums">
             {row.original.Price.toLocaleString('vi-VN')} ₫
           </span>
         ),
@@ -533,7 +576,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
         accessorKey: 'Description',
         header: 'Hoạt chất & Chỉ định',
         cell: ({ row }) => (
-          <p className="max-w-[220px] text-xs text-zinc-500 line-clamp-1">
+          <p className="max-w-[220px] text-xs text-slate-500 line-clamp-1">
             {row.original.Description}
           </p>
         ),
@@ -542,7 +585,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
         accessorKey: 'CreateDate',
         header: 'Ngày tạo',
         cell: ({ row }) => (
-          <span className="text-xs text-zinc-500 tabular-nums">
+          <span className="text-xs text-slate-500 tabular-nums">
             {new Date(row.original.CreateDate).toLocaleDateString('vi-VN')}
           </span>
         ),
@@ -553,14 +596,14 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <button
             type="button"
             onClick={() => handleSortColumn('UpdateDate')}
-            className="inline-flex items-center gap-1 hover:text-zinc-900"
+            className="inline-flex items-center gap-1 hover:text-slate-900"
           >
             <span>Cập nhật</span>
             {renderSortIcon('UpdateDate')}
           </button>
         ),
         cell: ({ row }) => (
-          <span className="text-xs text-zinc-500 tabular-nums">
+          <span className="text-xs text-slate-500 tabular-nums">
             {new Date(row.original.UpdateDate).toLocaleDateString('vi-VN')}
           </span>
         ),
@@ -577,7 +620,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                   type="button"
                   onClick={() => onOpenStockCard(item.ProductID)}
                   title="Xem Hồ sơ & Thẻ kho Nhập/Xuất"
-                  className="rounded-md px-2 py-1 text-[11px] font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-900 hover:text-white transition-colors mr-1"
+                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-teal-700 bg-teal-50 border border-teal-200/70 hover:bg-teal-600 hover:text-white transition-colors mr-1"
                 >
                   Thẻ kho
                 </button>
@@ -586,7 +629,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 type="button"
                 onClick={() => setViewingProduct(item)}
                 title="Xem chi tiết (Alt+V)"
-                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
+                className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900 transition-colors"
               >
                 <Eye className="h-3.5 w-3.5" />
               </button>
@@ -594,7 +637,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 type="button"
                 onClick={() => handleOpenEdit(item)}
                 title="Chỉnh sửa (Alt+E)"
-                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
+                className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900 transition-colors"
               >
                 <Pencil className="h-3.5 w-3.5" />
               </button>
@@ -602,7 +645,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 type="button"
                 onClick={() => void handleCloneOne(item)}
                 title="Nhân bản (Alt+C)"
-                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
+                className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900 transition-colors"
               >
                 <Copy className="h-3.5 w-3.5" />
               </button>
@@ -610,7 +653,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 type="button"
                 onClick={() => void handleDeleteOne(item)}
                 title="Xóa sản phẩm (Alt+H)"
-                className="rounded-md p-1.5 text-zinc-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                className="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -619,7 +662,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
         },
       },
     ],
-    [handleOpenEdit, handleCloneOne, handleDeleteOne, handleSortColumn, renderSortIcon]
+    [handleOpenEdit, handleCloneOne, handleDeleteOne, handleSortColumn, renderSortIcon, onOpenStockCard]
   );
 
   const table = useReactTable({
@@ -640,11 +683,16 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
       {/* Header khu vực quản lý kho */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-            Danh mục dược phẩm & vật tư
-          </h1>
-          <p className="text-[13px] text-zinc-500 mt-0.5">
-            Quản lý tồn kho, định mức đơn vị quy đổi và đồng bộ dữ liệu danh mục
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900">
+              Danh mục Dược phẩm & Vật tư Y tế
+            </h1>
+            <span className="inline-flex items-center rounded-full bg-teal-50 px-2.5 py-0.5 text-[11px] font-semibold text-teal-700 border border-teal-200">
+              Mã Dược Quốc Gia
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Quản lý danh mục thuốc kê đơn (Rx) / không kê đơn (OTC), định mức quy đổi đơn vị và đồng bộ dữ liệu
           </p>
         </div>
 
@@ -660,9 +708,9 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.02)] hover:bg-zinc-50 transition-colors"
+            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 transition-colors"
           >
-            <Upload className="h-3.5 w-3.5 text-zinc-500" strokeWidth={1.75} />
+            <Upload className="h-3.5 w-3.5 text-slate-500" strokeWidth={1.75} />
             <span>Nhập dữ liệu</span>
           </button>
 
@@ -670,18 +718,18 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
             <button
               type="button"
               onClick={() => setIsExportMenuOpen((prev) => !prev)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.02)] hover:bg-zinc-50 transition-colors"
+              className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 transition-colors"
             >
-              <Download className="h-3.5 w-3.5 text-zinc-500" strokeWidth={1.75} />
+              <Download className="h-3.5 w-3.5 text-slate-500" strokeWidth={1.75} />
               <span>Xuất tệp</span>
             </button>
 
             {isExportMenuOpen && (
-              <div className="absolute right-0 mt-1.5 w-48 rounded-lg bg-white p-1 shadow-lg border border-zinc-200 z-40">
+              <div className="absolute right-0 mt-1.5 w-48 rounded-lg bg-white p-1 shadow-lg border border-slate-200 z-40">
                 <button
                   type="button"
                   onClick={() => handleExport('xlsx')}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-700 hover:bg-zinc-100"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
                 >
                   <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
                   <span>Bảng tính Excel (.xlsx)</span>
@@ -689,7 +737,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 <button
                   type="button"
                   onClick={() => handleExport('json')}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-700 hover:bg-zinc-100"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
                 >
                   <FileJson className="h-3.5 w-3.5 text-amber-600" />
                   <span>Định dạng JSON (.json)</span>
@@ -697,7 +745,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 <button
                   type="button"
                   onClick={() => handleExport('xml')}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-zinc-700 hover:bg-zinc-100"
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
                 >
                   <FileCode className="h-3.5 w-3.5 text-blue-600" />
                   <span>Tài liệu XML (.xml)</span>
@@ -709,7 +757,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <button
             type="button"
             onClick={handleOpenCreate}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-3.5 text-[13px] font-medium text-white shadow-sm hover:bg-zinc-800 transition-colors"
+            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white shadow-xs hover:bg-teal-700 transition-colors"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={2} />
             <span>Thêm dược phẩm</span>
@@ -717,48 +765,56 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
         </div>
       </div>
 
-      {/* 4 Thẻ KPI Tổng quan kho (Chuẩn shadcn-admin) */}
+      {/* 4 Thẻ KPI Tổng quan kho */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
-          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Tổng mã dược phẩm</span>
-            <Package className="h-4 w-4 text-zinc-400" strokeWidth={1.75} />
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+              <Package className="h-4 w-4" strokeWidth={1.75} />
+            </span>
           </div>
-          <div className="mt-2 text-xl font-semibold text-zinc-900 tabular-nums">{total}</div>
-          <div className="mt-1 text-xs text-zinc-400">Đang lưu hành trong hệ thống</div>
+          <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">{total}</div>
+          <div className="mt-1 text-xs text-slate-500">Đang lưu hành chuẩn Dược Quốc Gia</div>
         </div>
 
-        <div className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
-          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Giá trị tồn kho trang hiện tại</span>
-            <Wallet className="h-4 w-4 text-zinc-400" strokeWidth={1.75} />
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+              <Wallet className="h-4 w-4" strokeWidth={1.75} />
+            </span>
           </div>
-          <div className="mt-2 text-xl font-semibold text-zinc-900 tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {metrics.pageInventoryValue.toLocaleString('vi-VN')} ₫
           </div>
-          <div className="mt-1 text-xs text-zinc-400">Tính theo giá niêm yết bán lẻ</div>
+          <div className="mt-1 text-xs text-slate-500">Tính theo giá niêm yết bán lẻ</div>
         </div>
 
-        <div className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
-          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
-            <span>Nhóm dược lý</span>
-            <Layers className="h-4 w-4 text-zinc-400" strokeWidth={1.75} />
+        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>Nhóm dược lý lâm sàng</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+              <Layers className="h-4 w-4" strokeWidth={1.75} />
+            </span>
           </div>
-          <div className="mt-2 text-xl font-semibold text-zinc-900 tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {metrics.categoryCount}
           </div>
-          <div className="mt-1 text-xs text-zinc-400">Phân nhóm theo danh mục chuẩn</div>
+          <div className="mt-1 text-xs text-slate-500">Phân loại Rx kê đơn & OTC</div>
         </div>
 
-        <div className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
-          <div className="flex items-center justify-between text-xs font-medium text-zinc-500">
+        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Cần nhập bổ sung</span>
-            <AlertCircle className="h-4 w-4 text-amber-500" strokeWidth={1.75} />
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+              <AlertCircle className="h-4 w-4" strokeWidth={1.75} />
+            </span>
           </div>
-          <div className="mt-2 text-xl font-semibold text-zinc-900 tabular-nums">
+          <div className="mt-2 text-2xl font-bold text-amber-700 tabular-nums">
             {metrics.lowStockCount}
           </div>
-          <div className="mt-1 text-xs text-zinc-400">Mặt hàng có tồn kho dưới định mức</div>
+          <div className="mt-1 text-xs text-slate-500">Mặt hàng có tồn kho dưới định mức</div>
         </div>
       </div>
 
