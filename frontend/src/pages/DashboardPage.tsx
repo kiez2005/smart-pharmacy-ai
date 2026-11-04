@@ -163,7 +163,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <button
             type="button"
             onClick={loadAnalytics}
-            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-2xs transition-colors"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm transition-colors"
           >
             <RefreshCw className="h-3.5 w-3.5 text-slate-500" />
             <span>Làm mới số liệu</span>
@@ -171,7 +171,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <button
             type="button"
             onClick={onNavigateToPos}
-            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-xs transition-colors"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm transition-colors"
           >
             <span>Mở Quầy Thu ngân POS</span>
             <ArrowUpRight className="h-3.5 w-3.5" />
@@ -206,7 +206,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           type="button"
           disabled={syncingPortal}
           onClick={handleSyncNationalPortal}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-teal-300 bg-white px-3 text-xs font-semibold text-teal-700 hover:bg-teal-50 transition-colors"
+          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-teal-300 bg-white px-3.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 shadow-sm transition-colors"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${syncingPortal ? 'animate-spin' : ''}`} />
           <span>{syncingPortal ? 'Đang đẩy dữ liệu...' : 'Đồng bộ Cổng Dược QG'}</span>
@@ -404,10 +404,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             <button
               type="button"
               onClick={() => setActiveAlertTab('fefo')}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+              className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold transition-all ${
                 activeAlertTab === 'fefo'
-                  ? 'bg-teal-600 text-white shadow-xs'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  ? 'bg-teal-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 shadow-sm'
               }`}
             >
               <CalendarClock className="h-3.5 w-3.5" />
@@ -416,10 +416,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             <button
               type="button"
               onClick={() => setActiveAlertTab('lowstock')}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+              className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold transition-all ${
                 activeAlertTab === 'lowstock'
-                  ? 'bg-teal-600 text-white shadow-xs'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  ? 'bg-teal-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 shadow-sm'
               }`}
             >
               <AlertTriangle className="h-3.5 w-3.5" />
@@ -430,7 +430,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <button
             type="button"
             onClick={onNavigateToImports}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3 text-xs font-semibold text-teal-700 hover:bg-teal-100 transition-colors"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3.5 text-xs font-semibold text-teal-700 hover:bg-teal-100 shadow-sm transition-colors"
           >
             <Truck className="h-3.5 w-3.5 text-teal-600" />
             <span>Tạo Phiếu Nhập Kho Bổ Sung</span>
@@ -497,7 +497,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       <button
                         type="button"
                         onClick={() => onOpenStockCard(batch.productId)}
-                        className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-50 transition-colors"
+                        className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-teal-700 shadow-sm hover:bg-teal-50 transition-colors"
                       >
                         Mở Thẻ kho
                       </button>
@@ -548,14 +548,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                           <button
                             type="button"
                             onClick={() => onOpenStockCard(p.ProductID)}
-                            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                           >
                             Xem thẻ kho
                           </button>
                           <button
                             type="button"
                             onClick={onNavigateToImports}
-                            className="rounded-md bg-teal-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-700"
+                            className="inline-flex h-8 items-center rounded-lg bg-teal-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-teal-700"
                           >
                             Nhập hàng
                           </button>

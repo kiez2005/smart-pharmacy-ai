@@ -104,7 +104,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-2xs"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             <span>Quay lại Danh mục</span>
@@ -126,7 +126,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
         <button
           type="button"
           onClick={() => window.print()}
-          className="inline-flex h-8.5 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-xs"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm"
         >
           <Printer className="h-3.5 w-3.5" />
           <span>In Thẻ kho / Tem nhãn SKU</span>
@@ -253,7 +253,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
                   min={0}
                   value={actualCount}
                   onChange={(e) => setActualCount(Number(e.target.value))}
-                  className="mt-0.5 w-full rounded border border-teal-300 bg-white px-2 py-0.5 text-sm font-bold text-slate-900 tabular-nums focus:border-teal-600 focus:outline-none"
+                  className="mt-1 w-full h-9 rounded-lg border border-teal-300 bg-white px-2.5 text-xs font-bold text-slate-900 tabular-nums shadow-sm focus:border-teal-600 focus:outline-none"
                 />
               </div>
 
@@ -277,13 +277,13 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[11px] font-medium text-slate-600 block">
+              <label className="text-[11px] font-semibold text-slate-700 block">
                 Lý do kiểm kê / điều chỉnh tồn kho:
               </label>
               <select
                 value={auditReason}
                 onChange={(e) => setAuditReason(e.target.value)}
-                className="w-full h-8 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-800 focus:border-teal-600 focus:outline-none"
+                className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-800 shadow-sm focus:border-teal-600 focus:outline-none"
               >
                 <option value="Kiểm kê định kỳ cuối tháng (Chuẩn GPP)">
                   Kiểm kê định kỳ cuối tháng (Chuẩn GPP)
@@ -309,7 +309,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
               type="button"
               disabled={submittingAudit}
               onClick={() => void handleConfirmStocktake()}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-teal-600 px-3 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 shadow-2xs transition-colors"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 shadow-sm transition-colors"
             >
               <CheckCircle2 className="h-3.5 w-3.5" />
               <span>{submittingAudit ? 'Đang cân bằng...' : 'Xác nhận Cân bằng Kho'}</span>

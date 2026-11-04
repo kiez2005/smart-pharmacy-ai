@@ -339,7 +339,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
           <button
             type="button"
             onClick={onNavigateToInvoices}
-            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
           >
             <span>Lịch sử Hóa đơn & Hoàn trả</span>
           </button>
@@ -359,21 +359,21 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               <button
                 type="button"
                 onClick={() => applyComboPack('FLU')}
-                className="rounded-lg bg-white border border-teal-200 px-2.5 py-1 text-[11px] font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors"
+                className="rounded-lg bg-white border border-teal-200 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors shadow-2xs"
               >
                 + Liều Cảm cúm 3 ngày
               </button>
               <button
                 type="button"
                 onClick={() => applyComboPack('STOMACH')}
-                className="rounded-lg bg-white border border-teal-200 px-2.5 py-1 text-[11px] font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors"
+                className="rounded-lg bg-white border border-teal-200 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors shadow-2xs"
               >
                 + Đơn Dạ dày - Trào ngược
               </button>
               <button
                 type="button"
                 onClick={() => applyComboPack('IMMUNE')}
-                className="rounded-lg bg-white border border-teal-200 px-2.5 py-1 text-[11px] font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors"
+                className="rounded-lg bg-white border border-teal-200 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors shadow-2xs"
               >
                 + Combo Tăng đề kháng
               </button>
@@ -389,7 +389,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Quét mã vạch Barcode hoặc nhập tên thuốc, hoạt chất, mã DQG..."
-                className="w-full h-9 rounded-lg border border-slate-300 pl-9 pr-3 text-xs text-slate-900 focus:border-teal-600 focus:outline-none"
+                className="w-full h-9 rounded-lg border border-slate-300 pl-9 pr-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
               />
             </div>
 
@@ -399,7 +399,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                   key={cat}
                   type="button"
                   onClick={() => setSelectedCategory(cat)}
-                  className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  className={`h-8 shrink-0 rounded-lg px-3 text-xs font-semibold transition-colors ${
                     selectedCategory === cat
                       ? 'bg-teal-600 text-white shadow-2xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
@@ -446,18 +446,18 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                     <span className="text-xs font-bold text-teal-700 tabular-nums">
                       {formatVND(p.Price)}/{p.Unit}
                     </span>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() => addToCart(p, 'BLISTER')}
-                        className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 hover:border-teal-600 hover:text-teal-700"
+                        className="inline-flex items-center h-7 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 hover:border-teal-600 hover:text-teal-700"
                       >
                         +Vỉ lẻ
                       </button>
                       <button
                         type="button"
                         onClick={() => addToCart(p, 'BASE')}
-                        className="rounded bg-teal-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-teal-700"
+                        className="inline-flex items-center h-7 rounded-lg bg-teal-600 px-2.5 text-xs font-semibold text-white hover:bg-teal-700"
                       >
                         +{p.Unit}
                       </button>
@@ -505,7 +505,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               onChange={(e) =>
                 handleSelectCustomer(e.target.value ? Number(e.target.value) : null)
               }
-              className="w-full h-8.5 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 focus:border-teal-600 focus:outline-none"
+              className="w-full h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
             >
               <option value="">-- Khách vãng lai (Bán lẻ OTC không lưu hồ sơ) --</option>
               {customers.map((c) => (
@@ -546,14 +546,14 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   placeholder="Tên khách hàng"
-                  className="h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs"
+                  className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                 />
                 <input
                   type="text"
                   value={customerPhone}
                   onChange={(e) => setCustomerPhone(e.target.value)}
                   placeholder="Số điện thoại"
-                  className="h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs"
+                  className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                 />
               </div>
             )}
@@ -606,7 +606,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                       <button
                         type="button"
                         onClick={() => updateCartQty(item.product.ProductID, -1)}
-                        className="h-6 w-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100"
+                        className="h-7 w-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-100"
                       >
                         <Minus className="h-3 w-3" />
                       </button>
@@ -616,14 +616,14 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                       <button
                         type="button"
                         onClick={() => updateCartQty(item.product.ProductID, 1)}
-                        className="h-6 w-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100"
+                        className="h-7 w-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-100"
                       >
                         <Plus className="h-3 w-3" />
                       </button>
                       <button
                         type="button"
                         onClick={() => updateCartQty(item.product.ProductID, -item.quantity)}
-                        className="h-6 w-6 rounded text-slate-400 hover:text-rose-600 flex items-center justify-center"
+                        className="h-7 w-7 rounded-lg text-slate-400 hover:text-rose-600 flex items-center justify-center"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -632,7 +632,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
                   {/* Bộ chọn Đơn vị quy đổi (Nguyên Hộp / Vỉ lẻ / Viên lẻ) */}
                   <div className="flex items-center justify-between gap-2">
-                    <div className="inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5 text-[10px]">
+                    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
                       {(
                         [
                           { id: 'BASE', label: `Nguyên ${item.product.Unit}` },
@@ -644,9 +644,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                           key={u.id}
                           type="button"
                           onClick={() => updateUnitMode(item.product.ProductID, u.id)}
-                          className={`rounded px-2 py-0.5 font-semibold transition-colors ${
+                          className={`rounded-md px-2.5 py-1 font-semibold transition-colors ${
                             mode === u.id
-                              ? 'bg-teal-600 text-white shadow-2xs'
+                              ? 'bg-teal-600 text-white shadow-xs'
                               : 'text-slate-600 hover:text-slate-900'
                           }`}
                         >
@@ -672,7 +672,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                       )
                     }
                     placeholder="Hướng dẫn liều dùng in trên nhãn thuốc..."
-                    className="w-full h-7 rounded-md border border-slate-200 bg-slate-50 px-2 text-[11px] text-slate-700"
+                    className="w-full h-8 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-700 focus:bg-white focus:border-teal-600 focus:outline-none"
                   />
                 </div>
               );
@@ -694,7 +694,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                 step={1000}
                 value={discount}
                 onChange={(e) => setDiscount(Number(e.target.value))}
-                className="w-28 h-7 rounded-md border border-slate-300 px-2 text-right text-xs tabular-nums"
+                className="w-32 h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-right text-xs tabular-nums shadow-sm focus:border-teal-600 focus:outline-none"
               />
             </div>
 
@@ -741,7 +741,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                   type="number"
                   value={cashTendered || finalTotal}
                   onChange={(e) => setCashTendered(Number(e.target.value))}
-                  className="mt-0.5 w-full h-7 rounded border border-slate-300 bg-white px-2 tabular-nums"
+                  className="mt-0.5 w-full h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs tabular-nums shadow-sm focus:border-teal-600 focus:outline-none"
                 />
               </div>
               <div>
@@ -816,7 +816,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
               >
                 <Printer className="h-3.5 w-3.5" />
                 <span>In phiếu GPP</span>
@@ -824,7 +824,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               <button
                 type="button"
                 onClick={() => setCompletedInvoice(null)}
-                className="h-8.5 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700"
+                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white shadow-sm hover:bg-teal-700"
               >
                 Đóng & Bán đơn mới
               </button>

@@ -708,7 +708,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 transition-colors"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 transition-colors"
           >
             <Upload className="h-3.5 w-3.5 text-slate-500" strokeWidth={1.75} />
             <span>Nhập dữ liệu</span>
@@ -718,7 +718,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
             <button
               type="button"
               onClick={() => setIsExportMenuOpen((prev) => !prev)}
-              className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 transition-colors"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-2xs hover:bg-slate-50 transition-colors"
             >
               <Download className="h-3.5 w-3.5 text-slate-500" strokeWidth={1.75} />
               <span>Xuất tệp</span>
@@ -757,7 +757,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           <button
             type="button"
             onClick={handleOpenCreate}
-            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white shadow-xs hover:bg-teal-700 transition-colors"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white shadow-xs hover:bg-teal-700 transition-colors"
           >
             <Plus className="h-3.5 w-3.5" strokeWidth={2} />
             <span>Thêm dược phẩm</span>
@@ -819,28 +819,28 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
       </div>
 
       {/* Khối Data Grid (Toolbar + Bảng + Pagination) */}
-      <div className="rounded-lg border border-zinc-200/80 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+      <div className="rounded-xl border border-slate-200/90 bg-white shadow-2xs">
         {/* Toolbar lọc & tìm kiếm */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5 border-b border-zinc-200/80 p-3.5">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-slate-200/80 p-3.5">
           <div className="flex flex-1 flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[240px] max-w-md">
-              <Search className="h-3.5 w-3.5 text-zinc-400 absolute left-3 top-2.5 pointer-events-none" />
+              <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 ref={searchInputRef}
                 type="text"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 placeholder="Tìm theo tên thuốc, hoạt chất, mã SKU..."
-                className="w-full h-9 rounded-md border border-zinc-200 bg-zinc-50/50 pl-8 pr-9 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:bg-white focus:outline-none"
+                className="w-full h-9 rounded-lg border border-slate-300 bg-white pl-8 pr-10 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/15 focus:outline-none transition-all"
               />
               <button
                 type="button"
                 onClick={handleVoiceSearch}
                 title="Tìm kiếm bằng giọng nói"
-                className={`absolute right-1.5 top-1.5 rounded p-1 transition-colors ${
+                className={`absolute right-1 top-1 h-7 w-7 rounded-md inline-flex items-center justify-center transition-colors ${
                   isListeningVoice
                     ? 'bg-rose-500 text-white animate-pulse'
-                    : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700'
+                    : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'
                 }`}
               >
                 <Mic className="h-3.5 w-3.5" />
@@ -853,7 +853,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 setSelectedType(e.target.value);
                 setPage(1);
               }}
-              className="h-9 rounded-md border border-zinc-200 bg-white px-2.5 text-[13px] text-zinc-700 focus:border-zinc-900 focus:outline-none"
+              className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/15 focus:outline-none transition-all"
             >
               <option value="ALL">Tất cả nhóm dược lý</option>
               {availableTypes.map((type) => (
@@ -869,7 +869,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 setSelectedUnit(e.target.value);
                 setPage(1);
               }}
-              className="h-9 rounded-md border border-zinc-200 bg-white px-2.5 text-[13px] text-zinc-700 focus:border-zinc-900 focus:outline-none"
+              className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-700 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/15 focus:outline-none transition-all"
             >
               <option value="ALL">Đơn vị tính</option>
               {availableUnits.map((u) => (
@@ -888,7 +888,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                   setSelectedUnit('ALL');
                   setPage(1);
                 }}
-                className="inline-flex h-9 items-center gap-1 rounded-md px-2.5 text-xs font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+                className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
               >
                 <RotateCcw className="h-3 w-3" />
                 <span>Đặt lại</span>
@@ -898,7 +898,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
 
           <div className="flex items-center gap-2">
             {debouncedSearch && searchEngineInfo && (
-              <span className="text-xs text-zinc-400 tabular-nums">
+              <span className="text-xs text-slate-400 tabular-nums">
                 {total} kết quả ({searchEngineInfo.processingTimeMs}ms)
               </span>
             )}
@@ -979,7 +979,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 setLimit(Number(e.target.value));
                 setPage(1);
               }}
-              className="h-7 rounded border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-800 focus:border-zinc-900 focus:outline-none"
+              className="h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-800 shadow-sm focus:border-teal-500 focus:outline-none"
             >
               <option value={10}>10</option>
               <option value={12}>12</option>
@@ -991,12 +991,12 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               disabled={page <= 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="inline-flex h-7 items-center gap-1 rounded border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+              className="inline-flex h-8 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 disabled:opacity-40"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
               <span>Trước</span>
@@ -1007,9 +1007,9 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 key={pageNum}
                 type="button"
                 onClick={() => setPage(pageNum)}
-                className={`h-7 min-w-[28px] rounded px-2 text-xs font-medium tabular-nums transition-colors ${
+                className={`h-8 min-w-[32px] rounded-lg px-2 text-xs font-medium tabular-nums transition-colors shadow-sm ${
                   pageNum === page
-                    ? 'bg-zinc-900 text-white'
+                    ? 'bg-zinc-900 text-white font-semibold'
                     : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
                 }`}
               >
@@ -1021,7 +1021,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
               type="button"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="inline-flex h-7 items-center gap-1 rounded border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+              className="inline-flex h-8 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 disabled:opacity-40"
             >
               <span>Sau</span>
               <ChevronRight className="h-3.5 w-3.5" />
@@ -1049,7 +1049,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
       {/* Modal Xác nhận & Xem trước Tệp Import */}
       {pendingImportFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
-          <div className="w-full max-w-md rounded-lg bg-white shadow-xl border border-zinc-200 overflow-hidden">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-zinc-200 overflow-hidden">
             <div className="border-b border-zinc-200 px-5 py-3.5">
               <h3 className="text-sm font-semibold text-zinc-900">
                 Xác nhận Nhập Dữ liệu Danh mục
@@ -1059,7 +1059,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
               </p>
             </div>
             <div className="p-5 space-y-3 text-xs">
-              <div className="rounded-md bg-zinc-50 p-3 border border-zinc-200/80 space-y-1.5">
+              <div className="rounded-lg bg-zinc-50 p-3 border border-zinc-200/80 space-y-1.5">
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Tên tệp dữ liệu:</span>
                   <span className="font-mono font-semibold text-zinc-900">
@@ -1087,7 +1087,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
               <button
                 type="button"
                 onClick={() => setPendingImportFile(null)}
-                className="h-8 rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                className="h-9 rounded-lg border border-zinc-200 bg-white px-4 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50"
               >
                 Hủy bỏ
               </button>
@@ -1095,7 +1095,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 type="button"
                 disabled={importingFile}
                 onClick={() => void handleConfirmImport()}
-                className="h-8 rounded-md bg-zinc-900 px-3 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50"
               >
                 {importingFile ? 'Đang nhập dữ liệu...' : 'Xác nhận Nhập vào Kho'}
               </button>

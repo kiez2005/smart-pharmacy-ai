@@ -265,7 +265,7 @@ export const App: React.FC = () => {
 
           <div className="flex items-center gap-2.5 shrink-0">
             {/* Chọn Cơ sở / Chi nhánh nhà thuốc */}
-            <div className="hidden xl:flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700">
+            <div className="hidden xl:flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 h-9 text-xs text-slate-700 shadow-2xs">
               <MapPin className="h-3.5 w-3.5 text-teal-600" />
               <select
                 value={selectedBranch}
@@ -290,7 +290,7 @@ export const App: React.FC = () => {
               type="button"
               onClick={handleSyncNationalPortal}
               title="Nhấn để đồng bộ tức thời với Cổng Dược Quốc Gia (duocquocgia.com.vn)"
-              className="hidden sm:inline-flex h-8 items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50/80 px-2.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100 transition-colors"
+              className="hidden sm:inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 text-xs font-medium text-emerald-800 hover:bg-emerald-100 shadow-2xs transition-colors"
             >
               <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
               <span>Cổng Dược QG: Online</span>
@@ -305,7 +305,7 @@ export const App: React.FC = () => {
             <select
               value={activeTab}
               onChange={(e) => setActiveTab(e.target.value as ActiveTab)}
-              className="md:hidden h-8 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-800"
+              className="md:hidden h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-2xs"
             >
               {navGroups
                 .flatMap((g) => g.items)
@@ -319,7 +319,7 @@ export const App: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveTab('POS')}
-              className="hidden sm:inline-flex h-8 items-center gap-1.5 rounded-md bg-teal-600 px-3 text-xs font-semibold text-white hover:bg-teal-700 shadow-2xs transition-colors"
+              className="hidden sm:inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-2xs transition-colors"
             >
               <ShoppingCart className="h-3.5 w-3.5" />
               <span>Bán hàng POS</span>
@@ -328,7 +328,7 @@ export const App: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowShortcutsModal(true)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-2xs"
             >
               <Keyboard className="h-3.5 w-3.5 text-slate-400" />
               <span className="hidden sm:inline">Phím tắt</span>

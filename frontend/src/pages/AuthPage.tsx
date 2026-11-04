@@ -82,7 +82,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [mode, setMode] = useState<'LOGIN' | 'REGISTER'>('REGISTER');
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('trung.d18cnpm5@epu.edu.vn');
+  const [email, setEmail] = useState('trung.nguyen@pharmacore.vn');
   const [password, setPassword] = useState('123456');
   const [phone, setPhone] = useState('0988123456');
   const [loading, setLoading] = useState(false);
@@ -258,7 +258,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               setMode('LOGIN');
               setShowAuthModal(true);
             }}
-            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50 px-3 text-xs font-semibold text-teal-800 hover:bg-teal-100"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50 px-3.5 text-xs font-semibold text-teal-800 shadow-sm hover:bg-teal-100 transition-colors"
           >
             <KeyRound className="h-3.5 w-3.5 text-teal-600" />
             <span>Đổi Ca Trực / Đăng Nhập</span>
@@ -290,7 +290,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           <button
             type="button"
             onClick={onLogout}
-            className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
           >
             <LogOut className="h-3.5 w-3.5" />
             <span>Kết thúc ca / Đăng xuất</span>
@@ -401,7 +401,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                           <select
                             value={u.Role}
                             onChange={(e) => void handleRoleChange(u.UserID, e.target.value)}
-                            className="h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-800 focus:border-teal-600 focus:outline-none"
+                            className="h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-800 shadow-sm focus:border-teal-600 focus:outline-none"
                           >
                             <option value="ADMIN">ADMIN (Dược sĩ Phụ trách)</option>
                             <option value="PHARMACIST">PHARMACIST (Dược sĩ Lâm sàng)</option>
@@ -539,8 +539,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 <button
                   type="button"
                   onClick={() => setMode('LOGIN')}
-                  className={`inline-flex items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-semibold transition-colors ${
-                    mode === 'LOGIN' ? 'bg-white text-teal-700 shadow-2xs' : 'text-slate-600'
+                  className={`inline-flex items-center justify-center gap-1.5 h-8 rounded-lg py-1 text-xs font-semibold transition-colors ${
+                    mode === 'LOGIN' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600'
                   }`}
                 >
                   <KeyRound className="h-3.5 w-3.5" />
@@ -549,8 +549,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 <button
                   type="button"
                   onClick={() => setMode('REGISTER')}
-                  className={`inline-flex items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-semibold transition-colors ${
-                    mode === 'REGISTER' ? 'bg-white text-teal-700 shadow-2xs' : 'text-slate-600'
+                  className={`inline-flex items-center justify-center gap-1.5 h-8 rounded-lg py-1 text-xs font-semibold transition-colors ${
+                    mode === 'REGISTER' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600'
                   }`}
                 >
                   <UserPlus className="h-3.5 w-3.5" />
@@ -570,7 +570,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
                       placeholder="VD: DS. Phạm Thu Hà"
-                      className="w-full h-9 rounded-lg border border-slate-300 px-3"
+                      className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                     />
                   </div>
                 )}
@@ -584,7 +584,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full h-9 rounded-lg border border-slate-300 px-3"
+                    className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                   />
                 </div>
 
@@ -597,7 +597,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full h-9 rounded-lg border border-slate-300 px-3"
+                    className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                   />
                 </div>
 
@@ -608,7 +608,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                       type="text"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
-                      className="w-full h-9 rounded-lg border border-slate-300 px-3"
+                      className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                     />
                   </div>
                 )}
@@ -617,14 +617,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowAuthModal(false)}
-                    className="h-9 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700"
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                   >
                     Hủy
                   </button>
                   <button
                     type="submit"
                     disabled={loading}
-                    className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+                    className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 shadow-sm transition-colors"
                   >
                     {loading
                       ? 'Đang xử lý...'

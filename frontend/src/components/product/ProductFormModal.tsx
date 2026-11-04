@@ -102,7 +102,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
-      <div className="w-full max-w-xl rounded-lg bg-white shadow-xl border border-zinc-200 overflow-hidden">
+      <div className="w-full max-w-xl rounded-xl bg-white shadow-xl border border-zinc-200 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
           <div>
@@ -117,7 +117,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors"
+            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
@@ -127,7 +127,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         <form onSubmit={handleFormSubmit} className="p-6 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
-              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
                 Tên thương mại & hàm lượng <span className="text-rose-500">*</span>
               </label>
               <input
@@ -137,18 +137,18 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 value={values.ProductName}
                 onChange={(e) => setValues({ ...values, ProductName: e.target.value })}
                 placeholder="Ví dụ: Panadol Extra 500mg/65mg"
-                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm placeholder:text-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
               />
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
                 Nhóm dược lý
               </label>
               <select
                 value={values.ProductType}
                 onChange={(e) => setValues({ ...values, ProductType: e.target.value })}
-                className="w-full h-9 rounded-md border border-zinc-300 bg-white px-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
+                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
               >
                 {PRODUCT_TYPES.map((type) => (
                   <option key={type} value={type}>
@@ -159,13 +159,13 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
                 Đơn vị quy đổi
               </label>
               <select
                 value={values.Unit}
                 onChange={(e) => setValues({ ...values, Unit: e.target.value })}
-                className="w-full h-9 rounded-md border border-zinc-300 bg-white px-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
+                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
               >
                 {PRODUCT_UNITS.map((unit) => (
                   <option key={unit} value={unit}>
@@ -176,7 +176,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
                 Số lượng tồn kho
               </label>
               <input
@@ -185,12 +185,12 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 required
                 value={values.Quantity}
                 onChange={(e) => setValues({ ...values, Quantity: Number(e.target.value) })}
-                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 tabular-nums focus:border-zinc-900 focus:outline-none"
+                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 tabular-nums shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
               />
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
                 Giá bán niêm yết (VNĐ)
               </label>
               <input
@@ -200,17 +200,17 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 required
                 value={values.Price}
                 onChange={(e) => setValues({ ...values, Price: Number(e.target.value) })}
-                className="w-full h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 tabular-nums focus:border-zinc-900 focus:outline-none"
+                className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 tabular-nums shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
               />
             </div>
 
             {/* Hình ảnh sản phẩm: Tải file từ máy tính HOẶC nhập URL */}
             <div className="sm:col-span-2">
-              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
                 Hình ảnh sản phẩm (`PathImage` — Tải ảnh từ máy tính hoặc dán URL)
               </label>
               <div className="flex items-center gap-3">
-                <div className="h-12 w-12 shrink-0 rounded-md border border-zinc-200 bg-zinc-50 overflow-hidden flex items-center justify-center">
+                <div className="h-12 w-12 shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 overflow-hidden flex items-center justify-center">
                   {values.PathImage ? (
                     <img
                       src={values.PathImage}
@@ -227,7 +227,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                     value={values.PathImage}
                     onChange={(e) => setValues({ ...values, PathImage: e.target.value })}
                     placeholder="https://... hoặc chọn ảnh từ máy tính"
-                    className="flex-1 h-9 rounded-md border border-zinc-300 px-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
+                    className="flex-1 h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
                   />
                   <input
                     ref={fileInputRef}
@@ -239,7 +239,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-100 shadow-sm"
                   >
                     <Upload className="h-3.5 w-3.5 text-zinc-500" />
                     <span>Chọn tệp ảnh</span>
@@ -249,7 +249,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
 
             <div className="sm:col-span-2">
-              <label className="block text-[13px] font-medium text-zinc-700 mb-1.5">
+              <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
                 Hoạt chất, chỉ định & hướng dẫn sử dụng
               </label>
               <textarea
@@ -257,7 +257,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 value={values.Description}
                 onChange={(e) => setValues({ ...values, Description: e.target.value })}
                 placeholder="Nhập thành phần hoạt chất, công dụng, liều lượng và lưu ý lâm sàng..."
-                className="w-full rounded-md border border-zinc-300 p-3 text-[13px] text-zinc-900 focus:border-zinc-900 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-200 p-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
               />
             </div>
           </div>
@@ -271,14 +271,14 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="h-9 rounded-md border border-zinc-200 bg-white px-4 text-[13px] font-medium text-zinc-700 hover:bg-zinc-50"
+                className="h-9 rounded-lg border border-zinc-200 bg-white px-4 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shadow-sm"
               >
                 Hủy bỏ
               </button>
               <button
                 type="submit"
                 disabled={submitting}
-                className="h-9 rounded-md bg-zinc-900 px-4 text-[13px] font-medium text-white hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 transition-colors shadow-sm"
               >
                 {submitting ? 'Đang lưu...' : editingProduct ? 'Lưu thay đổi' : 'Tạo dược phẩm'}
               </button>

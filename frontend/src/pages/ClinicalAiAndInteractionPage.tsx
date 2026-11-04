@@ -128,10 +128,10 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Cột Trái (6 cols): Trợ lý Chẩn đoán Triệu chứng TF-IDF */}
-        <div className="lg:col-span-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-2xs space-y-4">
+        <div className="lg:col-span-6 rounded-xl border border-zinc-200 bg-white p-5 shadow-2xs space-y-4">
           <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
             <div className="flex items-center gap-2">
-              <Stethoscope className="h-4 w-4 text-zinc-900" />
+              <Stethoscope className="h-4 w-4 text-teal-600" />
               <h2 className="text-sm font-semibold text-zinc-900">
                 1. Phân Tích Triệu Chứng & Gợi Ý Thuốc (TF-IDF RAG)
               </h2>
@@ -139,7 +139,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
           </div>
 
           <div className="space-y-2">
-            <label className="block text-xs font-medium text-zinc-700">
+            <label className="block text-xs font-semibold text-zinc-700">
               Mô tả triệu chứng lâm sàng của người bệnh:
             </label>
             <textarea
@@ -147,7 +147,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
               value={symptomInput}
               onChange={(e) => setSymptomInput(e.target.value)}
               placeholder="Nhập các biểu hiện lâm sàng: sốt, ho, đau thượng vị, dị ứng..."
-              className="w-full rounded-md border border-zinc-300 p-3 text-xs text-zinc-900 focus:border-zinc-900 focus:outline-none"
+              className="w-full rounded-lg border border-zinc-300 p-3 text-xs text-zinc-900 shadow-sm focus:border-teal-600 focus:outline-none"
             />
             <div className="flex flex-wrap gap-1.5">
               {SYMPTOM_PRESETS.map((preset, idx) => (
@@ -158,7 +158,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                     setSymptomInput(preset);
                     void handleRunDiagnosis(preset);
                   }}
-                  className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[11px] text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 text-left"
+                  className="rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[11px] text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 text-left transition-colors"
                 >
                   Mẫu #{idx + 1}: {preset.slice(0, 38)}...
                 </button>
@@ -170,7 +170,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
             type="button"
             disabled={diagnosing}
             onClick={() => void handleRunDiagnosis()}
-            className="w-full h-9 rounded-lg bg-teal-600 text-xs font-semibold text-white hover:bg-teal-700 inline-flex items-center justify-center gap-1.5 disabled:opacity-50 shadow-xs transition-colors"
+            className="w-full h-9 rounded-lg bg-teal-600 text-xs font-semibold text-white hover:bg-teal-700 inline-flex items-center justify-center gap-1.5 disabled:opacity-50 shadow-sm transition-colors"
           >
             <Send className="h-3.5 w-3.5" />
             <span>
@@ -228,10 +228,10 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
         </div>
 
         {/* Cột Phải (6 cols): Kiểm tra Tương tác & Quá liều Hoạt chất Đa thuốc */}
-        <div className="lg:col-span-6 rounded-lg border border-zinc-200 bg-white p-5 shadow-2xs space-y-4">
+        <div className="lg:col-span-6 rounded-xl border border-zinc-200 bg-white p-5 shadow-2xs space-y-4">
           <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
             <div className="flex items-center gap-2">
-              <ShieldAlert className="h-4 w-4 text-zinc-900" />
+              <ShieldAlert className="h-4 w-4 text-teal-600" />
               <h2 className="text-sm font-semibold text-zinc-900">
                 2. Kiểm Tra Tương Tác Đa Thuốc & Cảnh Báo Quá Liều Hoạt Chất
               </h2>
@@ -240,7 +240,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
 
           <div className="space-y-3 text-xs">
             <div>
-              <label className="block font-medium text-zinc-700 mb-1">
+              <label className="block font-semibold text-zinc-700 mb-1">
                 Thêm dược phẩm vào đơn kiểm tra tương tác:
               </label>
               <select
@@ -248,7 +248,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                 onChange={(e) => {
                   if (e.target.value) handleAddDrugToCheck(Number(e.target.value));
                 }}
-                className="w-full h-9 rounded-md border border-zinc-300 bg-white px-3 text-xs text-zinc-900"
+                className="w-full h-9 rounded-lg border border-zinc-300 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-600 focus:outline-none"
               >
                 <option value="">+ Chọn thêm thuốc từ danh mục kho để đối chiếu...</option>
                 {allProducts.map((p) => (
@@ -271,7 +271,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                   return (
                     <span
                       key={id}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-800"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-800"
                     >
                       <span>{prod.ProductName}</span>
                       <button
@@ -289,7 +289,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
 
             {/* Tiền sử dị ứng của bệnh nhân */}
             <div>
-              <label className="block font-medium text-zinc-700 mb-1">
+              <label className="block font-semibold text-zinc-700 mb-1">
                 Tiền sử dị ứng của bệnh nhân (nếu có):
               </label>
               <div className="flex gap-2">
@@ -298,13 +298,13 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                   value={allergyInput}
                   onChange={(e) => setAllergyInput(e.target.value)}
                   placeholder="VD: Penicillin, Amoxicillin, Ibuprofen..."
-                  className="flex-1 h-9 rounded-md border border-zinc-300 px-3 text-xs"
+                  className="flex-1 h-9 rounded-lg border border-zinc-300 px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-600 focus:outline-none"
                 />
                 <button
                   type="button"
                   disabled={checkingInteraction}
                   onClick={() => void handleCheckInteractions()}
-                  className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shrink-0 shadow-xs transition-colors"
+                  className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shrink-0 shadow-sm transition-colors"
                 >
                   Kiểm tra ngay
                 </button>
