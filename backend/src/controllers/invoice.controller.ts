@@ -11,7 +11,7 @@ const invoiceItemSchema = z.object({
 const createInvoiceSchema = z.object({
   CustomerName: z.string().trim().min(2, 'Vui lòng nhập tên khách hàng / bệnh nhân'),
   CustomerPhone: z.string().trim().optional().default(''),
-  CustomerID: z.coerce.number().int().positive().optional(),
+  CustomerID: z.coerce.number().int().positive().nullable().optional(),
   Discount: z.coerce.number().min(0).optional().default(0),
   Note: z.string().trim().optional().default(''),
   PaymentMethod: z.enum(['CASH', 'VIETQR', 'CARD']).optional().default('VIETQR'),
@@ -23,7 +23,7 @@ const createInvoiceSchema = z.object({
  */
 export const getInvoices = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const invoices = await prisma.invoice.findMany({
+    const rawInvoices = await prisma.invoice.findMany({
       include: {
         items: {
           include: {
@@ -35,6 +35,16 @@ export const getInvoices = async (_req: Request, res: Response): Promise<void> =
       },
       orderBy: { CreateDate: 'desc' },
     });
+
+    const invoices = rawInvoices.map((inv) => ({
+      ...inv,
+      Status:
+        inv.Status === 'PAID'
+          ? 'COMPLETED'
+          : inv.Status === 'REFUNDED'
+          ? 'CANCELLED'
+          : inv.Status,
+    }));
 
     res.json({ success: true, data: invoices });
   } catch (error) {
@@ -152,7 +162,10 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
     res.status(201).json({
       success: true,
       message: `Lập hóa đơn ${createdInvoice.InvoiceCode} và thanh toán thành công`,
-      data: createdInvoice,
+      data: {
+        ...createdInvoice,
+        Status: 'COMPLETED',
+      },
     });
   } catch (error) {
     res.status(400).json({
@@ -184,7 +197,7 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
         throw new Error('Không tìm thấy chứng từ hóa đơn');
       }
 
-      if (invoice.Status === 'REFUNDED') {
+      if (invoice.Status === 'REFUNDED' || invoice.Status === 'CANCELLED') {
         throw new Error('Hóa đơn này đã được hoàn trả trước đó');
       }
 
@@ -217,7 +230,10 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
     res.json({
       success: true,
       message: `Đã hoàn trả hóa đơn ${updated.InvoiceCode} và nhập lại thuốc vào kho`,
-      data: updated,
+      data: {
+        ...updated,
+        Status: 'CANCELLED',
+      },
     });
   } catch (error) {
     res.status(400).json({

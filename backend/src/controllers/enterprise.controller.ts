@@ -21,29 +21,38 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
       prisma.contact.count({ where: { Status: 'NEW' } }),
     ]);
 
-    const paidInvoices = invoices.filter((i) => i.Status === 'PAID');
+    const paidInvoices = invoices.filter(
+      (i) => i.Status === 'PAID' || i.Status === 'COMPLETED'
+    );
     const totalRevenue = paidInvoices.reduce((s, i) => s + i.TotalAmount, 0);
     const totalPurchaseCost = purchaseOrders.reduce((s, po) => s + po.TotalCost, 0);
     const totalInventoryValue = products.reduce((s, p) => s + p.Price * p.Quantity, 0);
+    const totalStockUnits = products.reduce((s, p) => s + p.Quantity, 0);
+    const outOfStockCount = products.filter((p) => p.Quantity <= 0).length;
+
     const lowStockProducts = products
-      .filter((p) => p.Quantity <= 50)
+      .filter((p) => p.Quantity <= 45)
       .sort((a, b) => a.Quantity - b.Quantity)
       .slice(0, 8);
 
     // Phân bổ theo nhóm dược lý
-    const categoryMap = new Map<string, { count: number; stock: number; value: number }>();
+    const categoryMap = new Map<string, { count: number; quantity: number; value: number }>();
     for (const p of products) {
-      const curr = categoryMap.get(p.ProductType) || { count: 0, stock: 0, value: 0 };
+      const curr = categoryMap.get(p.ProductType) || { count: 0, quantity: 0, value: 0 };
       curr.count += 1;
-      curr.stock += p.Quantity;
+      curr.quantity += p.Quantity;
       curr.value += p.Price * p.Quantity;
       categoryMap.set(p.ProductType, curr);
     }
 
-    const categoryBreakdown = Array.from(categoryMap.entries()).map(([category, stats]) => ({
-      category,
-      ...stats,
-    }));
+    const categoryBreakdown = Array.from(categoryMap.entries())
+      .map(([type, stats]) => ({
+        type,
+        category: type,
+        stock: stats.quantity,
+        ...stats,
+      }))
+      .sort((a, b) => b.value - a.value);
 
     // Top thuốc xuất bán nhiều nhất
     const soldMap = new Map<
@@ -66,13 +75,25 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
       }
     }
 
-    const topSellingProducts = Array.from(soldMap.values())
+    const topSelling = Array.from(soldMap.values())
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 6);
 
     res.json({
       success: true,
       data: {
+        totalRevenue,
+        totalPurchaseCost,
+        totalInventoryValue,
+        totalProducts: products.length,
+        totalStockUnits,
+        lowStockProducts,
+        outOfStockCount,
+        totalCustomers: customers,
+        completedInvoicesCount: paidInvoices.length,
+        categoryBreakdown,
+        topSelling,
+        topSellingProducts: topSelling,
         kpis: {
           totalRevenue,
           totalPurchaseCost,
@@ -81,12 +102,8 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
           totalInvoices: paidInvoices.length,
           totalCustomers: customers,
           pendingConsultations: contacts,
-          lowStockCount: products.filter((p) => p.Quantity <= 50).length,
+          lowStockCount: lowStockProducts.length,
         },
-        lowStockProducts,
-        categoryBreakdown,
-        topSellingProducts,
-        recentInvoices: invoices.slice(0, 5),
       },
     });
   } catch (error) {
@@ -113,7 +130,7 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const [imports, exports] = await Promise.all([
+    const [rawImports, rawExports] = await Promise.all([
       prisma.purchaseOrderItem.findMany({
         where: { ProductID: productId },
         include: {
@@ -129,6 +146,32 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
         orderBy: { ItemID: 'desc' },
       }),
     ]);
+
+    const imports = rawImports.map((imp) => ({
+      POItemID: imp.OrderItemID,
+      BatchNumber: imp.BatchNumber,
+      ExpiryDate: imp.ExpiryDate,
+      Quantity: imp.Quantity,
+      ImportPrice: imp.ImportPrice,
+      purchaseOrder: {
+        POCode: imp.purchaseOrder.OrderCode,
+        CreateDate: imp.purchaseOrder.CreateDate,
+        supplier: imp.purchaseOrder.supplier,
+      },
+    }));
+
+    const exports = rawExports.map((exp) => ({
+      ItemID: exp.ItemID,
+      Quantity: exp.Quantity,
+      UnitPrice: exp.UnitPrice,
+      DosageNote: exp.DosageNote,
+      invoice: {
+        InvoiceCode: exp.invoice.InvoiceCode,
+        CustomerName: exp.invoice.CustomerName,
+        Status: exp.invoice.Status === 'PAID' ? 'COMPLETED' : exp.invoice.Status,
+        CreateDate: exp.invoice.CreateDate,
+      },
+    }));
 
     res.json({
       success: true,
@@ -151,12 +194,12 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
 // 3. QUẢN LÝ NHÀ CUNG CẤP & PHIẾU NHẬP KHO (/suppliers & /purchase-orders)
 // ============================================================================
 const supplierSchema = z.object({
-  SupplierCode: z.string().trim().min(2),
+  SupplierCode: z.string().trim().optional(),
   SupplierName: z.string().trim().min(2),
-  ContactPerson: z.string().trim().min(2),
+  ContactPerson: z.string().trim().optional().default('Phòng Kinh Doanh'),
   Phone: z.string().trim().min(8),
   Email: z.string().trim().optional().default(''),
-  Address: z.string().trim().min(3),
+  Address: z.string().trim().optional().default('Việt Nam'),
   TaxCode: z.string().trim().optional().default(''),
 });
 
@@ -182,7 +225,17 @@ export const createSupplier = async (req: Request, res: Response): Promise<void>
       res.status(400).json({ success: false, message: 'Thông tin nhà cung cấp không hợp lệ' });
       return;
     }
-    const created = await prisma.supplier.create({ data: parsed.data });
+    const code =
+      parsed.data.SupplierCode && parsed.data.SupplierCode.length >= 2
+        ? parsed.data.SupplierCode
+        : `NCC-${String(Date.now()).slice(-4)}`;
+
+    const created = await prisma.supplier.create({
+      data: {
+        ...parsed.data,
+        SupplierCode: code,
+      },
+    });
     res.status(201).json({ success: true, data: created });
   } catch (error) {
     res.status(400).json({
@@ -196,6 +249,7 @@ export const createSupplier = async (req: Request, res: Response): Promise<void>
 const purchaseOrderSchema = z.object({
   SupplierID: z.coerce.number().int().positive(),
   Note: z.string().trim().optional().default(''),
+  CreatedBy: z.string().trim().optional().default('DS. Nguyễn Văn Trung'),
   items: z
     .array(
       z.object({
@@ -218,7 +272,30 @@ export const getPurchaseOrders = async (_req: Request, res: Response): Promise<v
       },
       orderBy: { CreateDate: 'desc' },
     });
-    res.json({ success: true, data: orders });
+
+    const formatted = orders.map((po) => ({
+      POID: po.PurchaseOrderID,
+      POCode: po.OrderCode,
+      SupplierID: po.SupplierID,
+      TotalCost: po.TotalCost,
+      Status: po.Status,
+      Note: po.Note,
+      CreatedBy: 'DS. Nguyễn Văn Trung',
+      CreateDate: po.CreateDate,
+      supplier: po.supplier,
+      items: po.items.map((i) => ({
+        POItemID: i.OrderItemID,
+        POID: i.PurchaseOrderID,
+        ProductID: i.ProductID,
+        BatchNumber: i.BatchNumber,
+        ExpiryDate: i.ExpiryDate,
+        Quantity: i.Quantity,
+        ImportPrice: i.ImportPrice,
+        product: i.product,
+      })),
+    }));
+
+    res.json({ success: true, data: formatted });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -239,7 +316,7 @@ export const createPurchaseOrder = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const { SupplierID, Note, items } = parsed.data;
+    const { SupplierID, Note, CreatedBy, items } = parsed.data;
 
     const createdOrder = await prisma.$transaction(async (tx) => {
       let totalCost = 0;
@@ -247,7 +324,6 @@ export const createPurchaseOrder = async (req: Request, res: Response): Promise<
       for (const item of items) {
         totalCost += item.Quantity * item.ImportPrice;
 
-        // Tự động cộng dồn số lượng vào bảng Product
         await tx.product.update({
           where: { ProductID: item.ProductID },
           data: {
@@ -279,7 +355,27 @@ export const createPurchaseOrder = async (req: Request, res: Response): Promise<
     res.status(201).json({
       success: true,
       message: `Đã lập phiếu nhập kho ${createdOrder.OrderCode} và cộng tồn kho thành công`,
-      data: createdOrder,
+      data: {
+        POID: createdOrder.PurchaseOrderID,
+        POCode: createdOrder.OrderCode,
+        SupplierID: createdOrder.SupplierID,
+        TotalCost: createdOrder.TotalCost,
+        Status: createdOrder.Status,
+        Note: createdOrder.Note,
+        CreatedBy,
+        CreateDate: createdOrder.CreateDate,
+        supplier: createdOrder.supplier,
+        items: createdOrder.items.map((i) => ({
+          POItemID: i.OrderItemID,
+          POID: i.PurchaseOrderID,
+          ProductID: i.ProductID,
+          BatchNumber: i.BatchNumber,
+          ExpiryDate: i.ExpiryDate,
+          Quantity: i.Quantity,
+          ImportPrice: i.ImportPrice,
+          product: i.product,
+        })),
+      },
     });
   } catch (error) {
     res.status(400).json({
@@ -298,8 +394,8 @@ const customerSchema = z.object({
   Email: z.string().trim().optional().default(''),
   Gender: z.string().trim().optional().default('Khác'),
   BirthYear: z.coerce.number().int().optional(),
-  Allergies: z.string().trim().optional().default('Không có'),
-  ChronicCond: z.string().trim().optional().default('Không có'),
+  Allergies: z.string().trim().optional().default('Không ghi nhận'),
+  ChronicCond: z.string().trim().optional().default('Không'),
 });
 
 export const getCustomers = async (_req: Request, res: Response): Promise<void> => {
@@ -360,9 +456,12 @@ export const updateCustomer = async (req: Request, res: Response): Promise<void>
     const updated = await prisma.customer.update({
       where: { CustomerID: id },
       data: parsed.data,
+      include: {
+        invoices: true,
+      },
     });
     res.json({ success: true, data: updated });
-  } catch (error) {
+  } catch {
     res.status(400).json({
       success: false,
       message: 'Không thể cập nhật hồ sơ bệnh nhân',
@@ -375,38 +474,23 @@ export const updateCustomer = async (req: Request, res: Response): Promise<void>
 // ============================================================================
 export const getPaymentsLedger = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const payments = await prisma.payment.findMany({
+    const rawPayments = await prisma.payment.findMany({
       include: {
         invoice: true,
       },
       orderBy: { PaymentDate: 'desc' },
     });
 
-    const completed = payments.filter((p) => p.Status === 'COMPLETED');
-    const summary = {
-      totalCollected: completed.reduce((s, p) => s + p.PaidAmount, 0),
-      vietQrTotal: completed
-        .filter((p) => p.PaymentMethod === 'VIETQR')
-        .reduce((s, p) => s + p.PaidAmount, 0),
-      cashTotal: completed
-        .filter((p) => p.PaymentMethod === 'CASH')
-        .reduce((s, p) => s + p.PaidAmount, 0),
-      cardTotal: completed
-        .filter((p) => p.PaymentMethod === 'CARD')
-        .reduce((s, p) => s + p.PaidAmount, 0),
-      refundedTotal: payments
-        .filter((p) => p.Status === 'REFUNDED')
-        .reduce((s, p) => s + p.PaidAmount, 0),
-    };
+    const payments = rawPayments.map((p) => ({
+      ...p,
+      Status: p.Status === 'COMPLETED' ? 'PAID' : p.Status,
+    }));
 
     res.json({
       success: true,
-      data: {
-        summary,
-        payments,
-      },
+      data: payments,
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
       message: 'Lỗi khi tải sổ quỹ thanh toán',
@@ -428,14 +512,11 @@ export const getStaffList = async (_req: Request, res: Response): Promise<void> 
         Role: true,
         Status: true,
         CreateDate: true,
-        _count: {
-          select: { invoices: true, purchaseOrders: true },
-        },
       },
       orderBy: { UserID: 'asc' },
     });
     res.json({ success: true, data: users });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
       message: 'Lỗi khi tải danh sách nhân sự',
@@ -463,7 +544,7 @@ export const updateStaffRole = async (req: Request, res: Response): Promise<void
       },
     });
     res.json({ success: true, data: updated });
-  } catch (error) {
+  } catch {
     res.status(400).json({
       success: false,
       message: 'Không thể cập nhật phân quyền nhân sự',
@@ -494,11 +575,11 @@ export const checkDrugInteractions = async (req: Request, res: Response): Promis
       where: { ProductID: { in: productIds.map(Number) } },
     });
 
-    const alerts: Array<{
-      severity: 'HIGH' | 'MODERATE' | 'INFO';
+    const warnings: Array<{
+      severity: 'HIGH' | 'MEDIUM' | 'LOW';
       title: string;
       detail: string;
-      involvedProducts: string[];
+      recommendation: string;
     }> = [];
 
     // 1. Kiểm tra trùng lặp hoạt chất Paracetamol (Nguy cơ ngộ độc gan)
@@ -513,15 +594,17 @@ export const checkDrugInteractions = async (req: Request, res: Response): Promis
     );
 
     if (paracetamolDrugs.length >= 2) {
-      alerts.push({
+      warnings.push({
         severity: 'HIGH',
-        title: 'Cảnh báo trùng lặp hoạt chất Paracetamol (Nguy cơ quá liều gây độc gan)',
-        detail: `Các thuốc được chọn đều chứa hoạt chất Paracetamol. Sử dụng đồng thời có thể dẫn đến vượt ngưỡng tối đa 4.000mg/24 giờ gây tổn thương tế bào gan cấp tính.`,
-        involvedProducts: paracetamolDrugs.map((d) => d.ProductName),
+        title: `Trùng lặp hoạt chất Paracetamol (${paracetamolDrugs.map((d) => d.ProductName).join(' + ')})`,
+        detail:
+          'Các thuốc được chọn đều chứa hoạt chất Paracetamol. Sử dụng đồng thời có nguy cơ vượt ngưỡng tối đa 4.000mg/24 giờ gây độc tế bào gan cấp tính.',
+        recommendation:
+          'Chỉ giữ lại 1 chế phẩm chứa Paracetamol trong đơn, loại bỏ thuốc trùng lặp.',
       });
     }
 
-    // 2. Kiểm tra nhóm kháng viêm NSAID (Ibuprofen, Diclofenac)
+    // 2. Kiểm tra nhóm kháng viêm NSAID (Ibuprofen, Diclofenac, Aspirin)
     const nsaidDrugs = products.filter(
       (p) =>
         p.Description.toLowerCase().includes('nsaid') ||
@@ -530,12 +613,12 @@ export const checkDrugInteractions = async (req: Request, res: Response): Promis
     );
 
     if (nsaidDrugs.length >= 2) {
-      alerts.push({
+      warnings.push({
         severity: 'HIGH',
-        title: 'Tương tác bất lợi giữa các thuốc kháng viêm không Steroid (NSAID)',
+        title: 'Tương tác bất lợi giữa các thuốc kháng viêm NSAID',
         detail:
-          'Phối hợp nhiều thuốc nhóm NSAID không làm tăng hiệu quả giảm đau nhưng làm tăng gấp đôi nguy cơ xuất huyết tiêu hóa và suy giảm chức năng thận.',
-        involvedProducts: nsaidDrugs.map((d) => d.ProductName),
+          'Phối hợp nhiều thuốc nhóm NSAID làm tăng nguy cơ loét, xuất huyết tiêu hóa và suy giảm chức năng thận.',
+        recommendation: 'Không phối hợp 2 thuốc NSAID cùng lúc; uống sau ăn no.',
       });
     }
 
@@ -549,58 +632,58 @@ export const checkDrugInteractions = async (req: Request, res: Response): Promis
     );
 
     if (antibiotics.length >= 1 && antacidsAndProbiotics.length >= 1) {
-      alerts.push({
-        severity: 'MODERATE',
-        title: 'Lưu ý thời điểm dùng thuốc (Giảm hấp thu kháng sinh)',
+      warnings.push({
+        severity: 'MEDIUM',
+        title: 'Tương tác hấp thu giữa Kháng sinh & Chế phẩm Tiêu hóa',
         detail:
-          'Các chế phẩm chứa Nhôm/Magie (Phosphalugel), Diosmectite (Smecta) hoặc lợi khuẩn (Enterogermina) cần uống cách thời điểm uống Kháng sinh ít nhất 2 giờ để tránh làm giảm sinh khả dụng.',
-        involvedProducts: [
-          ...antibiotics.map((d) => d.ProductName),
-          ...antacidsAndProbiotics.map((d) => d.ProductName),
-        ],
+          'Các chế phẩm chứa Nhôm/Magie (Phosphalugel), Smecta hoặc lợi khuẩn (Enterogermina) làm giảm sinh khả dụng của kháng sinh nếu uống cùng lúc.',
+        recommendation: 'Hướng dẫn bệnh nhân uống cách thời điểm uống Kháng sinh ít nhất 2 giờ.',
       });
     }
 
-    // 4. Kiểm tra tiền sử dị ứng của bệnh nhân (nếu có truyền vào)
+    // 4. Kiểm tra tiền sử dị ứng của bệnh nhân
     const allergyLower = patientAllergies.toLowerCase();
-    if (allergyLower && allergyLower !== 'không có') {
-      const penicillinDrugs = products.filter(
-        (p) =>
-          p.Description.toLowerCase().includes('penicillin') ||
-          p.Description.toLowerCase().includes('amoxicillin')
-      );
-      if (
-        (allergyLower.includes('penicillin') || allergyLower.includes('amoxicillin')) &&
-        penicillinDrugs.length > 0
-      ) {
-        alerts.push({
-          severity: 'HIGH',
-          title: 'Chống chỉ định tuyệt đối: Bệnh nhân có tiền sử dị ứng nhóm Penicillin',
-          detail: `Hồ sơ bệnh nhân ghi nhận dị ứng "${patientAllergies}". Tuyệt đối không cấp phát các chế phẩm chứa Amoxicillin/Penicillin để phòng ngừa sốc phản vệ.`,
-          involvedProducts: penicillinDrugs.map((d) => d.ProductName),
-        });
-      }
-    }
+    if (
+      allergyLower &&
+      allergyLower !== 'không có' &&
+      allergyLower !== 'không ghi nhận' &&
+      allergyLower !== 'không'
+    ) {
+      const tokens = allergyLower
+        .split(/[,;/]+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 3);
 
-    if (alerts.length === 0) {
-      alerts.push({
-        severity: 'INFO',
-        title: 'Phác đồ phối hợp thuốc an toàn',
-        detail:
-          'Không phát hiện xung đột hoạt chất nghiêm trọng hoặc trùng lặp nhóm dược lý giữa các sản phẩm được chọn.',
-        involvedProducts: products.map((d) => d.ProductName),
-      });
+      for (const token of tokens) {
+        const matchedAllergyDrugs = products.filter(
+          (p) =>
+            p.ProductName.toLowerCase().includes(token) ||
+            p.Description.toLowerCase().includes(token)
+        );
+        if (matchedAllergyDrugs.length > 0) {
+          warnings.push({
+            severity: 'HIGH',
+            title: `CHỐNG CHỈ ĐỊNH DỊ ỨNG: Phản ứng với "${token.toUpperCase()}"`,
+            detail: `Hồ sơ bệnh nhân ghi nhận tiền sử dị ứng "${patientAllergies}". Thuốc "${matchedAllergyDrugs
+              .map((d) => d.ProductName)
+              .join(', ')}" có chứa thành phần liên quan.`,
+            recommendation:
+              'Ngừng cấp phát thuốc này ngay lập tức và đổi sang nhóm hoạt chất thay thế an toàn.',
+          });
+        }
+      }
     }
 
     res.json({
       success: true,
       data: {
-        checkedCount: products.length,
-        hasHighRisk: alerts.some((a) => a.severity === 'HIGH'),
-        alerts,
+        checkedProductsCount: products.length,
+        patientAllergies,
+        isSafe: warnings.length === 0,
+        warnings,
       },
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
       message: 'Lỗi khi kiểm tra tương tác thuốc',
