@@ -11,6 +11,8 @@ const invoiceItemSchema = z.object({
 const createInvoiceSchema = z.object({
   CustomerName: z.string().trim().min(2, 'Vui lòng nhập tên khách hàng / bệnh nhân'),
   CustomerPhone: z.string().trim().optional().default(''),
+  CustomerID: z.coerce.number().int().positive().optional(),
+  Discount: z.coerce.number().min(0).optional().default(0),
   Note: z.string().trim().optional().default(''),
   PaymentMethod: z.enum(['CASH', 'VIETQR', 'CARD']).optional().default('VIETQR'),
   items: z.array(invoiceItemSchema).min(1, 'Hóa đơn phải có ít nhất 1 sản phẩm thuốc'),
@@ -29,6 +31,7 @@ export const getInvoices = async (_req: Request, res: Response): Promise<void> =
           },
         },
         payment: true,
+        customer: true,
       },
       orderBy: { CreateDate: 'desc' },
     });
@@ -58,10 +61,11 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const { CustomerName, CustomerPhone, Note, PaymentMethod, items } = parsed.data;
+    const { CustomerName, CustomerPhone, CustomerID, Discount, Note, PaymentMethod, items } =
+      parsed.data;
 
     const createdInvoice = await prisma.$transaction(async (tx) => {
-      let totalAmount = 0;
+      let subtotal = 0;
       const preparedItems: Array<{
         ProductID: number;
         Quantity: number;
@@ -90,13 +94,26 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           data: { Quantity: product.Quantity - item.Quantity },
         });
 
-        totalAmount += product.Price * item.Quantity;
+        subtotal += product.Price * item.Quantity;
         preparedItems.push({
           ProductID: product.ProductID,
           Quantity: item.Quantity,
           UnitPrice: product.Price,
           DosageNote: item.DosageNote,
         });
+      }
+
+      const finalTotal = Math.max(0, subtotal - Discount);
+
+      // Cộng điểm tích lũy cho bệnh nhân nếu có hồ sơ CustomerID
+      if (CustomerID) {
+        const pointsEarned = Math.floor(finalTotal / 10000);
+        if (pointsEarned > 0) {
+          await tx.customer.update({
+            where: { CustomerID },
+            data: { LoyaltyPoints: { increment: pointsEarned } },
+          });
+        }
       }
 
       const invoiceCode = `HD-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
@@ -107,8 +124,10 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           InvoiceCode: invoiceCode,
           CustomerName,
           CustomerPhone,
+          ...(CustomerID ? { CustomerID } : {}),
+          Discount,
           Note,
-          TotalAmount: totalAmount,
+          TotalAmount: finalTotal,
           Status: 'PAID',
           items: {
             create: preparedItems,
@@ -117,7 +136,7 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
             create: {
               PaymentMethod,
               TransactionCode: txCode,
-              PaidAmount: totalAmount,
+              PaidAmount: finalTotal,
               Status: 'COMPLETED',
             },
           },
@@ -125,6 +144,7 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
         include: {
           items: { include: { product: true } },
           payment: true,
+          customer: true,
         },
       });
     });
@@ -138,6 +158,71 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
     res.status(400).json({
       success: false,
       message: error instanceof Error ? error.message : 'Lỗi khi lập hóa đơn',
+    });
+  }
+};
+
+/**
+ * HỦY / HOÀN TRẢ HÓA ĐƠN & TỰ ĐỘNG CỘNG TRẢ LẠI TỒN KHO PRODUCT
+ * POST /api/invoices/:id/cancel
+ */
+export const cancelInvoice = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const invoiceId = Number(req.params.id);
+    if (isNaN(invoiceId)) {
+      res.status(400).json({ success: false, message: 'Mã hóa đơn không hợp lệ' });
+      return;
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.findUnique({
+        where: { InvoiceID: invoiceId },
+        include: { items: true, payment: true },
+      });
+
+      if (!invoice) {
+        throw new Error('Không tìm thấy chứng từ hóa đơn');
+      }
+
+      if (invoice.Status === 'REFUNDED') {
+        throw new Error('Hóa đơn này đã được hoàn trả trước đó');
+      }
+
+      // Hoàn trả lại số lượng vào bảng Product
+      for (const item of invoice.items) {
+        await tx.product.update({
+          where: { ProductID: item.ProductID },
+          data: { Quantity: { increment: item.Quantity } },
+        });
+      }
+
+      if (invoice.payment) {
+        await tx.payment.update({
+          where: { PaymentID: invoice.payment.PaymentID },
+          data: { Status: 'REFUNDED' },
+        });
+      }
+
+      return tx.invoice.update({
+        where: { InvoiceID: invoiceId },
+        data: { Status: 'REFUNDED' },
+        include: {
+          items: { include: { product: true } },
+          payment: true,
+          customer: true,
+        },
+      });
+    });
+
+    res.json({
+      success: true,
+      message: `Đã hoàn trả hóa đơn ${updated.InvoiceCode} và nhập lại thuốc vào kho`,
+      data: updated,
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Không thể hoàn trả hóa đơn',
     });
   }
 };

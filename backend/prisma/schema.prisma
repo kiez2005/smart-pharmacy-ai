@@ -1,5 +1,5 @@
-// Prisma Schema cho Hệ thống Quản lý Nhà thuốc & Kinh doanh Dược phẩm Thông minh (D18CNPM5)
-// Đảm bảo 100% đúng 10 trường bắt buộc của bảng Product trong Sheet "Yêu cầu bài tập lớn"
+// Prisma Schema cho Hệ thống Quản trị Nhà thuốc Doanh nghiệp PharmaCore ERP
+// Đảm bảo giữ nguyên 10 trường bắt buộc của bảng Product + Mở rộng 8 bảng nghiệp vụ thực tế
 
 generator client {
   provider = "prisma-client-js"
@@ -11,27 +11,27 @@ datasource db {
 }
 
 // ============================================================================
-// 1. MODULE QUẢN LÝ SẢN PHẨM (PRODUCT) - Chuẩn 10 trường bắt buộc theo đề bài
+// 1. BẢNG PRODUCT (Giữ đúng 10 trường bắt buộc theo yêu cầu chấm điểm)
 // (ProductID, ProductName, PathImage, ProductType, Quantity, Unit, Price, Description, CreateDate, UpdateDate)
 // ============================================================================
 model Product {
   ProductID    Int      @id @default(autoincrement())
   ProductName  String
   PathImage    String   @default("https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400&auto=format&fit=crop&q=80")
-  ProductType  String   // Nhóm thuốc: Giảm đau - Hạ sốt, Kháng sinh, Tiêu hóa, Hô hấp, Vitamin & Khoáng chất, Tim mạch, Dụng cụ y tế
+  ProductType  String
   Quantity     Int      @default(0)
-  Unit         String   // Đơn vị tính: Hộp, Vỉ, Viên, Chai, Tuýp, Gói
+  Unit         String
   Price        Float    @default(0)
-  Description  String   // Mô tả: Hoạt chất, công dụng, chỉ định, liều dùng, chống chỉ định
+  Description  String
   CreateDate   DateTime @default(now())
   UpdateDate   DateTime @updatedAt
 
-  // Quan hệ với chi tiết hóa đơn
-  invoiceItems InvoiceItem[]
+  invoiceItems       InvoiceItem[]
+  purchaseOrderItems PurchaseOrderItem[]
 }
 
 // ============================================================================
-// 2. MODULE NGƯỜI DÙNG (ĐĂNG KÝ & ĐĂNG NHẬP - FORM 1 & 2)
+// 2. BẢNG NHÂN SỰ & PHÂN QUYỀN (USER)
 // ============================================================================
 model User {
   UserID     Int       @id @default(autoincrement())
@@ -39,29 +39,101 @@ model User {
   Email      String    @unique
   Password   String
   Phone      String?
-  Role       String    @default("PHARMACIST") // ADMIN | PHARMACIST | CUSTOMER
+  Role       String    @default("PHARMACIST") // ADMIN | PHARMACIST | CASHIER
+  Status     String    @default("ACTIVE")     // ACTIVE | INACTIVE
   CreateDate DateTime  @default(now())
 
-  invoices   Invoice[]
-  contacts   Contact[]
+  invoices       Invoice[]
+  purchaseOrders PurchaseOrder[]
+  contacts       Contact[]
 }
 
 // ============================================================================
-// 3. MODULE HÓA ĐƠN BÁN THUỐC (INVOICE & INVOICE_ITEM - FORM 5)
+// 3. BẢNG HỒ SƠ BỆNH NHÂN / KHÁCH HÀNG & TIỀN SỬ DỊ ỨNG (CUSTOMER)
+// ============================================================================
+model Customer {
+  CustomerID    Int       @id @default(autoincrement())
+  CustomerCode  String    @unique
+  FullName      String
+  Phone         String    @unique
+  Email         String?
+  Gender        String    @default("Khác")
+  BirthYear     Int?
+  Allergies     String    @default("Không có") // VD: "Dị ứng Penicillin, Amoxicillin"
+  ChronicCond   String    @default("Không có") // VD: "Viêm loét dạ dày, Cao huyết áp"
+  LoyaltyPoints Int       @default(0)
+  CreateDate    DateTime  @default(now())
+
+  invoices      Invoice[]
+}
+
+// ============================================================================
+// 4. BẢNG NHÀ CUNG CẤP DƯỢC PHẨM (SUPPLIER)
+// ============================================================================
+model Supplier {
+  SupplierID    Int             @id @default(autoincrement())
+  SupplierCode  String          @unique
+  SupplierName  String
+  ContactPerson String
+  Phone         String
+  Email         String?
+  Address       String
+  TaxCode       String?
+  CreateDate    DateTime        @default(now())
+
+  purchaseOrders PurchaseOrder[]
+}
+
+// ============================================================================
+// 5. BẢNG PHIẾU NHẬP KHO & CHI TIẾT LÔ NHẬP (PURCHASE_ORDER & ITEM)
+// ============================================================================
+model PurchaseOrder {
+  PurchaseOrderID Int                 @id @default(autoincrement())
+  OrderCode       String              @unique
+  SupplierID      Int
+  UserID          Int?
+  TotalCost       Float               @default(0)
+  Note            String?
+  Status          String              @default("COMPLETED") // COMPLETED | CANCELLED
+  CreateDate      DateTime            @default(now())
+
+  supplier        Supplier            @relation(fields: [SupplierID], references: [SupplierID])
+  user            User?               @relation(fields: [UserID], references: [UserID])
+  items           PurchaseOrderItem[]
+}
+
+model PurchaseOrderItem {
+  OrderItemID     Int           @id @default(autoincrement())
+  PurchaseOrderID Int
+  ProductID       Int
+  Quantity        Int           @default(1)
+  ImportPrice     Float         @default(0)
+  BatchNumber     String        @default("LOT-2026A")
+  ExpiryDate      String        @default("2028-12-31")
+
+  purchaseOrder   PurchaseOrder @relation(fields: [PurchaseOrderID], references: [PurchaseOrderID], onDelete: Cascade)
+  product         Product       @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)
+}
+
+// ============================================================================
+// 6. BẢNG HÓA ĐƠN BÁN HÀNG & CHI TIẾT ĐƠN THUỐC (INVOICE & INVOICE_ITEM)
 // ============================================================================
 model Invoice {
   InvoiceID     Int           @id @default(autoincrement())
   InvoiceCode   String        @unique
   CustomerName  String
   CustomerPhone String?
-  Note          String?       // Ghi chú đơn thuốc hoặc chẩn đoán sơ bộ
+  CustomerID    Int?
+  Note          String?
+  Discount      Float         @default(0)
   TotalAmount   Float         @default(0)
-  Status        String        @default("PENDING") // PENDING | PAID | CANCELLED
+  Status        String        @default("PAID") // PAID | REFUNDED
   CreateDate    DateTime      @default(now())
   UpdateDate    DateTime      @updatedAt
 
   UserID        Int?
   user          User?         @relation(fields: [UserID], references: [UserID])
+  customer      Customer?     @relation(fields: [CustomerID], references: [CustomerID])
   items         InvoiceItem[]
   payment       Payment?
 }
@@ -72,14 +144,14 @@ model InvoiceItem {
   ProductID   Int
   Quantity    Int     @default(1)
   UnitPrice   Float   @default(0)
-  DosageNote  String? // Liều dùng: VD "Sáng 1 viên, Tối 1 viên sau ăn"
+  DosageNote  String?
 
   invoice     Invoice @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
   product     Product @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)
 }
 
 // ============================================================================
-// 4. MODULE THANH TOÁN (PAYMENT - FORM 6)
+// 7. BẢNG SỔ QUỸ & GIAO DỊCH THANH TOÁN (PAYMENT)
 // ============================================================================
 model Payment {
   PaymentID       Int      @id @default(autoincrement())
@@ -87,14 +159,14 @@ model Payment {
   PaymentMethod   String   @default("CASH") // CASH | VIETQR | CARD
   TransactionCode String?
   PaidAmount      Float    @default(0)
-  Status          String   @default("COMPLETED") // PENDING | COMPLETED | FAILED
+  Status          String   @default("COMPLETED") // COMPLETED | REFUNDED
   PaymentDate     DateTime @default(now())
 
   invoice         Invoice  @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
 }
 
 // ============================================================================
-// 5. MODULE LIÊN HỆ & TƯ VẤN DƯỢC SĨ (CONTACT - FORM 7)
+// 8. BẢNG TƯ VẤN DƯỢC LÂM SÀNG & CSKH (CONTACT)
 // ============================================================================
 model Contact {
   ContactID   Int      @id @default(autoincrement())
@@ -103,8 +175,9 @@ model Contact {
   Phone       String
   Subject     String
   Message     String
+  Priority    String   @default("NORMAL") // HIGH | NORMAL | LOW
   ReplyNote   String?
-  Status      String   @default("NEW") // NEW | REPLIED | CLOSED
+  Status      String   @default("NEW")    // NEW | REPLIED | CLOSED
   CreateDate  DateTime @default(now())
 
   UserID      Int?
