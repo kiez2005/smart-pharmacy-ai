@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import productRoutes from './routes/product.routes';
+import authRoutes from './routes/auth.routes';
+import invoiceRoutes from './routes/invoice.routes';
+import contactRoutes from './routes/contact.routes';
 
 dotenv.config();
 
@@ -22,8 +25,11 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Routes cho Module Product
+// Các nhóm Route cho đầy đủ các Form nghiệp vụ
 app.use('/api/products', productRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/contacts', contactRoutes);
 
 app.listen(PORT, () => {
   console.log(`🚀 [Smart Pharmacy Backend] đang chạy tại: http://localhost:${PORT}`);
