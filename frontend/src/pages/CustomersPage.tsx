@@ -32,6 +32,7 @@ export const CustomersPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [search, setSearch] = useState<string>('');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord | null>(null);
+  const [activeKpiModal, setActiveKpiModal] = useState<'TOTAL' | 'ALLERGIES' | 'CHRONIC' | 'LOYALTY' | null>(null);
 
   // 11 Chức năng Data Grid
   const [page, setPage] = useState<number>(1);
@@ -267,59 +268,87 @@ export const CustomersPage: React.FC = () => {
         onReload={loadCustomers}
       />
 
-      {/* 4 Thẻ KPI Hồ sơ Bệnh nhân & Cảnh báo Dị ứng */}
+      {/* 4 Thẻ KPI Hồ sơ Bệnh nhân & Cảnh báo Dị ứng (Clickable Drill-down) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('TOTAL')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-teal-500 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Tổng hồ sơ bệnh nhân</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600 group-hover:scale-110 transition-transform">
               <Users className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {customers.length} hồ sơ
           </div>
-          <div className="mt-1 text-xs text-slate-500">Đang theo dõi điều trị tại nhà thuốc</div>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Đang theo dõi điều trị</span>
+            <span className="font-semibold text-teal-600 text-[11px] group-hover:underline">Chi tiết →</span>
+          </div>
+        </button>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('ALLERGIES')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-rose-400 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Cảnh báo Dị ứng Hoạt chất</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-600 group-hover:scale-110 transition-transform">
               <AlertTriangle className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-rose-600 tabular-nums">
             {allergyCount} bệnh nhân
           </div>
-          <div className="mt-1 text-xs text-slate-500">Tự động chặn khi kê đơn tại POS</div>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Tự động chặn kê đơn</span>
+            <span className="font-semibold text-rose-600 text-[11px] group-hover:underline">Sổ dị ứng →</span>
+          </div>
+        </button>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('CHRONIC')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-sky-500 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Bệnh lý nền mãn tính</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600 group-hover:scale-110 transition-transform">
               <HeartPulse className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {chronicCount} bệnh nhân
           </div>
-          <div className="mt-1 text-xs text-slate-500">Cấp phát thuốc định kỳ hàng tháng</div>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Cấp thuốc định kỳ</span>
+            <span className="font-semibold text-sky-600 text-[11px] group-hover:underline">DS bệnh nền →</span>
+          </div>
+        </button>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('LOYALTY')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-amber-400 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Tổng điểm thành viên</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600 group-hover:scale-110 transition-transform">
               <Award className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-teal-700 tabular-nums">
             {totalLoyaltyPoints.toLocaleString('vi-VN')} điểm
           </div>
-          <div className="mt-1 text-xs text-slate-500">Quy đổi chiết khấu trực tiếp tại POS</div>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Tích điểm POS</span>
+            <span className="font-semibold text-amber-600 text-[11px] group-hover:underline">Bảng điểm VIP →</span>
+          </div>
+        </button>
       </div>
 
       {/* BẢNG HỒ SƠ BỆNH NHÂN FULL-WIDTH 100% */}
@@ -728,6 +757,235 @@ export const CustomersPage: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* MODAL CHI TIẾT KHI CLICK CÁC Ô THÔNG TIN (KPI DRILL-DOWN) */}
+      {activeKpiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-slate-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-50 text-teal-700 border border-teal-200">
+                  {activeKpiModal === 'TOTAL' && <Users className="h-4 w-4" />}
+                  {activeKpiModal === 'ALLERGIES' && <AlertTriangle className="h-4 w-4" />}
+                  {activeKpiModal === 'CHRONIC' && <HeartPulse className="h-4 w-4" />}
+                  {activeKpiModal === 'LOYALTY' && <Award className="h-4 w-4" />}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {activeKpiModal === 'TOTAL' && `Hồ Sơ Toàn Bộ Bệnh Nhân (${customers.length} người)`}
+                    {activeKpiModal === 'ALLERGIES' && `Sổ Theo Dõi Dị Ứng Hoạt Chất (${allergyCount} bệnh nhân)`}
+                    {activeKpiModal === 'CHRONIC' && `Bệnh Nhân Mãn Tính (${chronicCount} hồ sơ)`}
+                    {activeKpiModal === 'LOYALTY' && 'Bảng Xếp Hạng Khách Hàng Thân Thiết & Tích Điểm'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {activeKpiModal === 'TOTAL' && 'Cơ sở dữ liệu bệnh nhân lưu trữ tại nhà thuốc GPP'}
+                    {activeKpiModal === 'ALLERGIES' && 'Hệ thống tự động kích hoạt cảnh báo đỏ khi dược sĩ kê đơn tại POS'}
+                    {activeKpiModal === 'CHRONIC' && 'Các bệnh nhân cần tái khám & cấp phát thuốc định kỳ hàng tháng'}
+                    {activeKpiModal === 'LOYALTY' && 'Chính sách quy đổi 1.000 điểm = 10.000 ₫ chiết khấu trực tiếp'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveKpiModal(null)}
+                className="h-8 w-8 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 flex items-center justify-center"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-4">
+              {activeKpiModal === 'TOTAL' && (
+                <div className="space-y-3 text-xs">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-3 text-center">
+                      <div className="text-[11px] font-semibold text-teal-800">Tổng bệnh nhân</div>
+                      <div className="mt-1 text-xl font-bold text-teal-900 tabular-nums">{customers.length}</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center">
+                      <div className="text-[11px] font-semibold text-slate-600">Giới tính Nam</div>
+                      <div className="mt-1 text-xl font-bold text-slate-900 tabular-nums">
+                        {customers.filter((c) => c.Gender === 'Nam').length}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center">
+                      <div className="text-[11px] font-semibold text-slate-600">Giới tính Nữ</div>
+                      <div className="mt-1 text-xl font-bold text-slate-900 tabular-nums">
+                        {customers.filter((c) => c.Gender === 'Nữ').length}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden max-h-72 overflow-y-auto">
+                    {customers.slice(0, 10).map((c) => (
+                      <div key={c.CustomerID} className="p-3 hover:bg-slate-50 flex items-center justify-between">
+                        <div>
+                          <div className="font-bold text-slate-900">{c.FullName} ({c.CustomerCode})</div>
+                          <div className="text-[11px] text-slate-500">SĐT: {c.Phone} · Sinh năm: {c.BirthYear || 'N/A'}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCustomer(c);
+                            setActiveKpiModal(null);
+                          }}
+                          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                        >
+                          Hồ sơ →
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {activeKpiModal === 'ALLERGIES' && (
+                <div className="space-y-3 text-xs">
+                  <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-3.5 space-y-1">
+                    <div className="font-bold text-rose-900 flex items-center gap-1.5">
+                      <AlertTriangle className="h-4 w-4 text-rose-600" />
+                      Cảnh Báo Lâm Sàng Tự Động Tại POS
+                    </div>
+                    <p className="text-[11px] text-rose-700">
+                      Khi chọn bệnh nhân này tại Quầy thu ngân POS, hệ thống sẽ tự động đối chiếu hoạt chất của thuốc với danh mục dị ứng để chặn nguy cơ sốc phản vệ.
+                    </p>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden max-h-72 overflow-y-auto">
+                    {customers
+                      .filter(
+                        (c) =>
+                          c.Allergies &&
+                          c.Allergies !== 'Không ghi nhận' &&
+                          c.Allergies !== 'Không' &&
+                          c.Allergies !== 'Không có'
+                      )
+                      .map((c) => (
+                        <div key={c.CustomerID} className="p-3 hover:bg-rose-50/20 flex items-center justify-between">
+                          <div>
+                            <div className="font-bold text-slate-900">{c.FullName} ({c.Phone})</div>
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <span className="text-[11px] text-slate-500">Hoạt chất dị ứng:</span>
+                              <span className="rounded bg-rose-100 text-rose-800 px-2 py-0.5 font-bold text-[11px] border border-rose-200">
+                                ⚠ {c.Allergies}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCustomer(c);
+                              setActiveKpiModal(null);
+                            }}
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                          >
+                            Chi tiết
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {activeKpiModal === 'CHRONIC' && (
+                <div className="space-y-3 text-xs">
+                  <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3.5 space-y-1">
+                    <div className="font-bold text-sky-900">Danh Mục Bệnh Nhân Điều Trị Mãn Tính</div>
+                    <p className="text-[11px] text-sky-700">
+                      Theo dõi lịch cấp phát thuốc định kỳ (Tim mạch, Huyết áp, Đái tháo đường, Dạ dày).
+                    </p>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden max-h-72 overflow-y-auto">
+                    {customers
+                      .filter(
+                        (c) =>
+                          c.ChronicCond &&
+                          c.ChronicCond !== 'Không' &&
+                          c.ChronicCond !== 'Không có'
+                      )
+                      .map((c) => (
+                        <div key={c.CustomerID} className="p-3 hover:bg-sky-50/20 flex items-center justify-between">
+                          <div>
+                            <div className="font-bold text-slate-900">{c.FullName} ({c.Phone})</div>
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <span className="text-[11px] text-slate-500">Bệnh nền:</span>
+                              <span className="rounded bg-sky-100 text-sky-800 px-2 py-0.5 font-semibold text-[11px]">
+                                {c.ChronicCond}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCustomer(c);
+                              setActiveKpiModal(null);
+                            }}
+                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                          >
+                            Lịch sử đơn
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {activeKpiModal === 'LOYALTY' && (
+                <div className="space-y-3 text-xs">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-amber-900">Tổng Điểm Thân Thiết Tích Lũy</div>
+                      <div className="text-[11px] text-amber-700">Giá trị quy đổi voucher chiết khấu tại quầy</div>
+                    </div>
+                    <div className="text-xl font-bold text-amber-900 tabular-nums">
+                      {totalLoyaltyPoints.toLocaleString('vi-VN')} điểm
+                    </div>
+                  </div>
+
+                  <div className="text-xs font-bold text-slate-800">Top khách hàng VIP:</div>
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden">
+                    {[...customers]
+                      .sort((a, b) => (b.LoyaltyPoints || 0) - (a.LoyaltyPoints || 0))
+                      .slice(0, 5)
+                      .map((c, idx) => (
+                        <div key={c.CustomerID} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                          <div className="flex items-center gap-2.5">
+                            <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                              idx === 0 ? 'bg-amber-400 text-white' : idx === 1 ? 'bg-slate-300 text-slate-700' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {idx + 1}
+                            </span>
+                            <div>
+                              <div className="font-semibold text-slate-900">{c.FullName}</div>
+                              <div className="text-[11px] text-slate-500">SĐT: {c.Phone}</div>
+                            </div>
+                          </div>
+                          <span className="font-bold text-teal-700 tabular-nums">
+                            {(c.LoyaltyPoints || 0).toLocaleString('vi-VN')} điểm
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-slate-100 px-5 py-3 bg-slate-50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setActiveKpiModal(null)}
+                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

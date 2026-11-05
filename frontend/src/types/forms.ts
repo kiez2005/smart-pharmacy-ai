@@ -78,6 +78,7 @@ export interface CreateInvoicePayload {
   items: Array<{
     ProductID: number;
     Quantity: number;
+    UnitMode?: 'BASE' | 'BLISTER' | 'PILL';
     DosageNote: string;
   }>;
 }

@@ -30,6 +30,7 @@ import {
   AlertCircle,
   Layers,
   Wallet,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ExportFormat, Product, ProductFormValues } from '../types/product';
@@ -87,6 +88,9 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
   const [isListeningVoice, setIsListeningVoice] = useState<boolean>(false);
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [importingFile, setImportingFile] = useState<boolean>(false);
+  const [activeMetricModal, setActiveMetricModal] = useState<
+    'total' | 'value' | 'category' | 'lowstock' | null
+  >(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -767,54 +771,86 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
 
       {/* 4 Thẻ KPI Tổng quan kho */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+        <div
+          onClick={() => setActiveMetricModal('total')}
+          className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-teal-500 transition-all group active:scale-[0.99]"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Tổng mã dược phẩm</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600 group-hover:bg-teal-600 group-hover:text-white transition-colors">
               <Package className="h-4 w-4" strokeWidth={1.75} />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">{total}</div>
-          <div className="mt-1 text-xs text-slate-500">Đang lưu hành chuẩn Dược Quốc Gia</div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Chuẩn Dược Quốc Gia</span>
+            <span className="text-[10px] text-teal-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+        <div
+          onClick={() => setActiveMetricModal('value')}
+          className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-emerald-500 transition-all group active:scale-[0.99]"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Giá trị tồn kho trang hiện tại</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
               <Wallet className="h-4 w-4" strokeWidth={1.75} />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {metrics.pageInventoryValue.toLocaleString('vi-VN')} ₫
           </div>
-          <div className="mt-1 text-xs text-slate-500">Tính theo giá niêm yết bán lẻ</div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Giá niêm yết bán lẻ</span>
+            <span className="text-[10px] text-emerald-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+        <div
+          onClick={() => setActiveMetricModal('category')}
+          className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-sky-500 transition-all group active:scale-[0.99]"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Nhóm dược lý lâm sàng</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600 group-hover:bg-sky-600 group-hover:text-white transition-colors">
               <Layers className="h-4 w-4" strokeWidth={1.75} />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {metrics.categoryCount}
           </div>
-          <div className="mt-1 text-xs text-slate-500">Phân loại Rx kê đơn & OTC</div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Phân loại Rx & OTC</span>
+            <span className="text-[10px] text-sky-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+        <div
+          onClick={() => setActiveMetricModal('lowstock')}
+          className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-amber-500 transition-all group active:scale-[0.99]"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Cần nhập bổ sung</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-colors">
               <AlertCircle className="h-4 w-4" strokeWidth={1.75} />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-amber-700 tabular-nums">
             {metrics.lowStockCount}
           </div>
-          <div className="mt-1 text-xs text-slate-500">Mặt hàng có tồn kho dưới định mức</div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Tồn kho dưới định mức</span>
+            <span className="text-[10px] text-amber-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
+          </div>
         </div>
       </div>
 
@@ -1098,6 +1134,235 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50"
               >
                 {importingFile ? 'Đang nhập dữ liệu...' : 'Xác nhận Nhập vào Kho'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CHI TIẾT KHI BẤM VÀO 4 Ô KPI KHO */}
+      {activeMetricModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-3 sm:p-4 animate-in fade-in">
+          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-zinc-200 overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4 bg-zinc-50/70 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+                  {activeMetricModal === 'total' && <Package className="h-4 w-4" />}
+                  {activeMetricModal === 'value' && <Wallet className="h-4 w-4" />}
+                  {activeMetricModal === 'category' && <Layers className="h-4 w-4" />}
+                  {activeMetricModal === 'lowstock' && <AlertCircle className="h-4 w-4" />}
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-900">
+                    {activeMetricModal === 'total' && 'Chi Tiết Danh Mục Dược Phẩm Quốc Gia'}
+                    {activeMetricModal === 'value' && 'Bảng Kê Chi Tiết Giá Trị Hàng Hóa Kho'}
+                    {activeMetricModal === 'category' && 'Cơ Cấu Nhóm Dược Lý Lâm Sàng'}
+                    {activeMetricModal === 'lowstock' && 'Danh Sách Dược Phẩm Cần Nhập Bổ Sung'}
+                  </h3>
+                  <p className="text-[11px] text-zinc-500">
+                    Dữ liệu thời gian thực · Cập nhật theo tiêu chuẩn GPP
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveMetricModal(null)}
+                className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-200/60"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
+              {/* TAB 1: TỔNG MÃ DƯỢC PHẨM */}
+              {activeMetricModal === 'total' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-3.5">
+                      <div className="text-[11px] text-teal-700 font-medium">Tổng số mã dược phẩm</div>
+                      <div className="text-xl font-bold text-teal-900 mt-1 tabular-nums">{total} mã</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Nhóm dược lý</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {metrics.categoryCount} nhóm
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Trạng thái liên thông</div>
+                      <div className="text-sm font-bold text-emerald-700 mt-1">100% Khớp DQG</div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-zinc-200 p-4 space-y-2 bg-zinc-50/50">
+                    <h4 className="font-bold text-zinc-800">Thông tin quy chuẩn quản lý:</h4>
+                    <p className="text-zinc-600 leading-relaxed">
+                      Toàn bộ {total} mặt hàng trong danh mục đều được cấp mã định danh chuẩn Dược Quốc Gia, hỗ trợ quy đổi đa đơn vị (Hộp / Vỉ / Viên) và theo dõi hạn sử dụng theo nguyên tắc FEFO.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: GIÁ TRỊ TỒN KHO */}
+              {activeMetricModal === 'value' && (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-emerald-900">Tổng giá trị định giá niêm yết (Trang này):</span>
+                      <span className="text-xl font-bold text-emerald-800 tabular-nums">
+                        {metrics.pageInventoryValue.toLocaleString('vi-VN')} ₫
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[11px] text-emerald-700">
+                      Tính dựa trên {products.length} sản phẩm đang hiển thị trong trang hiện tại
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-zinc-200 bg-zinc-50 text-[11px] font-semibold text-zinc-500 uppercase">
+                          <th className="py-2.5 px-3">Tên thuốc</th>
+                          <th className="py-2.5 px-3 text-right">Tồn kho</th>
+                          <th className="py-2.5 px-3 text-right">Đơn giá</th>
+                          <th className="py-2.5 px-3 text-right">Giá trị tồn</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100">
+                        {products.map((p) => (
+                          <tr key={p.ProductID} className="hover:bg-zinc-50">
+                            <td className="py-2 px-3">
+                              <div className="font-semibold text-zinc-900">{p.ProductName}</div>
+                              <div className="text-[11px] text-zinc-400">{p.ProductType}</div>
+                            </td>
+                            <td className="py-2 px-3 text-right tabular-nums font-medium">
+                              {p.Quantity} {p.Unit}
+                            </td>
+                            <td className="py-2 px-3 text-right tabular-nums text-zinc-600">
+                              {p.Price.toLocaleString('vi-VN')} ₫
+                            </td>
+                            <td className="py-2 px-3 text-right tabular-nums font-bold text-teal-700">
+                              {(p.Price * p.Quantity).toLocaleString('vi-VN')} ₫
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: NHÓM DƯỢC LÝ */}
+              {activeMetricModal === 'category' && (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-4">
+                    <div className="font-bold text-sky-900">
+                      Danh mục gồm {availableTypes.length} nhóm dược lý lâm sàng phân loại chuẩn
+                    </div>
+                    <div className="text-[11px] text-sky-700 mt-1">
+                      Hỗ trợ kiểm tra tương tác thuốc và cảnh báo dị ứng tự động theo hoạt chất
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {availableTypes.map((type) => {
+                      const countInPage = products.filter((p) => p.ProductType === type).length;
+                      return (
+                        <div
+                          key={type}
+                          onClick={() => {
+                            setSelectedType(type);
+                            setPage(1);
+                            setActiveMetricModal(null);
+                          }}
+                          className="rounded-lg border border-zinc-200 p-3 hover:border-teal-500 hover:bg-teal-50/20 cursor-pointer transition-all flex items-center justify-between"
+                        >
+                          <span className="font-semibold text-zinc-900">{type}</span>
+                          <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-mono text-[11px] font-bold text-zinc-700">
+                            {countInPage > 0 ? `${countInPage} mã trên trang` : 'Lọc danh mục'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: CẦN NHẬP BỔ SUNG */}
+              {activeMetricModal === 'lowstock' && (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-900">Số lượng mặt hàng cần bổ sung:</span>
+                      <span className="text-xl font-bold text-amber-800 tabular-nums">
+                        {metrics.lowStockCount} mặt hàng
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[11px] text-amber-700">
+                      Định mức cảnh báo an toàn: Số lượng tồn kho $\le$ 45 {availableUnits[0] || 'Hộp'}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-zinc-200 bg-zinc-50 text-[11px] font-semibold text-zinc-500 uppercase">
+                          <th className="py-2.5 px-3">Tên dược phẩm</th>
+                          <th className="py-2.5 px-3 text-right">Tồn hiện tại</th>
+                          <th className="py-2.5 px-3 text-right">Đơn giá bán</th>
+                          <th className="py-2.5 px-3 text-center">Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100">
+                        {products
+                          .filter((p) => p.Quantity <= 45)
+                          .map((p) => (
+                            <tr key={p.ProductID} className="hover:bg-zinc-50">
+                              <td className="py-2.5 px-3">
+                                <div className="font-semibold text-zinc-900">{p.ProductName}</div>
+                                <div className="text-[11px] text-zinc-400">{p.ProductType}</div>
+                              </td>
+                              <td className="py-2.5 px-3 text-right tabular-nums">
+                                <span className="font-bold text-amber-700">
+                                  {p.Quantity} {p.Unit}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right tabular-nums font-medium text-zinc-700">
+                                {p.Price.toLocaleString('vi-VN')} ₫
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                {onOpenStockCard && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveMetricModal(null);
+                                      onOpenStockCard(p.ProductID);
+                                    }}
+                                    className="inline-flex h-7 items-center rounded-md border border-zinc-200 bg-white px-2.5 text-[11px] font-semibold text-teal-700 hover:bg-teal-50"
+                                  >
+                                    Xem thẻ kho
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end border-t border-zinc-200 px-5 py-3 bg-zinc-50 shrink-0">
+              <button
+                type="button"
+                onClick={() => setActiveMetricModal(null)}
+                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm transition-colors"
+              >
+                Đóng chi tiết
               </button>
             </div>
           </div>

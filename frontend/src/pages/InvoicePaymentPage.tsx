@@ -182,21 +182,36 @@ export const InvoicePaymentPage: React.FC = () => {
                   <div className="font-medium text-[13px] text-zinc-900 truncate">
                     {product.ProductName}
                   </div>
-                  <div className="text-xs text-zinc-500 flex items-center gap-2 mt-0.5 tabular-nums">
+                  <div className="text-xs text-zinc-500 flex items-center gap-2 mt-0.5 tabular-nums flex-wrap">
                     <span className="font-medium text-zinc-800">
                       {product.Price.toLocaleString('vi-VN')} ₫/{product.Unit}
                     </span>
                     <span className="text-zinc-300">•</span>
-                    <span>Tồn: {product.Quantity}</span>
+                    {product.Quantity <= 0 ? (
+                      <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] font-bold text-rose-700">
+                        HẾT HÀNG (0 {product.Unit})
+                      </span>
+                    ) : (
+                      <span>
+                        Tồn: <strong className="text-zinc-800">{product.Quantity} {product.Unit}</strong>
+                        {(product.Unit || '').toLowerCase() === 'hộp' && ` (${product.Quantity * 10} Vỉ)`}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <button
                   type="button"
+                  disabled={product.Quantity <= 0}
                   onClick={() => handleAddToCart(product)}
-                  className="inline-flex h-7 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-900 hover:text-white hover:border-zinc-900 transition-colors shrink-0"
+                  className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-xs font-medium transition-colors shrink-0 ${
+                    product.Quantity <= 0
+                      ? 'border-zinc-200 bg-zinc-100 text-zinc-400 cursor-not-allowed'
+                      : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-900 hover:text-white hover:border-zinc-900'
+                  }`}
+                  title={product.Quantity <= 0 ? 'Thuốc đã hết tồn kho' : 'Thêm vào đơn'}
                 >
                   <Plus className="h-3 w-3" />
-                  <span>Thêm</span>
+                  <span>{product.Quantity <= 0 ? 'Hết' : 'Thêm'}</span>
                 </button>
               </div>
             ))}

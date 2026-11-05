@@ -11,9 +11,19 @@ import {
   CalendarClock,
   DollarSign,
   CheckCircle2,
+  ChevronRight,
+  X,
+  Search,
+  Receipt,
+  Scale,
+  Layers,
 } from 'lucide-react';
 import { enterpriseApi } from '../services/enterprise.api';
+import { formsApi } from '../services/forms.api';
+import { productApi } from '../services/product.api';
 import { DashboardAnalytics } from '../types/enterprise';
+import { InvoiceRecord } from '../types/forms';
+import { Product } from '../types/product';
 import { toast } from 'sonner';
 
 interface DashboardPageProps {
@@ -95,12 +105,24 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [activeAlertTab, setActiveAlertTab] = useState<'fefo' | 'lowstock'>('fefo');
   const [syncingPortal, setSyncingPortal] = useState<boolean>(false);
+  const [selectedKpiModal, setSelectedKpiModal] = useState<
+    'revenue' | 'profit' | 'inventory' | 'fefo' | null
+  >(null);
+  const [recentInvoices, setRecentInvoices] = useState<InvoiceRecord[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [modalSearch, setModalSearch] = useState<string>('');
 
   const loadAnalytics = async () => {
     setLoading(true);
     try {
-      const res = await enterpriseApi.getDashboard();
+      const [res, invRes, prodRes] = await Promise.all([
+        enterpriseApi.getDashboard(),
+        formsApi.listInvoices().catch(() => []),
+        productApi.list({ page: 1, limit: 100 }).catch(() => ({ items: [] })),
+      ]);
       setData(res);
+      setRecentInvoices(invRes);
+      setAllProducts(prodRes.items);
     } catch {
       toast.error('Không thể tải dữ liệu phân tích điều hành');
     } finally {
@@ -215,10 +237,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
       {/* 4 Enterprise KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+        <div
+          onClick={() => setSelectedKpiModal('revenue')}
+          className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-teal-500 transition-all group active:scale-[0.99]"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Doanh thu bán lẻ thực thu</span>
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-600 group-hover:bg-teal-600 group-hover:text-white transition-colors">
               <TrendingUp className="h-4 w-4" />
             </span>
           </div>
@@ -227,15 +252,23 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               {formatVND(data.totalRevenue)}
             </span>
           </div>
-          <p className="mt-1.5 text-[11px] text-slate-500">
-            Từ <span className="font-semibold text-slate-800">{data.completedInvoicesCount}</span> hóa đơn POS hoàn tất
-          </p>
+          <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
+            <span>
+              Từ <strong className="text-slate-800">{data.completedInvoicesCount}</strong> hóa đơn POS
+            </span>
+            <span className="text-teal-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+        <div
+          onClick={() => setSelectedKpiModal('profit')}
+          className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-emerald-500 transition-all group active:scale-[0.99]"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Lợi nhuận gộp ước tính</span>
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
               <DollarSign className="h-4 w-4" />
             </span>
           </div>
@@ -247,15 +280,21 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               +{grossMarginPercent}% Biên LN
             </span>
           </div>
-          <p className="mt-1.5 text-[11px] text-slate-500">
-            Đã trừ giá vốn bình quân gia quyền các lô nhập
-          </p>
+          <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
+            <span className="truncate max-w-[150px]">Đã trừ giá vốn các lô</span>
+            <span className="text-emerald-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+        <div
+          onClick={() => setSelectedKpiModal('inventory')}
+          className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-sky-500 transition-all group active:scale-[0.99]"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Tổng giá trị tồn kho GPP</span>
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sky-600 group-hover:bg-sky-600 group-hover:text-white transition-colors">
               <Package className="h-4 w-4" />
             </span>
           </div>
@@ -264,15 +303,23 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               {formatVND(data.totalInventoryValue)}
             </span>
           </div>
-          <p className="mt-1.5 text-[11px] text-slate-500">
-            <span className="font-semibold text-slate-800">{data.totalProducts}</span> mặt hàng ({data.totalStockUnits.toLocaleString('vi-VN')} đơn vị)
-          </p>
+          <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
+            <span>
+              <strong className="text-slate-800">{data.totalProducts}</strong> mặt hàng ({data.totalStockUnits.toLocaleString('vi-VN')} {allProducts[0]?.Unit || 'đv'})
+            </span>
+            <span className="text-sky-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+        <div
+          onClick={() => setSelectedKpiModal('fefo')}
+          className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-amber-500 transition-all group active:scale-[0.99]"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Kiểm soát Lô Cận Date (FEFO)</span>
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-colors">
               <CalendarClock className="h-4 w-4" />
             </span>
           </div>
@@ -281,12 +328,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               {FEFO_BATCH_ALERTS.length} lô thuốc
             </span>
             <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200/60">
-              {data.lowStockProducts.length} sắp hết tồn
+              {data.lowStockProducts.length} sắp hết
             </span>
           </div>
-          <p className="mt-1.5 text-[11px] text-slate-500">
-            Nguyên tắc Hết hạn trước - Xuất trước (FEFO)
-          </p>
+          <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
+            <span>Nguyên tắc Hết hạn trước - Xuất trước</span>
+            <span className="text-amber-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
+          </div>
         </div>
       </div>
 
@@ -569,6 +619,349 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </div>
         )}
       </div>
+
+      {/* MODAL CHI TIẾT KHI BẤM VÀO 4 Ô KPI ĐIỀU HÀNH */}
+      {selectedKpiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-3 sm:p-4 animate-in fade-in">
+          <div className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 bg-slate-50/70 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+                  {selectedKpiModal === 'revenue' && <TrendingUp className="h-4 w-4" />}
+                  {selectedKpiModal === 'profit' && <DollarSign className="h-4 w-4" />}
+                  {selectedKpiModal === 'inventory' && <Package className="h-4 w-4" />}
+                  {selectedKpiModal === 'fefo' && <CalendarClock className="h-4 w-4" />}
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {selectedKpiModal === 'revenue' && 'Báo Cáo Chi Tiết Doanh Thu Bán Lẻ POS & Hóa Đơn'}
+                    {selectedKpiModal === 'profit' && 'Bảng Kê Chi Tiết Lợi Nhuận Gộp & Cơ Cấu Giá Vốn'}
+                    {selectedKpiModal === 'inventory' && 'Báo Cáo Định Giá & Cơ Cấu Tồn Kho Toàn Hệ Thống GPP'}
+                    {selectedKpiModal === 'fefo' && 'Chi Tiết Kiểm Soát Lô Cận Hạn Dùng & Cảnh Báo FEFO'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Hệ thống nhà thuốc chuẩn GPP · Dữ liệu thời gian thực
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedKpiModal(null)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/60"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
+              {/* TAB 1: DOANH THU */}
+              {selectedKpiModal === 'revenue' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-3.5">
+                      <div className="text-[11px] text-teal-700 font-medium">Tổng thực thu tích lũy</div>
+                      <div className="text-xl font-bold text-teal-900 mt-1 tabular-nums">
+                        {formatVND(data.totalRevenue)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Số đơn hàng hoàn tất</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {data.completedInvoicesCount} hóa đơn
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Giá trị đơn trung bình (AOV)</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {formatVND(Math.round(data.totalRevenue / Math.max(1, data.completedInvoicesCount)))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500 uppercase">
+                          <th className="py-2.5 px-3">Mã HĐ / Ngày</th>
+                          <th className="py-2.5 px-3">Khách hàng / SĐT</th>
+                          <th className="py-2.5 px-3">Phương thức</th>
+                          <th className="py-2.5 px-3 text-right">Tổng tiền</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {recentInvoices.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="py-6 text-center text-slate-400">
+                              Đang tải danh sách hóa đơn...
+                            </td>
+                          </tr>
+                        ) : (
+                          recentInvoices.map((inv) => (
+                            <tr key={inv.InvoiceID} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3">
+                                <div className="font-mono font-bold text-teal-700">{inv.InvoiceCode}</div>
+                                <div className="text-[11px] text-slate-400">
+                                  {new Date(inv.CreateDate).toLocaleString('vi-VN')}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-semibold text-slate-900">{inv.CustomerName}</div>
+                                <div className="text-[11px] text-slate-400">{inv.CustomerPhone || 'Khách vãng lai'}</div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+                                  {inv.payment?.PaymentMethod || 'VIETQR'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold text-slate-900 tabular-nums">
+                                {formatVND(inv.TotalAmount)}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: LỢI NHUẬN GỘP */}
+              {selectedKpiModal === 'profit' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5">
+                      <div className="text-[11px] text-emerald-700 font-medium">Lợi nhuận gộp ước tính</div>
+                      <div className="text-xl font-bold text-emerald-800 mt-1 tabular-nums">
+                        {formatVND(estimatedGrossProfit)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Tỷ suất biên lợi nhuận</div>
+                      <div className="text-xl font-bold text-emerald-700 mt-1 tabular-nums">
+                        +{grossMarginPercent}%
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Giá vốn hàng bán (COGS)</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {formatVND(Math.max(0, data.totalRevenue - estimatedGrossProfit))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="font-bold text-slate-800">Cơ cấu đóng góp doanh thu & giá trị theo nhóm dược lý:</h4>
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500 uppercase">
+                            <th className="py-2.5 px-3">Nhóm dược lý</th>
+                            <th className="py-2.5 px-3 text-right">Số mã thuốc</th>
+                            <th className="py-2.5 px-3 text-right">Tồn kho</th>
+                            <th className="py-2.5 px-3 text-right">Giá trị tồn kho</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {data.categoryBreakdown.map((cat) => (
+                            <tr key={cat.type} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3 font-semibold text-slate-900">{cat.type}</td>
+                              <td className="py-2.5 px-3 text-right tabular-nums">{cat.count} mã</td>
+                              <td className="py-2.5 px-3 text-right font-medium text-slate-700 tabular-nums">
+                                {cat.quantity.toLocaleString('vi-VN')} {allProducts[0]?.Unit || 'Hộp'}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold text-teal-700 tabular-nums">
+                                {formatVND(cat.value)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: TỔNG TỒN KHO GPP */}
+              {selectedKpiModal === 'inventory' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3.5">
+                      <div className="text-[11px] text-sky-700 font-medium">Tổng giá trị định giá niêm yết</div>
+                      <div className="text-xl font-bold text-sky-900 mt-1 tabular-nums">
+                        {formatVND(data.totalInventoryValue)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Tổng danh mục lưu hành</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {data.totalProducts} mặt hàng
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Tổng quy đổi Vỉ lẻ</div>
+                      <div className="text-xl font-bold text-teal-700 mt-1 tabular-nums">
+                        {(data.totalStockUnits * 10).toLocaleString('vi-VN')} Vỉ
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Thanh tìm kiếm nhanh trong modal */}
+                  <div className="relative">
+                    <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={modalSearch}
+                      onChange={(e) => setModalSearch(e.target.value)}
+                      placeholder="Tìm nhanh tên thuốc, mã SKU, nhóm dược lý..."
+                      className="w-full h-9 rounded-lg border border-slate-300 pl-8 pr-3 text-xs focus:border-teal-600 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 overflow-hidden max-h-72 overflow-y-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500 uppercase sticky top-0 bg-slate-50">
+                          <th className="py-2.5 px-3">SKU / Tên thuốc</th>
+                          <th className="py-2.5 px-3">Nhóm</th>
+                          <th className="py-2.5 px-3 text-right">Tồn Hộp</th>
+                          <th className="py-2.5 px-3 text-right">Quy đổi Vỉ</th>
+                          <th className="py-2.5 px-3 text-right">Giá trị tồn</th>
+                          <th className="py-2.5 px-3 text-center">Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {allProducts
+                          .filter((p: Product) => {
+                            const q = modalSearch.trim().toLowerCase();
+                            return (
+                              !q ||
+                              p.ProductName.toLowerCase().includes(q) ||
+                              p.ProductType.toLowerCase().includes(q) ||
+                              String(p.ProductID).includes(q)
+                            );
+                          })
+                          .map((p: Product) => (
+                            <tr key={p.ProductID} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3">
+                                <div className="font-semibold text-slate-900">{p.ProductName}</div>
+                                <div className="font-mono text-[11px] text-slate-400">
+                                  #{String(p.ProductID).padStart(4, '0')}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-600">{p.ProductType}</td>
+                              <td className="py-2.5 px-3 text-right font-bold tabular-nums">
+                                <span
+                                  className={
+                                    p.Quantity <= 0
+                                      ? 'text-rose-600'
+                                      : p.Quantity <= 20
+                                      ? 'text-amber-600'
+                                      : 'text-slate-900'
+                                  }
+                                >
+                                  {p.Quantity} {p.Unit}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-medium text-teal-700 tabular-nums">
+                                {p.Unit === 'Hộp' ? `${p.Quantity * 10} Vỉ` : '---'}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold text-slate-900 tabular-nums">
+                                {formatVND(p.Quantity * p.Price)}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedKpiModal(null);
+                                    onOpenStockCard(p.ProductID);
+                                  }}
+                                  className="inline-flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-[11px] font-semibold text-teal-700 hover:bg-teal-50"
+                                >
+                                  Thẻ kho
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: FEFO CẬN DATE */}
+              {selectedKpiModal === 'fefo' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3.5">
+                      <div className="text-[11px] text-amber-700 font-medium">Lô thuốc cận hạn dùng (&lt; 180 ngày)</div>
+                      <div className="text-xl font-bold text-amber-900 mt-1 tabular-nums">
+                        {FEFO_BATCH_ALERTS.length} lô cần ưu tiên xuất
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3.5">
+                      <div className="text-[11px] text-rose-700 font-medium">Mặt hàng dưới định mức an toàn</div>
+                      <div className="text-xl font-bold text-rose-900 mt-1 tabular-nums">
+                        {data.lowStockProducts.length} mặt hàng sắp hết
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="font-bold text-slate-800">Danh sách các lô thuốc cần xử lý FEFO:</h4>
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500 uppercase">
+                            <th className="py-2.5 px-3">Số lô / Thuốc</th>
+                            <th className="py-2.5 px-3">HSD</th>
+                            <th className="py-2.5 px-3 text-right">Tồn lô</th>
+                            <th className="py-2.5 px-3">Khuyến nghị điều hành FEFO</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {FEFO_BATCH_ALERTS.map((fefo) => (
+                            <tr key={fefo.batchCode} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3">
+                                <div className="font-mono font-bold text-amber-800">{fefo.batchCode}</div>
+                                <div className="font-semibold text-slate-900">{fefo.productName}</div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-mono text-slate-800">{fefo.expiryDate}</div>
+                                <span className="inline-block rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-200">
+                                  Còn {fefo.daysLeft} ngày
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold tabular-nums">
+                                {fefo.quantity} {fefo.unit}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-600 text-[11px]">
+                                {fefo.recommendation}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end border-t border-slate-200 px-5 py-3 bg-slate-50 shrink-0">
+              <button
+                type="button"
+                onClick={() => setSelectedKpiModal(null)}
+                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm transition-colors"
+              >
+                Đóng chi tiết
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

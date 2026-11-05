@@ -56,6 +56,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
   const [viewingSupplier, setViewingSupplier] = useState<SupplierRecord | null>(null);
   const [viewingPo, setViewingPo] = useState<PurchaseOrderRecord | null>(null);
   const [showCreatePoModal, setShowCreatePoModal] = useState<boolean>(false);
+  const [activeKpiModal, setActiveKpiModal] = useState<'SUPPLIERS' | 'ORDERS' | 'PURCHASE_VALUE' | 'PAYABLES' | null>(null);
 
   const [supplierForm, setSupplierForm] = useState({
     SupplierCode: '',
@@ -392,59 +393,87 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
         }
       />
 
-      {/* 4 Thẻ KPI Chuỗi Cung Ứng & Công Nợ */}
+      {/* 4 Thẻ KPI Chuỗi Cung Ứng & Công Nợ (Clickable Drill-down) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('SUPPLIERS')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-teal-500 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Đối tác phân phối đạt GDP</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600 group-hover:scale-110 transition-transform">
               <Building2 className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {suppliers.length} công ty
           </div>
-          <div className="mt-1 text-xs text-slate-500">100% có giấy phép đủ điều kiện kinh doanh dược</div>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>100% đạt chuẩn GDP</span>
+            <span className="font-semibold text-teal-600 text-[11px] group-hover:underline">Chi tiết →</span>
+          </div>
+        </button>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('ORDERS')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-emerald-500 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Tổng chứng từ Nhập kho</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:scale-110 transition-transform">
               <PackageCheck className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {purchaseOrders.length} phiếu
           </div>
-          <div className="mt-1 text-xs text-slate-500">Đã kiểm nhập cảm quan & cộng tồn tự động</div>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Đã kiểm nhập GPP</span>
+            <span className="font-semibold text-emerald-600 text-[11px] group-hover:underline">Xem DS phiếu →</span>
+          </div>
+        </button>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('PURCHASE_VALUE')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-sky-500 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Tổng giá trị hàng đã nhập</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600 group-hover:scale-110 transition-transform">
               <Truck className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-teal-700 tabular-nums">
             {formatVND(totalPurchaseBudget)}
           </div>
-          <div className="mt-1 text-xs text-slate-500">Tính theo giá vốn hóa đơn VAT đầu vào</div>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Giá vốn đầu vào VAT</span>
+            <span className="font-semibold text-sky-600 text-[11px] group-hover:underline">Báo cáo vốn →</span>
+          </div>
+        </button>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('PAYABLES')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-amber-400 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Công nợ phải trả NCC</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600 group-hover:scale-110 transition-transform">
               <Wallet className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             0 ₫
           </div>
-          <div className="mt-1 text-xs text-emerald-600 font-medium">Đã tất toán 100% các lô nhập kỳ này</div>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-emerald-600 font-medium">
+            <span>Đã tất toán 100%</span>
+            <span className="font-semibold text-amber-600 text-[11px] group-hover:underline">Đối soát nợ →</span>
+          </div>
+        </button>
       </div>
 
       {/* TAB 1: BẢNG NHÀ PHÂN PHỐI FULL-WIDTH 100% */}
@@ -1234,6 +1263,173 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                 type="button"
                 onClick={() => setViewingPo(null)}
                 className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white shadow-sm hover:bg-teal-700"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CHI TIẾT KHI CLICK CÁC Ô THÔNG TIN (KPI DRILL-DOWN) */}
+      {activeKpiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-slate-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-50 text-teal-700 border border-teal-200">
+                  {activeKpiModal === 'SUPPLIERS' && <Building2 className="h-4 w-4" />}
+                  {activeKpiModal === 'ORDERS' && <PackageCheck className="h-4 w-4" />}
+                  {activeKpiModal === 'PURCHASE_VALUE' && <Truck className="h-4 w-4" />}
+                  {activeKpiModal === 'PAYABLES' && <Wallet className="h-4 w-4" />}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {activeKpiModal === 'SUPPLIERS' && `Danh Sách Đối Tác Phân Phối GDP (${suppliers.length} đơn vị)`}
+                    {activeKpiModal === 'ORDERS' && `Nhật Ký Chứng Từ Nhập Kho (${purchaseOrders.length} phiếu)`}
+                    {activeKpiModal === 'PURCHASE_VALUE' && 'Báo Cáo Tổng Hợp Giá Trị Nhập Kho'}
+                    {activeKpiModal === 'PAYABLES' && 'Đối Soát Công Nợ Phải Trả Nhà Phân Phối'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {activeKpiModal === 'SUPPLIERS' && 'Doanh nghiệp dược phẩm đạt chứng chỉ thực hành tốt phân phối'}
+                    {activeKpiModal === 'ORDERS' && 'Lịch sử tiếp nhận lô thuốc, kiểm nghiệm cảm quan & số lô HSD'}
+                    {activeKpiModal === 'PURCHASE_VALUE' && 'Phân bổ chi phí mua hàng theo từng nhà phân phối'}
+                    {activeKpiModal === 'PAYABLES' && 'Tình trạng thanh toán tiền hàng nhập theo hóa đơn'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveKpiModal(null)}
+                className="h-8 w-8 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 flex items-center justify-center"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-4">
+              {activeKpiModal === 'SUPPLIERS' && (
+                <div className="space-y-3 text-xs">
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden">
+                    {suppliers.map((s) => (
+                      <div key={s.SupplierID} className="p-3 hover:bg-slate-50 flex items-center justify-between">
+                        <div>
+                          <div className="font-bold text-slate-900 flex items-center gap-2">
+                            <span>{s.SupplierName}</span>
+                            <span className="rounded bg-teal-50 text-teal-700 px-1.5 py-0.2 text-[10px] font-semibold border border-teal-200">
+                              {s.SupplierCode}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            Người liên hệ: {s.ContactPerson} · SĐT: {s.Phone} · MST: {s.TaxCode}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setViewingSupplier(s);
+                            setActiveKpiModal(null);
+                          }}
+                          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                        >
+                          Hồ sơ chi tiết →
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {activeKpiModal === 'ORDERS' && (
+                <div className="space-y-3 text-xs">
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden max-h-72 overflow-y-auto">
+                    {purchaseOrders.map((po) => (
+                      <div key={po.POID} className="p-3 hover:bg-slate-50 flex items-center justify-between">
+                        <div>
+                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                            <span>{po.POCode}</span>
+                            <span className="font-normal text-slate-500">({po.supplier?.SupplierName || 'NCC'})</span>
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            Ngày nhập: {new Date(po.CreateDate).toLocaleDateString('vi-VN')} · {po.items?.length || 0} mã thuốc
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold text-teal-700 tabular-nums">{formatVND(po.TotalCost)}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setViewingPo(po);
+                              setActiveKpiModal(null);
+                            }}
+                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                          >
+                            Xem phiếu
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {activeKpiModal === 'PURCHASE_VALUE' && (
+                <div className="space-y-3 text-xs">
+                  <div className="rounded-xl border border-teal-200 bg-teal-50/70 p-3.5 flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-teal-900">Tổng Vốn Nhập Kho Chuẩn GPP</div>
+                      <div className="text-[11px] text-teal-700">Đã kiểm nhận cảm quan và nhập kho thành công</div>
+                    </div>
+                    <div className="text-xl font-bold text-teal-900 tabular-nums">{formatVND(totalPurchaseBudget)}</div>
+                  </div>
+
+                  <div className="text-xs font-bold text-slate-800">Cơ cấu theo nhà phân phối:</div>
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden">
+                    {suppliers.map((s) => {
+                      const supOrders = purchaseOrders.filter((po) => po.SupplierID === s.SupplierID);
+                      const supCost = supOrders.reduce((sum, po) => sum + po.TotalCost, 0);
+                      return (
+                        <div key={s.SupplierID} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                          <div>
+                            <div className="font-semibold text-slate-900">{s.SupplierName}</div>
+                            <div className="text-[11px] text-slate-500">{supOrders.length} phiếu nhập kho</div>
+                          </div>
+                          <span className="font-bold text-slate-900 tabular-nums">{formatVND(supCost)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {activeKpiModal === 'PAYABLES' && (
+                <div className="space-y-3 text-xs">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-emerald-900 flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        Tình trạng Công nợ: An Toàn Tuyệt Đối (0 ₫)
+                      </span>
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                        100% ĐÃ THANH TOÁN
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-emerald-800/80">
+                      Toàn bộ {purchaseOrders.length} chứng từ nhập kho kỳ này đã được thanh toán tiền mặt/chuyển khoản cho các đối tác phân phối dược.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-slate-100 px-5 py-3 bg-slate-50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setActiveKpiModal(null)}
+                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm"
               >
                 Đóng
               </button>

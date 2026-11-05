@@ -5,6 +5,7 @@ import { prisma } from '../config/prisma';
 const invoiceItemSchema = z.object({
   ProductID: z.coerce.number().int().positive(),
   Quantity: z.coerce.number().int().positive('Số lượng mua phải >= 1'),
+  UnitMode: z.enum(['BASE', 'BLISTER', 'PILL']).optional().default('BASE'),
   DosageNote: z.string().trim().optional().default('Sáng 1 viên, Tối 1 viên sau ăn'),
 });
 
@@ -92,23 +93,66 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           throw new Error(`Không tìm thấy thuốc có mã #${item.ProductID}`);
         }
 
-        if (product.Quantity < item.Quantity) {
+        // RÀNG BUỘC TỒN KHO TUYỆT ĐỐI: Không có hàng thì không được bán
+        if (product.Quantity <= 0) {
           throw new Error(
-            `Thuốc "${product.ProductName}" chỉ còn tồn kho ${product.Quantity} ${product.Unit}`
+            `Dược phẩm "${product.ProductName}" đã hết tồn kho (0 ${product.Unit}), không thể xuất bán!`
           );
         }
 
-        // Trừ số lượng tồn kho của Product
+        let baseDeduction = item.Quantity;
+        let itemUnitPrice = product.Price;
+
+        // Ràng buộc quy đổi đa đơn vị (Hộp / Vỉ / Viên)
+        if (item.UnitMode === 'BLISTER') {
+          const isBox = product.Unit === 'Hộp';
+          const maxBlisters = isBox ? product.Quantity * 10 : product.Quantity;
+          if (item.Quantity > maxBlisters) {
+            throw new Error(
+              `Thuốc "${product.ProductName}" chỉ còn tồn ${maxBlisters} Vỉ${isBox ? ` (quy đổi từ ${product.Quantity} Hộp)` : ''}, không đủ để xuất bán ${item.Quantity} Vỉ!`
+            );
+          }
+          baseDeduction = isBox ? Math.max(1, Math.ceil(item.Quantity / 10)) : item.Quantity;
+          itemUnitPrice = Math.max(1000, Math.round(product.Price / 10));
+        } else if (item.UnitMode === 'PILL') {
+          const isBox = product.Unit === 'Hộp';
+          const maxPills = isBox ? product.Quantity * 100 : product.Quantity * 10;
+          if (item.Quantity > maxPills) {
+            throw new Error(
+              `Thuốc "${product.ProductName}" chỉ còn tồn ${maxPills} Viên${isBox ? ` (quy đổi từ ${product.Quantity} Hộp)` : ''}, không đủ để xuất bán ${item.Quantity} Viên!`
+            );
+          }
+          baseDeduction = isBox ? Math.max(1, Math.ceil(item.Quantity / 100)) : Math.max(1, Math.ceil(item.Quantity / 10));
+          itemUnitPrice = Math.max(500, Math.round(product.Price / 50));
+        } else {
+          // Bán theo Đơn vị gốc (Hộp, Chai, Tuýp, etc.)
+          if (product.Quantity < item.Quantity) {
+            throw new Error(
+              `Thuốc "${product.ProductName}" chỉ còn tồn kho ${product.Quantity} ${product.Unit}, không đủ số lượng để xuất bán ${item.Quantity} ${product.Unit}!`
+            );
+          }
+          baseDeduction = item.Quantity;
+          itemUnitPrice = product.Price;
+        }
+
+        if (product.Quantity < baseDeduction) {
+          throw new Error(
+            `Thuốc "${product.ProductName}" không đủ tồn kho để quy đổi xuất bán (Tồn: ${product.Quantity} ${product.Unit})!`
+          );
+        }
+
+        // Trừ tồn kho tuyệt đối không âm (Non-negative guarantee)
+        const remainingQuantity = Math.max(0, product.Quantity - baseDeduction);
         await tx.product.update({
           where: { ProductID: product.ProductID },
-          data: { Quantity: product.Quantity - item.Quantity },
+          data: { Quantity: remainingQuantity },
         });
 
-        subtotal += product.Price * item.Quantity;
+        subtotal += itemUnitPrice * item.Quantity;
         preparedItems.push({
           ProductID: product.ProductID,
           Quantity: item.Quantity,
-          UnitPrice: product.Price,
+          UnitPrice: itemUnitPrice,
           DosageNote: item.DosageNote,
         });
       }

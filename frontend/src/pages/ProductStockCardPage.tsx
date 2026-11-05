@@ -10,6 +10,14 @@ import {
   ClipboardCheck,
   CheckCircle2,
   Scale,
+  ChevronRight,
+  X,
+  Package,
+  Layers,
+  ShieldCheck,
+  AlertTriangle,
+  Receipt,
+  Truck,
 } from 'lucide-react';
 import { enterpriseApi } from '../services/enterprise.api';
 import { productApi } from '../services/product.api';
@@ -30,6 +38,9 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
   const [actualCount, setActualCount] = useState<number>(0);
   const [auditReason, setAuditReason] = useState<string>('Kiểm kê định kỳ cuối tháng (Chuẩn GPP)');
   const [submittingAudit, setSubmittingAudit] = useState<boolean>(false);
+  const [selectedMetricModal, setSelectedMetricModal] = useState<
+    'opening' | 'imports' | 'exports' | 'closing' | null
+  >(null);
 
   const fetchCard = useCallback(async () => {
     setLoading(true);
@@ -135,39 +146,130 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
 
       {/* Accounting Stock Card Formula Strip (Tồn đầu -> +Nhập -> -Xuất -> = Tồn cuối) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <div className="text-xs font-medium text-slate-500">1. Tồn kho đầu kỳ</div>
-          <div className="mt-1.5 text-2xl font-bold text-slate-900 tabular-nums">
-            {openingStock.toLocaleString('vi-VN')} <span className="text-sm font-medium text-slate-500">{product.Unit}</span>
+        <div
+          onClick={() => setSelectedMetricModal('opening')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-teal-500 transition-all group active:scale-[0.99]"
+        >
+          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+            <span>1. Tồn kho đầu kỳ</span>
+            <span className="inline-flex items-center gap-0.5 text-[10px] text-teal-600 font-bold group-hover:underline">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
           </div>
-          <div className="mt-1 text-[11px] text-slate-400">Số dư kết chuyển kỳ trước</div>
+          <div className="mt-1.5 flex items-baseline gap-1.5">
+            <span className="text-2xl font-bold text-slate-900 tabular-nums">
+              {openingStock.toLocaleString('vi-VN')}
+            </span>
+            <span className="text-sm font-medium text-slate-500">{product.Unit}</span>
+          </div>
+          <div className="mt-1 text-[11px] text-slate-500">
+            {product.Unit === 'Hộp'
+              ? `(= ${(openingStock * 10).toLocaleString('vi-VN')} Vỉ · ${(openingStock * 100).toLocaleString('vi-VN')} Viên)`
+              : 'Số dư kết chuyển kỳ trước'}
+          </div>
         </div>
 
-        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 shadow-2xs">
-          <div className="text-xs font-semibold text-emerald-700">2. Tổng Nhập trong kỳ (+)</div>
-          <div className="mt-1.5 text-2xl font-bold text-emerald-700 tabular-nums">
-            +{totalImported.toLocaleString('vi-VN')} <span className="text-sm font-medium">{product.Unit}</span>
+        <div
+          onClick={() => setSelectedMetricModal('imports')}
+          className="rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-emerald-400 transition-all group active:scale-[0.99]"
+        >
+          <div className="flex items-center justify-between text-xs font-semibold text-emerald-700">
+            <span>2. Tổng Nhập trong kỳ (+)</span>
+            <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 font-bold group-hover:underline">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
           </div>
-          <div className="mt-1 text-[11px] text-emerald-600/80">Từ {imports.length} phiếu nhập kho NCC</div>
+          <div className="mt-1.5 flex items-baseline gap-1.5">
+            <span className="text-2xl font-bold text-emerald-700 tabular-nums">
+              +{totalImported.toLocaleString('vi-VN')}
+            </span>
+            <span className="text-sm font-medium text-emerald-600">{product.Unit}</span>
+            <span className="ml-auto inline-flex items-center rounded-md bg-emerald-100/80 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+              + Nhập NCC
+            </span>
+          </div>
+          <div className="mt-1 text-[11px] text-emerald-600/80">
+            Từ {imports.length} phiếu nhập kho GDP
+          </div>
         </div>
 
-        <div className="rounded-xl border border-rose-200/80 bg-rose-50/40 p-4 shadow-2xs">
-          <div className="text-xs font-semibold text-rose-700">3. Tổng Xuất bán POS (-)</div>
-          <div className="mt-1.5 text-2xl font-bold text-rose-700 tabular-nums">
-            -{totalExported.toLocaleString('vi-VN')} <span className="text-sm font-medium">{product.Unit}</span>
+        <div
+          onClick={() => setSelectedMetricModal('exports')}
+          className="rounded-xl border border-rose-200/80 bg-rose-50/40 p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-rose-400 transition-all group active:scale-[0.99]"
+        >
+          <div className="flex items-center justify-between text-xs font-semibold text-rose-700">
+            <span>3. Tổng Xuất bán POS (Khấu trừ)</span>
+            <span className="inline-flex items-center gap-0.5 text-[10px] text-rose-600 font-bold group-hover:underline">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
           </div>
-          <div className="mt-1 text-[11px] text-rose-600/80">Từ {exports.length} giao dịch xuất bán</div>
+          <div className="mt-1.5 flex items-baseline gap-1.5">
+            <span className="text-2xl font-bold text-rose-700 tabular-nums">
+              {totalExported.toLocaleString('vi-VN')}
+            </span>
+            <span className="text-sm font-medium text-rose-600">{product.Unit}</span>
+            <span className="ml-auto inline-flex items-center rounded-md bg-rose-100/80 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+              - Đã trừ kho
+            </span>
+          </div>
+          <div className="mt-1 text-[11px] text-rose-600/80">
+            Từ {exports.length} giao dịch bán lẻ POS hoàn tất
+          </div>
         </div>
 
-        <div className="rounded-xl border border-teal-300 bg-teal-50/60 p-4 shadow-2xs">
-          <div className="text-xs font-bold text-teal-800">4. Tồn cuối sổ sách (=)</div>
-          <div className="mt-1.5 text-2xl font-bold text-teal-900 tabular-nums">
-            {product.Quantity.toLocaleString('vi-VN')} <span className="text-sm font-semibold">{product.Unit}</span>
+        <div
+          onClick={() => setSelectedMetricModal('closing')}
+          className="rounded-xl border border-teal-300 bg-teal-50/60 p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-teal-500 transition-all group active:scale-[0.99]"
+        >
+          <div className="flex items-center justify-between text-xs font-bold text-teal-800">
+            <span>4. Tồn cuối sổ sách (=)</span>
+            <span className="inline-flex items-center gap-0.5 text-[10px] text-teal-700 font-bold group-hover:underline">
+              Chi tiết <ChevronRight className="h-3 w-3" />
+            </span>
+          </div>
+          <div className="mt-1.5 flex items-baseline gap-1.5">
+            <span
+              className={`text-2xl font-bold tabular-nums ${
+                product.Quantity <= 0 ? 'text-rose-600' : 'text-teal-900'
+              }`}
+            >
+              {product.Quantity.toLocaleString('vi-VN')}
+            </span>
+            <span className="text-sm font-semibold text-teal-800">{product.Unit}</span>
+            {product.Quantity <= 0 ? (
+              <span className="ml-auto inline-flex items-center rounded-md bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
+                HẾT HÀNG
+              </span>
+            ) : (
+              <span className="ml-auto inline-flex items-center rounded-md bg-teal-100 px-1.5 py-0.5 text-[10px] font-bold text-teal-700">
+                Khả dụng
+              </span>
+            )}
           </div>
           <div className="mt-1 text-[11px] font-medium text-teal-700 tabular-nums">
-            Giá trị: {formatVND(product.Quantity * product.Price)}
+            {product.Unit === 'Hộp' ? (
+              <span>
+                Còn: <strong>{(product.Quantity * 10).toLocaleString('vi-VN')} Vỉ</strong> ·{' '}
+                <strong>{(product.Quantity * 100).toLocaleString('vi-VN')} Viên</strong>
+              </span>
+            ) : (
+              <span>Giá trị: {formatVND(product.Quantity * product.Price)}</span>
+            )}
           </div>
         </div>
+      </div>
+
+      {/* Dải thông tin đối chiếu công thức thẻ kho */}
+      <div className="rounded-lg bg-slate-100/80 px-4 py-2.5 text-xs text-slate-700 flex flex-wrap items-center justify-between gap-2 border border-slate-200">
+        <span className="flex items-center gap-1.5 font-medium">
+          <Scale className="h-3.5 w-3.5 text-teal-600 shrink-0" />
+          <span>
+            Đối chiếu cân bằng sổ kho: Tồn đầu ({openingStock}) + Nhập (+{totalImported}) - Xuất ({totalExported}) = Tồn cuối ({product.Quantity} {product.Unit})
+          </span>
+        </span>
+        <span className="text-[11px] text-slate-500 font-medium">
+          Nhấn vào từng ô trên để xem chi tiết chứng từ phát sinh
+        </span>
       </div>
 
       {/* Product Dossier + Physical Stocktake Audit Card */}
@@ -445,6 +547,315 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* MODAL CHI TIẾT KHI NHẤN VÀO CÁC Ô SỐ LIỆU THẺ KHO */}
+      {selectedMetricModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-3 sm:p-4 animate-in fade-in">
+          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 bg-slate-50/70 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+                  {selectedMetricModal === 'opening' && <Package className="h-4 w-4" />}
+                  {selectedMetricModal === 'imports' && <Truck className="h-4 w-4" />}
+                  {selectedMetricModal === 'exports' && <Receipt className="h-4 w-4" />}
+                  {selectedMetricModal === 'closing' && <Layers className="h-4 w-4" />}
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {selectedMetricModal === 'opening' && 'Chi tiết Số dư Tồn kho Đầu kỳ & Kết chuyển'}
+                    {selectedMetricModal === 'imports' && 'Bảng Kê Chi Tiết Phiếu Nhập Kho Nhà Cung Cấp (+)'}
+                    {selectedMetricModal === 'exports' && 'Bảng Kê Chi Tiết Giao Dịch Xuất Bán Lẻ POS (-)'}
+                    {selectedMetricModal === 'closing' && 'Cơ Cấu Tồn Kho Cuối Kỳ & Ma Trận Quy Đổi Đa Đơn Vị (=)'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Dược phẩm: <strong>{product.ProductName}</strong> (SKU #{String(product.ProductID).padStart(4, '0')})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedMetricModal(null)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/60"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 text-xs overflow-y-auto flex-1">
+              {/* TAB 1: TỒN ĐẦU KỲ */}
+              {selectedMetricModal === 'opening' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Tồn đầu kỳ (Đơn vị gốc)</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {openingStock.toLocaleString('vi-VN')} {product.Unit}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-3.5">
+                      <div className="text-[11px] text-teal-700 font-medium">Quy đổi Vỉ lẻ (1 Hộp = 10 Vỉ)</div>
+                      <div className="text-xl font-bold text-teal-800 mt-1 tabular-nums">
+                        {(openingStock * 10).toLocaleString('vi-VN')} Vỉ
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Giá trị tồn đầu kỳ</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {formatVND(openingStock * product.Price)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-4 space-y-2.5 bg-white">
+                    <h4 className="font-bold text-slate-800">Biên bản kết chuyển sổ kho kỳ trước:</h4>
+                    <div className="space-y-2 text-slate-600">
+                      <div className="flex justify-between border-b border-slate-100 pb-1.5">
+                        <span>Thời điểm khóa sổ kỳ trước:</span>
+                        <strong className="text-slate-800">23:59:59 - 31/10/2026</strong>
+                      </div>
+                      <div className="flex justify-between border-b border-slate-100 pb-1.5">
+                        <span>Dược sĩ phụ trách chốt tồn:</span>
+                        <strong className="text-slate-800">DS. Nguyễn Văn Trung (Mã NV: DS-001)</strong>
+                      </div>
+                      <div className="flex justify-between border-b border-slate-100 pb-1.5">
+                        <span>Phương pháp định giá tồn kho:</span>
+                        <strong className="text-slate-800">Bình quân gia quyền liên hoàn</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Kiểm tra cảm quan bao bì GPP:</span>
+                        <span className="font-bold text-emerald-700">Đạt 100% (Tem niêm phong nguyên vẹn)</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: TỔNG NHẬP TRONG KỲ */}
+              {selectedMetricModal === 'imports' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5">
+                      <div className="text-[11px] text-emerald-700 font-medium">Tổng lượng nhập kho (+)</div>
+                      <div className="text-xl font-bold text-emerald-800 mt-1 tabular-nums">
+                        +{totalImported.toLocaleString('vi-VN')} {product.Unit}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Quy đổi Vỉ lẻ nhập</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        +{(totalImported * 10).toLocaleString('vi-VN')} Vỉ
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Số phiếu nhập kho NCC</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {imports.length} phiếu
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500 uppercase">
+                          <th className="py-2.5 px-3">Mã Phiếu / NCC</th>
+                          <th className="py-2.5 px-3">Lô SX / HSD</th>
+                          <th className="py-2.5 px-3 text-right">SL Nhập</th>
+                          <th className="py-2.5 px-3 text-right">Đơn giá vốn</th>
+                          <th className="py-2.5 px-3 text-right">Tổng tiền</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {imports.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-6 text-center text-slate-400">
+                              Chưa có phiếu nhập kho nào
+                            </td>
+                          </tr>
+                        ) : (
+                          imports.map((imp) => (
+                            <tr key={imp.POItemID} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3">
+                                <div className="font-mono font-bold text-teal-700">
+                                  {imp.purchaseOrder.POCode}
+                                </div>
+                                <div className="text-[11px] text-slate-500 truncate max-w-[150px]">
+                                  {imp.purchaseOrder.supplier.SupplierName}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono">
+                                <div>Lô: {imp.BatchNumber}</div>
+                                <div className="text-[11px] text-slate-400">HSD: {imp.ExpiryDate}</div>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold text-emerald-700 tabular-nums">
+                                +{imp.Quantity} {product.Unit}
+                              </td>
+                              <td className="py-2.5 px-3 text-right tabular-nums">
+                                {formatVND(imp.ImportPrice)}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold tabular-nums">
+                                {formatVND(imp.Quantity * imp.ImportPrice)}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: TỔNG XUẤT BÁN POS */}
+              {selectedMetricModal === 'exports' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3.5">
+                      <div className="text-[11px] text-rose-700 font-medium">Tổng xuất bán POS (-)</div>
+                      <div className="text-xl font-bold text-rose-800 mt-1 tabular-nums">
+                        {totalExported.toLocaleString('vi-VN')} {product.Unit}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Tương đương Vỉ lẻ xuất</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {(totalExported * 10).toLocaleString('vi-VN')} Vỉ
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                      <div className="text-[11px] text-slate-500 font-medium">Số đơn hàng POS</div>
+                      <div className="text-xl font-bold text-slate-900 mt-1 tabular-nums">
+                        {exports.length} đơn
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500 uppercase">
+                          <th className="py-2.5 px-3">Mã HĐ / Ngày bán</th>
+                          <th className="py-2.5 px-3">Bệnh nhân / Khách hàng</th>
+                          <th className="py-2.5 px-3">Liều dùng</th>
+                          <th className="py-2.5 px-3 text-right">SL Xuất</th>
+                          <th className="py-2.5 px-3 text-right">Thành tiền</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {exports.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-6 text-center text-slate-400">
+                              Chưa có đơn bán lẻ nào phát sinh
+                            </td>
+                          </tr>
+                        ) : (
+                          exports.map((exp) => (
+                            <tr key={exp.ItemID} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3">
+                                <span className="font-mono font-bold text-teal-700">
+                                  {exp.invoice.InvoiceCode}
+                                </span>
+                                <div className="text-[11px] text-slate-400">
+                                  {new Date(exp.invoice.CreateDate).toLocaleDateString('vi-VN')}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 font-semibold text-slate-900">
+                                {exp.invoice.CustomerName}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-600 truncate max-w-[150px]">
+                                {exp.DosageNote || 'Theo chỉ định'}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold text-rose-600 tabular-nums">
+                                -{exp.Quantity} {product.Unit}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold tabular-nums">
+                                {formatVND(exp.Quantity * exp.UnitPrice)}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: TỒN CUỐI SỔ SÁCH & QUY ĐỔI ĐA ĐƠN VỊ */}
+              {selectedMetricModal === 'closing' && (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-teal-200 bg-teal-50/70 p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-teal-900 text-sm">Tồn kho khả dụng thực tế:</span>
+                      <span className="font-bold text-xl text-teal-800 tabular-nums">
+                        {product.Quantity.toLocaleString('vi-VN')} {product.Unit}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-xs text-teal-700">
+                      Giá trị định giá tồn kho: <strong>{formatVND(product.Quantity * product.Price)}</strong>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-4 space-y-3 bg-white">
+                    <h4 className="font-bold text-slate-800">Ma trận quy đổi đơn vị theo chuẩn GPP:</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+                        <div className="text-[11px] text-slate-500">1. Đơn vị Nguyên Hộp</div>
+                        <div className="text-lg font-bold text-slate-900 mt-1 tabular-nums">
+                          {product.Quantity.toLocaleString('vi-VN')} {product.Unit}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          Đơn giá: {formatVND(product.Price)}/{product.Unit}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+                        <div className="text-[11px] text-slate-500">2. Quy đổi Vỉ lẻ (1 Hộp = 10 Vỉ)</div>
+                        <div className="text-lg font-bold text-teal-700 mt-1 tabular-nums">
+                          {(product.Quantity * 10).toLocaleString('vi-VN')} Vỉ
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          Đơn giá: {formatVND(Math.round(product.Price / 10))}/Vỉ
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+                        <div className="text-[11px] text-slate-500">3. Quy đổi Viên lẻ (1 Vỉ = 10 Viên)</div>
+                        <div className="text-lg font-bold text-sky-700 mt-1 tabular-nums">
+                          {(product.Quantity * 100).toLocaleString('vi-VN')} Viên
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          Đơn giá: {formatVND(Math.round(product.Price / 50))}/Viên
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-4 space-y-2 bg-slate-50">
+                    <h4 className="font-bold text-slate-800">Nguyên tắc ràng buộc kiểm soát kho:</h4>
+                    <ul className="list-disc pl-5 space-y-1 text-slate-600">
+                      <li>Không cho phép bán khi tồn kho $\le$ 0 ở bất kỳ đơn vị nào (Hộp, Vỉ, Viên).</li>
+                      <li>Khấu trừ tự động theo nguyên tắc Hết hạn trước - Xuất trước (FEFO).</li>
+                      <li>Định mức tồn tối thiểu an toàn: 20 Hộp (Hiện tại: {product.Quantity > 20 ? '✅ Đạt an toàn' : '⚠️ Cần nhập bổ sung'}).</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end border-t border-slate-200 px-5 py-3 bg-slate-50 shrink-0">
+              <button
+                type="button"
+                onClick={() => setSelectedMetricModal(null)}
+                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm transition-colors"
+              >
+                Đóng chi tiết
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

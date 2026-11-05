@@ -38,6 +38,7 @@ export const PaymentsLedgerPage: React.FC = () => {
   const [methodFilter, setMethodFilter] = useState<string>('ALL');
   const [search, setSearch] = useState<string>('');
   const [previewQrPayment, setPreviewQrPayment] = useState<PaymentRecord | null>(null);
+  const [activeKpiModal, setActiveKpiModal] = useState<'NET' | 'VIETQR' | 'CASH' | 'REFUND' | null>(null);
 
   // 11 Chức năng Data Grid
   const [page, setPage] = useState<number>(1);
@@ -190,59 +191,87 @@ export const PaymentsLedgerPage: React.FC = () => {
         }
       />
 
-      {/* 4 Financial KPIs */}
+      {/* 4 Financial KPIs (Clickable Drill-down) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('NET')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-teal-500 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Tổng thực thu ròng (Net Cash)</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600 group-hover:scale-110 transition-transform">
               <Wallet className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-teal-700 tabular-nums">
             {formatVND(stats.totalNet)}
           </div>
-          <p className="mt-1 text-xs text-slate-500">Đã cấn trừ các phiếu chi hoàn trả</p>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Đã cấn trừ phiếu hoàn</span>
+            <span className="font-semibold text-teal-600 text-[11px] group-hover:underline">Chi tiết →</span>
+          </div>
+        </button>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('VIETQR')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-emerald-500 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Chuyển khoản VietQR 24/7</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:scale-110 transition-transform">
               <QrCode className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {formatVND(stats.totalVietQr)}
           </div>
-          <p className="mt-1 text-xs text-slate-500">Đối soát tự động qua Napas247</p>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Đối soát Napas247</span>
+            <span className="font-semibold text-emerald-600 text-[11px] group-hover:underline">Báo cáo QR →</span>
+          </div>
+        </button>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('CASH')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-sky-500 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Quỹ Tiền mặt & Thẻ POS</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600 group-hover:scale-110 transition-transform">
               <Banknote className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
             {formatVND(stats.totalCashAndCard)}
           </div>
-          <p className="mt-1 text-xs text-slate-500">Số dư tiền mặt tại két thu ngân</p>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Két tiền mặt quầy</span>
+            <span className="font-semibold text-sky-600 text-[11px] group-hover:underline">Kiểm két →</span>
+          </div>
+        </button>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setActiveKpiModal('REFUND')}
+          className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-rose-400 hover:shadow-md transition-all text-left group cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <span>Phiếu Chi Hoàn Tiền (Refund)</span>
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-50 text-rose-600 group-hover:scale-110 transition-transform">
               <RotateCcw className="h-4 w-4" />
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-rose-600 tabular-nums">
             {formatVND(stats.totalRefunded)}
           </div>
-          <p className="mt-1 text-xs text-slate-500">Từ các hóa đơn hủy/nhập trả kho</p>
-        </div>
+          <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+            <span>Hóa đơn trả hàng</span>
+            <span className="font-semibold text-rose-600 text-[11px] group-hover:underline">Xem phiếu chi →</span>
+          </div>
+        </button>
       </div>
 
       {/* Bảng Sổ Quỹ Full-Width 100% */}
@@ -534,6 +563,180 @@ export const PaymentsLedgerPage: React.FC = () => {
                 type="button"
                 onClick={() => setPreviewQrPayment(null)}
                 className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white shadow-sm hover:bg-teal-700"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CHI TIẾT SỔ QUỸ KHI CLICK CÁC Ô THÔNG TIN (KPI DRILL-DOWN) */}
+      {activeKpiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-slate-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-50 text-teal-700 border border-teal-200">
+                  {activeKpiModal === 'NET' && <Wallet className="h-4 w-4" />}
+                  {activeKpiModal === 'VIETQR' && <QrCode className="h-4 w-4" />}
+                  {activeKpiModal === 'CASH' && <Banknote className="h-4 w-4" />}
+                  {activeKpiModal === 'REFUND' && <RotateCcw className="h-4 w-4" />}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {activeKpiModal === 'NET' && 'Báo Cáo Sổ Quỹ Dòng Tiền Thuần (Net Cash)'}
+                    {activeKpiModal === 'VIETQR' && 'Nhật Ký Đối Soát Tự Động VietQR 24/7 Napas'}
+                    {activeKpiModal === 'CASH' && 'Biên Bản Kiểm Kê Tiền Mặt & Thẻ POS Quầy'}
+                    {activeKpiModal === 'REFUND' && 'Danh Sách Phiếu Chi Hoàn Trả Tiền Cho Khách'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {activeKpiModal === 'NET' && 'Tổng hợp phiếu thu bán lẻ và các khoản chi hoàn'}
+                    {activeKpiModal === 'VIETQR' && 'Khớp lệnh biến động số dư qua mã QR động'}
+                    {activeKpiModal === 'CASH' && 'Đối chiếu số dư thực tế trong két tiền mặt'}
+                    {activeKpiModal === 'REFUND' && 'Chi tiết các khoản hoàn trả khi hủy đơn thuốc'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveKpiModal(null)}
+                className="h-8 w-8 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 flex items-center justify-center"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-4">
+              {activeKpiModal === 'NET' && (
+                <div className="space-y-4 text-xs">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-3">
+                      <div className="font-semibold text-teal-800">Thực thu ròng</div>
+                      <div className="mt-1 text-lg font-bold text-teal-900 tabular-nums">{formatVND(stats.totalNet)}</div>
+                    </div>
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
+                      <div className="font-semibold text-emerald-800">Tổng thu vào</div>
+                      <div className="mt-1 text-lg font-bold text-emerald-900 tabular-nums">
+                        {formatVND(stats.totalNet + stats.totalRefunded)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-3">
+                      <div className="font-semibold text-rose-800">Tổng chi ra</div>
+                      <div className="mt-1 text-lg font-bold text-rose-900 tabular-nums">
+                        -{formatVND(stats.totalRefunded)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-xs font-bold text-slate-800">Cơ cấu nguồn thu:</div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-200 bg-slate-50">
+                      <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                        <QrCode className="h-3.5 w-3.5 text-teal-600" />
+                        Chuyển khoản VietQR
+                      </span>
+                      <span className="font-bold text-slate-900 tabular-nums">{formatVND(stats.totalVietQr)}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-2.5 rounded-lg border border-slate-200 bg-slate-50">
+                      <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                        <Banknote className="h-3.5 w-3.5 text-emerald-600" />
+                        Tiền mặt & Quẹt thẻ quầy
+                      </span>
+                      <span className="font-bold text-slate-900 tabular-nums">{formatVND(stats.totalCashAndCard)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeKpiModal === 'VIETQR' && (
+                <div className="space-y-3 text-xs">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-emerald-900">Cổng Thanh Toán MB Bank · Napas247</div>
+                      <div className="text-[11px] text-emerald-700">Tài khoản: 0388889999 · PHARMACORE PHARMACY</div>
+                    </div>
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                      Đã kết nối
+                    </span>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden max-h-72 overflow-y-auto">
+                    {payments
+                      .filter((p) => p.PaymentMethod === 'VIETQR')
+                      .map((p) => (
+                        <div key={p.PaymentID} className="flex items-center justify-between p-3 hover:bg-slate-50">
+                          <div>
+                            <div className="font-bold text-slate-900">{p.TransactionCode} · {p.invoice?.CustomerName || 'Khách lẻ'}</div>
+                            <div className="text-[11px] text-slate-500">{new Date(p.PaymentDate).toLocaleString('vi-VN')} · Đơn: {p.invoice?.InvoiceCode}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-teal-700 tabular-nums">{formatVND(p.PaidAmount)}</div>
+                            <span className="rounded bg-emerald-50 text-emerald-700 px-1.5 py-0.2 text-[10px] font-semibold">
+                              {p.Status}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {activeKpiModal === 'CASH' && (
+                <div className="space-y-3 text-xs">
+                  <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3.5 space-y-1">
+                    <div className="font-bold text-sky-900">Két Tiền Mặt Tại Quầy GPP</div>
+                    <p className="text-[11px] text-sky-700">
+                      Dành cho thu ngân kiểm đếm tiền mặt trước khi bàn giao ca trực.
+                    </p>
+                  </div>
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden max-h-72 overflow-y-auto">
+                    {payments
+                      .filter((p) => p.PaymentMethod !== 'VIETQR' && p.Status === 'PAID')
+                      .map((p) => (
+                        <div key={p.PaymentID} className="flex items-center justify-between p-3 hover:bg-slate-50">
+                          <div>
+                            <div className="font-bold text-slate-900">{p.TransactionCode} · {p.invoice?.CustomerName || 'Khách vãng lai'}</div>
+                            <div className="text-[11px] text-slate-500">Hình thức: {p.PaymentMethod} · {new Date(p.PaymentDate).toLocaleDateString('vi-VN')}</div>
+                          </div>
+                          <span className="font-bold text-slate-900 tabular-nums">{formatVND(p.PaidAmount)}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {activeKpiModal === 'REFUND' && (
+                <div className="space-y-3 text-xs">
+                  {stats.totalRefunded === 0 ? (
+                    <div className="text-center py-8 text-slate-500">Chưa có giao dịch chi hoàn nào.</div>
+                  ) : (
+                    <div className="divide-y divide-slate-100 rounded-xl border border-rose-200 overflow-hidden">
+                      {payments
+                        .filter((p) => p.Status === 'REFUNDED')
+                        .map((p) => (
+                          <div key={p.PaymentID} className="flex items-center justify-between p-3 hover:bg-rose-50/30">
+                            <div>
+                              <div className="font-bold text-rose-700">{p.TransactionCode} · {p.invoice?.CustomerName}</div>
+                              <div className="text-[11px] text-slate-500">Hóa đơn gốc: {p.invoice?.InvoiceCode} · Hoàn trả thuốc</div>
+                            </div>
+                            <span className="font-bold text-rose-600 tabular-nums">-{formatVND(p.PaidAmount)}</span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-slate-100 px-5 py-3 bg-slate-50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setActiveKpiModal(null)}
+                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm"
               >
                 Đóng
               </button>

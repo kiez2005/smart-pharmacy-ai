@@ -181,16 +181,28 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     return product.Unit;
   };
 
+  const getMaxStockForMode = (product: Product, mode: RetailUnitMode = 'BASE') => {
+    if (product.Quantity <= 0) return 0;
+    if (mode === 'BLISTER') {
+      return product.Unit === 'Hộp' ? product.Quantity * 10 : product.Quantity;
+    }
+    if (mode === 'PILL') {
+      return product.Unit === 'Hộp' ? product.Quantity * 100 : product.Quantity * 10;
+    }
+    return product.Quantity;
+  };
+
   const addToCart = (product: Product, defaultMode: RetailUnitMode = 'BASE', customNote?: string) => {
     if (product.Quantity <= 0) {
-      toast.error(`"${product.ProductName}" đã hết tồn kho!`);
+      toast.error(`"${product.ProductName}" đã hết tồn kho (0 ${product.Unit}), không thể xuất bán!`);
       return;
     }
+    const maxStock = getMaxStockForMode(product, defaultMode);
     setCart((prev) => {
       const existing = prev.find((i) => i.product.ProductID === product.ProductID);
       if (existing) {
-        if (existing.quantity + 1 > product.Quantity) {
-          toast.warning('Vượt quá số lượng tồn kho hiện có');
+        if (existing.quantity + 1 > maxStock) {
+          toast.warning(`Không thể thêm: Đã đạt giới hạn tồn kho khả dụng (${maxStock} ${getUnitLabel(product, existing.unitMode)})`);
           return prev;
         }
         return prev.map((i) =>
@@ -254,8 +266,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
         .map((item) => {
           if (item.product.ProductID !== productId) return item;
           const nextQty = item.quantity + delta;
-          if (nextQty > item.product.Quantity) {
-            toast.warning('Vượt quá tồn kho khả dụng');
+          const maxStock = getMaxStockForMode(item.product, item.unitMode);
+          if (nextQty > maxStock) {
+            toast.warning(`Vượt quá tồn kho khả dụng (${maxStock} ${getUnitLabel(item.product, item.unitMode)})`);
             return item;
           }
           return nextQty > 0 ? { ...item, quantity: nextQty } : null;
@@ -266,9 +279,12 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
   const updateUnitMode = (productId: number, mode: RetailUnitMode) => {
     setCart((prev) =>
-      prev.map((item) =>
-        item.product.ProductID === productId ? { ...item, unitMode: mode } : item
-      )
+      prev.map((item) => {
+        if (item.product.ProductID !== productId) return item;
+        const maxStock = getMaxStockForMode(item.product, mode);
+        const nextQty = Math.min(item.quantity, maxStock);
+        return { ...item, unitMode: mode, quantity: Math.max(1, nextQty) };
+      })
     );
   };
 
@@ -285,6 +301,19 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       toast.error('Giỏ thuốc đang trống');
       return;
     }
+    // Ràng buộc kiểm tra nghiêm ngặt: Tuyệt đối không cho thanh toán nếu có mặt hàng vượt tồn kho hoặc bằng 0
+    for (const item of cart) {
+      if (item.product.Quantity <= 0) {
+        toast.error(`Thuốc "${item.product.ProductName}" đã hết tồn kho (0 ${item.product.Unit}). Vui lòng xóa khỏi giỏ.`);
+        return;
+      }
+      const maxAllowed = getMaxStockForMode(item.product, item.unitMode);
+      if (item.quantity > maxAllowed) {
+        toast.error(`"${item.product.ProductName}" vượt quá số lượng tối đa (${item.quantity} > ${maxAllowed} ${getUnitLabel(item.product, item.unitMode)})`);
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const created = await formsApi.createInvoice({
@@ -297,6 +326,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
         items: cart.map((i) => ({
           ProductID: i.product.ProductID,
           Quantity: i.quantity,
+          UnitMode: i.unitMode || 'BASE',
           DosageNote: `[ĐVT: ${getUnitLabel(i.product, i.unitMode)}] ${i.dosageNote}`,
         })),
       });
@@ -413,59 +443,84 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
           {/* Lưới Thẻ Thuốc */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[540px] overflow-y-auto pr-1">
-            {filteredProducts.map((p) => (
-              <div
-                key={p.ProductID}
-                className="group rounded-xl border border-slate-200/90 p-3 hover:border-teal-600 hover:bg-teal-50/20 transition-all flex items-start gap-3"
-              >
-                <img
-                  src={p.PathImage}
-                  alt={p.ProductName}
-                  className="h-12 w-12 rounded-lg border border-slate-200 object-cover bg-slate-50 shrink-0"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="font-mono text-[10px] font-semibold text-slate-400">
-                      DQG-{String(p.ProductID + 8100).padStart(5, '0')}
-                    </span>
-                    <span
-                      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                        p.Quantity > 20
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-amber-50 text-amber-700'
-                      }`}
-                    >
-                      Tồn: {p.Quantity} {p.Unit}
-                    </span>
-                  </div>
-                  <div className="text-xs font-bold text-slate-900 truncate mt-0.5">
-                    {p.ProductName}
-                  </div>
-                  <div className="text-[11px] text-slate-500 truncate">{p.Description}</div>
-                  <div className="mt-2 flex items-center justify-between gap-1">
-                    <span className="text-xs font-bold text-teal-700 tabular-nums">
-                      {formatVND(p.Price)}/{p.Unit}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => addToCart(p, 'BLISTER')}
-                        className="inline-flex items-center h-7 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 hover:border-teal-600 hover:text-teal-700"
+            {filteredProducts.map((p) => {
+              const isOutOfStock = p.Quantity <= 0;
+              const isBox = (p.Unit || '').toLowerCase() === 'hộp';
+              const blisterCount = isBox ? p.Quantity * 10 : p.Quantity;
+              return (
+                <div
+                  key={p.ProductID}
+                  className={`group rounded-xl border p-3 transition-all flex items-start gap-3 ${
+                    isOutOfStock
+                      ? 'border-rose-200 bg-rose-50/20 opacity-70'
+                      : 'border-slate-200/90 hover:border-teal-600 hover:bg-teal-50/20'
+                  }`}
+                >
+                  <img
+                    src={p.PathImage}
+                    alt={p.ProductName}
+                    className="h-12 w-12 rounded-lg border border-slate-200 object-cover bg-slate-50 shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="font-mono text-[10px] font-semibold text-slate-400">
+                        DQG-{String(p.ProductID + 8100).padStart(5, '0')}
+                      </span>
+                      <span
+                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                          isOutOfStock
+                            ? 'bg-rose-100 text-rose-700 font-bold'
+                            : p.Quantity > 20
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'bg-amber-50 text-amber-700'
+                        }`}
                       >
-                        +Vỉ lẻ
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => addToCart(p, 'BASE')}
-                        className="inline-flex items-center h-7 rounded-lg bg-teal-600 px-2.5 text-xs font-semibold text-white hover:bg-teal-700"
-                      >
-                        +{p.Unit}
-                      </button>
+                        {isOutOfStock
+                          ? 'HẾT HÀNG'
+                          : `Tồn: ${p.Quantity} ${p.Unit} (${blisterCount} Vỉ)`}
+                      </span>
+                    </div>
+                    <div className="text-xs font-bold text-slate-900 truncate mt-0.5">
+                      {p.ProductName}
+                    </div>
+                    <div className="text-[11px] text-slate-500 truncate">{p.Description}</div>
+                    <div className="mt-2 flex items-center justify-between gap-1">
+                      <span className="text-xs font-bold text-teal-700 tabular-nums">
+                        {formatVND(p.Price)}/{p.Unit}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isOutOfStock}
+                          onClick={() => addToCart(p, 'BLISTER')}
+                          className={`inline-flex items-center h-7 rounded-lg border px-2 text-xs font-semibold ${
+                            isOutOfStock
+                              ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-teal-600 hover:text-teal-700'
+                          }`}
+                          title={isOutOfStock ? 'Đã hết tồn kho' : `Còn ${blisterCount} Vỉ khả dụng`}
+                        >
+                          +Vỉ lẻ
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isOutOfStock}
+                          onClick={() => addToCart(p, 'BASE')}
+                          className={`inline-flex items-center h-7 rounded-lg px-2.5 text-xs font-semibold text-white ${
+                            isOutOfStock
+                              ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                              : 'bg-teal-600 hover:bg-teal-700'
+                          }`}
+                          title={isOutOfStock ? 'Đã hết tồn kho' : `Còn ${p.Quantity} ${p.Unit} khả dụng`}
+                        >
+                          +{p.Unit}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -585,6 +640,11 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
             {cart.map((item) => {
               const mode = item.unitMode || 'BASE';
               const unitPrice = getEffectivePrice(item.product, mode);
+              const maxStock = getMaxStockForMode(item.product, mode);
+              const isBox = (item.product.Unit || '').toLowerCase() === 'hộp';
+              const blisterMax = isBox ? item.product.Quantity * 10 : item.product.Quantity;
+              const pillMax = isBox ? item.product.Quantity * 100 : item.product.Quantity * 10;
+
               return (
                 <div key={item.product.ProductID} className="pt-3 first:pt-0 space-y-2">
                   <div className="flex items-start justify-between gap-2">
@@ -592,13 +652,22 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                       <div className="text-xs font-bold text-slate-900 truncate">
                         {item.product.ProductName}
                       </div>
-                      <div className="flex items-center gap-2 mt-0.5">
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                         <span className="text-[11px] font-bold text-teal-700 tabular-nums">
                           {formatVND(unitPrice)} / {getUnitLabel(item.product, mode)}
                         </span>
                         <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600">
                           <CalendarClock className="h-2.5 w-2.5 text-teal-600" />
                           FEFO: LOT-250{item.product.ProductID} · HSD 12/2027
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1">
+                        <span>Khả dụng:</span>
+                        <span className="font-semibold text-teal-700">
+                          {maxStock} {getUnitLabel(item.product, mode)}
+                        </span>
+                        <span className="text-slate-400">
+                          (Gốc: {item.product.Quantity} {item.product.Unit})
                         </span>
                       </div>
                     </div>
@@ -617,7 +686,13 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                       <button
                         type="button"
                         onClick={() => updateCartQty(item.product.ProductID, 1)}
-                        className="h-7 w-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-100"
+                        disabled={item.quantity >= maxStock}
+                        className={`h-7 w-7 rounded-lg border flex items-center justify-center ${
+                          item.quantity >= maxStock
+                            ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-50'
+                            : 'border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                        title={item.quantity >= maxStock ? 'Đã đạt số lượng tồn tối đa' : 'Thêm 1'}
                       >
                         <Plus className="h-3 w-3" />
                       </button>
@@ -636,16 +711,16 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                     <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
                       {(
                         [
-                          { id: 'BASE', label: `Nguyên ${item.product.Unit}` },
-                          { id: 'BLISTER', label: 'Bán Vỉ (1/10)' },
-                          { id: 'PILL', label: 'Viên lẻ' },
+                          { id: 'BASE', label: `${item.product.Unit} (${item.product.Quantity})` },
+                          { id: 'BLISTER', label: `Vỉ (${blisterMax})` },
+                          { id: 'PILL', label: `Viên (${pillMax})` },
                         ] as const
                       ).map((u) => (
                         <button
                           key={u.id}
                           type="button"
                           onClick={() => updateUnitMode(item.product.ProductID, u.id)}
-                          className={`rounded-md px-2.5 py-1 font-semibold transition-colors ${
+                          className={`rounded-md px-2 py-1 font-semibold transition-colors text-[10px] sm:text-xs ${
                             mode === u.id
                               ? 'bg-teal-600 text-white shadow-xs'
                               : 'text-slate-600 hover:text-slate-900'
