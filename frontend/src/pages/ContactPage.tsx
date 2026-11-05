@@ -20,6 +20,7 @@ import {
   EnterprisePagination,
   EnterpriseToolbar,
 } from '../components/common/EnterpriseDataToolbar';
+import { ModalPortal } from '../components/common/ModalPortal';
 
 const CONTACT_COLUMNS: ColumnConfig[] = [
   { id: 'ContactID', label: 'Mã phiếu' },
@@ -500,11 +501,12 @@ export const ContactPage: React.FC = () => {
 
       {/* SLIDE-OVER RIGHT DRAWER: Chi tiết Câu hỏi & Phản hồi Dược sĩ Lâm sàng */}
       {selectedContact && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
-          <form
-            onSubmit={handleReply}
-            className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto"
-          >
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex justify-end bg-slate-950/60 backdrop-blur-xs">
+            <form
+              onSubmit={handleReply}
+              className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-right duration-200"
+            >
             <div>
               <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10 shrink-0">
                 <div>
@@ -605,15 +607,17 @@ export const ContactPage: React.FC = () => {
             </div>
           </form>
         </div>
+        </ModalPortal>
       )}
 
       {/* Modal Tạo Phiếu Tư Vấn Mới (Alt+N) */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
-          <form
-            onSubmit={handleCreateSubmit}
-            className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
-          >
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-2 sm:p-4">
+            <form
+              onSubmit={handleCreateSubmit}
+              className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            >
             <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 Tạo Phiếu Yêu Cầu Tư Vấn Dược Lâm Sàng
@@ -703,6 +707,7 @@ export const ContactPage: React.FC = () => {
             </div>
           </form>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

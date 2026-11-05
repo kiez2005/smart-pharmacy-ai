@@ -20,6 +20,7 @@ import {
   EnterprisePagination,
   EnterpriseToolbar,
 } from '../components/common/EnterpriseDataToolbar';
+import { ModalPortal } from '../components/common/ModalPortal';
 
 interface AuthPageProps {
   currentUser: UserProfile | null;
@@ -517,8 +518,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
       {/* Modal Đăng nhập / Cấp Tài khoản mới */}
       {showAuthModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
-          <div className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-2 sm:p-4">
+            <div className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 bg-slate-50/70 shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 {mode === 'LOGIN'
@@ -637,6 +639,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

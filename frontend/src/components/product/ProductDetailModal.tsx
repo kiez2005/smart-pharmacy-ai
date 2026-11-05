@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Copy, Pencil } from 'lucide-react';
 import { Product } from '../../types/product';
+import { ModalPortal } from '../common/ModalPortal';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -18,8 +19,9 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   if (!product) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-2 sm:p-4">
-      <div className="w-full max-w-lg max-h-[90vh] flex flex-col rounded-xl bg-white shadow-xl border border-zinc-200 overflow-hidden">
+    <ModalPortal>
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-2 sm:p-4">
+        <div className="w-full max-w-lg max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-zinc-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         <div className="flex items-center justify-between border-b border-zinc-200 px-4 sm:px-6 py-3.5 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="rounded-lg bg-zinc-100 px-2 py-0.5 text-xs font-mono font-medium text-zinc-600 tabular-nums shrink-0">
@@ -120,5 +122,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
         </div>
       </div>
     </div>
+    </ModalPortal>
   );
 };

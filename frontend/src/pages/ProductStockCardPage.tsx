@@ -23,6 +23,7 @@ import { enterpriseApi } from '../services/enterprise.api';
 import { productApi } from '../services/product.api';
 import { ProductStockCardResponse } from '../types/enterprise';
 import { toast } from 'sonner';
+import { ModalPortal } from '../components/common/ModalPortal';
 
 interface ProductStockCardPageProps {
   productId: number;
@@ -550,8 +551,9 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
 
       {/* MODAL CHI TIẾT KHI NHẤN VÀO CÁC Ô SỐ LIỆU THẺ KHO */}
       {selectedMetricModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-3 sm:p-4 animate-in fade-in">
-          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-3 sm:p-4">
+            <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 bg-slate-50/70 shrink-0">
               <div className="flex items-center gap-2.5">
@@ -855,6 +857,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

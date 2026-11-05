@@ -18,6 +18,7 @@ import {
   EnterprisePagination,
   EnterpriseToolbar,
 } from '../components/common/EnterpriseDataToolbar';
+import { ModalPortal } from '../components/common/ModalPortal';
 
 const CUSTOMER_COLUMNS: ColumnConfig[] = [
   { id: 'CustomerCode', label: 'Mã bệnh nhân' },
@@ -523,8 +524,9 @@ export const CustomersPage: React.FC = () => {
 
       {/* SLIDE-OVER RIGHT DRAWER: Chi tiết Hồ sơ Bệnh án & Đơn thuốc cũ */}
       {selectedCustomer && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
-          <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex justify-end bg-slate-950/60 backdrop-blur-xs">
+            <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-right duration-200">
             <div>
               <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10 shrink-0">
                 <div className="flex items-center gap-3">
@@ -659,15 +661,17 @@ export const CustomersPage: React.FC = () => {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* Modal Thêm / Sửa Hồ sơ Bệnh nhân */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
-          <form
-            onSubmit={handleSaveCustomer}
-            className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
-          >
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-2 sm:p-4">
+            <form
+              onSubmit={handleSaveCustomer}
+              className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            >
             <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 {editingCustomer ? 'Cập nhật Hồ sơ Bệnh nhân' : 'Mở Hồ sơ Bệnh nhân Mới'}
@@ -758,12 +762,14 @@ export const CustomersPage: React.FC = () => {
             </div>
           </form>
         </div>
+        </ModalPortal>
       )}
 
       {/* MODAL CHI TIẾT KHI CLICK CÁC Ô THÔNG TIN (KPI DRILL-DOWN) */}
       {activeKpiModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh]">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+            <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-slate-50/50">
               <div className="flex items-center gap-2.5">
@@ -987,6 +993,7 @@ export const CustomersPage: React.FC = () => {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

@@ -39,6 +39,7 @@ import { ProductFormModal } from '../components/product/ProductFormModal';
 import { ProductDetailModal } from '../components/product/ProductDetailModal';
 import { ColumnVisibilityMenu } from '../components/product/ColumnVisibilityMenu';
 import { ShortcutLegendBar } from '../components/product/ShortcutLegendBar';
+import { ModalPortal } from '../components/common/ModalPortal';
 
 interface ProductManagementPageProps {
   onOpenStockCard?: (productId: number) => void;
@@ -1084,66 +1085,69 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
 
       {/* Modal Xác nhận & Xem trước Tệp Import */}
       {pendingImportFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-zinc-200 overflow-hidden">
-            <div className="border-b border-zinc-200 px-5 py-3.5">
-              <h3 className="text-sm font-semibold text-zinc-900">
-                Xác nhận Nhập Dữ liệu Danh mục
-              </h3>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                Kiểm tra thông tin tệp trước khi đồng bộ vào cơ sở dữ liệu kho
-              </p>
-            </div>
-            <div className="p-5 space-y-3 text-xs">
-              <div className="rounded-lg bg-zinc-50 p-3 border border-zinc-200/80 space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Tên tệp dữ liệu:</span>
-                  <span className="font-mono font-semibold text-zinc-900">
-                    {pendingImportFile.name}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Định dạng nhận diện:</span>
-                  <span className="uppercase font-semibold text-emerald-700">
-                    {pendingImportFile.name.split('.').pop()}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Dung lượng tệp:</span>
-                  <span className="tabular-nums text-zinc-800">
-                    {(pendingImportFile.size / 1024).toFixed(2)} KB
-                  </span>
-                </div>
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+            <div className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-zinc-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              <div className="border-b border-zinc-200 px-5 py-3.5">
+                <h3 className="text-sm font-semibold text-zinc-900">
+                  Xác nhận Nhập Dữ liệu Danh mục
+                </h3>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Kiểm tra thông tin tệp trước khi đồng bộ vào cơ sở dữ liệu kho
+                </p>
               </div>
-              <p className="text-zinc-500 leading-relaxed">
-                Hệ thống sẽ kiểm tra cấu trúc 10 trường dữ liệu chuẩn (`ProductName`, `ProductType`, `Quantity`, `Unit`, `Price`, `Description`...) và tự động đồng bộ vào chỉ mục tìm kiếm.
-              </p>
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3 bg-zinc-50/50">
-              <button
-                type="button"
-                onClick={() => setPendingImportFile(null)}
-                className="h-9 rounded-lg border border-zinc-200 bg-white px-4 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50"
-              >
-                Hủy bỏ
-              </button>
-              <button
-                type="button"
-                disabled={importingFile}
-                onClick={() => void handleConfirmImport()}
-                className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50"
-              >
-                {importingFile ? 'Đang nhập dữ liệu...' : 'Xác nhận Nhập vào Kho'}
-              </button>
+              <div className="p-5 space-y-3 text-xs">
+                <div className="rounded-lg bg-zinc-50 p-3 border border-zinc-200/80 space-y-1.5">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Tên tệp dữ liệu:</span>
+                    <span className="font-mono font-semibold text-zinc-900">
+                      {pendingImportFile.name}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Định dạng nhận diện:</span>
+                    <span className="uppercase font-semibold text-emerald-700">
+                      {pendingImportFile.name.split('.').pop()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Dung lượng tệp:</span>
+                    <span className="tabular-nums text-zinc-800">
+                      {(pendingImportFile.size / 1024).toFixed(2)} KB
+                    </span>
+                  </div>
+                </div>
+                <p className="text-zinc-500 leading-relaxed">
+                  Hệ thống sẽ kiểm tra cấu trúc 10 trường dữ liệu chuẩn (`ProductName`, `ProductType`, `Quantity`, `Unit`, `Price`, `Description`...) và tự động đồng bộ vào chỉ mục tìm kiếm.
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3 bg-zinc-50/50">
+                <button
+                  type="button"
+                  onClick={() => setPendingImportFile(null)}
+                  className="h-9 rounded-lg border border-zinc-200 bg-white px-4 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="button"
+                  disabled={importingFile}
+                  onClick={() => void handleConfirmImport()}
+                  className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50"
+                >
+                  {importingFile ? 'Đang nhập dữ liệu...' : 'Xác nhận Nhập vào Kho'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* MODAL CHI TIẾT KHI BẤM VÀO 4 Ô KPI KHO */}
       {activeMetricModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-3 sm:p-4 animate-in fade-in">
-          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-zinc-200 overflow-hidden">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-3 sm:p-4">
+            <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-zinc-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4 bg-zinc-50/70 shrink-0">
               <div className="flex items-center gap-2.5">
@@ -1367,6 +1371,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* Floating Bulk Action Bar khi chọn Checkbox */}

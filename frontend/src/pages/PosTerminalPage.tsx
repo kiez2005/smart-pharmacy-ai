@@ -23,6 +23,7 @@ import { enterpriseApi } from '../services/enterprise.api';
 import { Product } from '../types/product';
 import { CustomerRecord, DrugInteractionResult } from '../types/enterprise';
 import { InvoiceRecord } from '../types/forms';
+import { ModalPortal } from '../components/common/ModalPortal';
 
 export type RetailUnitMode = 'BASE' | 'BLISTER' | 'PILL';
 
@@ -854,8 +855,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
       {/* Modal Hóa đơn & Mã VietQR vừa tạo */}
       {completedInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-3 sm:p-4">
-          <div className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-3 sm:p-4">
+            <div className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="border-b border-slate-200 px-5 py-3.5 flex items-center justify-between bg-emerald-50/70 shrink-0">
               <div className="flex items-center gap-2 text-emerald-900">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
@@ -918,6 +920,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

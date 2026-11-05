@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Upload, Image as ImageIcon } from 'lucide-react';
 import { Product, ProductFormValues } from '../../types/product';
+import { ModalPortal } from '../common/ModalPortal';
 
 interface ProductFormModalProps {
   isOpen: boolean;
@@ -101,8 +102,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-2 sm:p-4">
-      <div className="w-full max-w-xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-xl border border-zinc-200 overflow-hidden">
+    <ModalPortal>
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-2 sm:p-4">
+        <div className="w-full max-w-xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-zinc-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-200 px-4 sm:px-6 py-3.5 shrink-0">
           <div>
@@ -289,5 +291,6 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         </form>
       </div>
     </div>
+    </ModalPortal>
   );
 };

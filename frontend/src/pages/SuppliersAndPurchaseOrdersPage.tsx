@@ -25,6 +25,7 @@ import {
   EnterprisePagination,
   EnterpriseToolbar,
 } from '../components/common/EnterpriseDataToolbar';
+import { ModalPortal } from '../components/common/ModalPortal';
 
 const SUPPLIER_COLUMNS: ColumnConfig[] = [
   { id: 'SupplierCode', label: 'Mã NCC' },
@@ -729,11 +730,12 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
 
       {/* Modal Lập Phiếu Nhập Kho Mới */}
       {showCreatePoModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
-          <form
-            onSubmit={handleCreatePurchaseOrder}
-            className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
-          >
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-2 sm:p-4">
+            <form
+              onSubmit={handleCreatePurchaseOrder}
+              className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            >
             <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 bg-slate-50/70 shrink-0">
               <div className="flex items-center gap-2">
                 <FilePlus2 className="h-4 w-4 text-teal-600" />
@@ -939,15 +941,17 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
             </div>
           </form>
         </div>
+        </ModalPortal>
       )}
 
       {/* Modal Thêm / Sửa Nhà phân phối */}
       {showSupplierModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-2 sm:p-4">
-          <form
-            onSubmit={handleSaveSupplier}
-            className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-xl border border-slate-200 overflow-hidden"
-          >
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-2 sm:p-4">
+            <form
+              onSubmit={handleSaveSupplier}
+              className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            >
             <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 {editingSupplier
@@ -1041,12 +1045,14 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
             </div>
           </form>
         </div>
+        </ModalPortal>
       )}
 
       {/* SLIDE-OVER RIGHT DRAWER: Xem Chi tiết Nhà phân phối & Lịch sử Nhập hàng */}
       {viewingSupplier && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
-          <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex justify-end bg-slate-950/60 backdrop-blur-xs">
+            <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-right duration-200">
             <div>
               <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10">
                 <div>
@@ -1155,12 +1161,14 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* SLIDE-OVER RIGHT DRAWER: Biên bản Kiểm nhập Thuốc Chuẩn GPP (Printable PO) */}
       {viewingPo && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
-          <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex justify-end bg-slate-950/60 backdrop-blur-xs">
+            <div className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-right duration-200">
             <div>
               <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10">
                 <div>
@@ -1269,12 +1277,14 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* MODAL CHI TIẾT KHI CLICK CÁC Ô THÔNG TIN (KPI DRILL-DOWN) */}
       {activeKpiModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh]">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+            <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-slate-50/50">
               <div className="flex items-center gap-2.5">
@@ -1436,6 +1446,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

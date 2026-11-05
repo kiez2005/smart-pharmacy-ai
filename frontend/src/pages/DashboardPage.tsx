@@ -25,6 +25,7 @@ import { DashboardAnalytics } from '../types/enterprise';
 import { InvoiceRecord } from '../types/forms';
 import { Product } from '../types/product';
 import { toast } from 'sonner';
+import { ModalPortal } from '../components/common/ModalPortal';
 
 interface DashboardPageProps {
   onOpenStockCard: (productId: number) => void;
@@ -622,8 +623,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
       {/* MODAL CHI TIẾT KHI BẤM VÀO 4 Ô KPI ĐIỀU HÀNH */}
       {selectedKpiModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-3 sm:p-4 animate-in fade-in">
-          <div className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-3 sm:p-4">
+            <div className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 bg-slate-50/70 shrink-0">
               <div className="flex items-center gap-2.5">
@@ -961,6 +963,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

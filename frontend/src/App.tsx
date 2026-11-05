@@ -33,6 +33,7 @@ import { PrescriptionOcrPage } from './pages/PrescriptionOcrPage';
 import { ClinicalAiAndInteractionPage } from './pages/ClinicalAiAndInteractionPage';
 import { ContactPage } from './pages/ContactPage';
 import { AuthPage } from './pages/AuthPage';
+import { ModalPortal } from './components/common/ModalPortal';
 import { UserProfile } from './types/forms';
 
 export type ActiveTab =
@@ -255,8 +256,9 @@ export const App: React.FC = () => {
 
       {/* MOBILE NAVIGATION DRAWER (Slide-over từ bên trái trên thiết bị di động & máy tính bảng) */}
       {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-50 flex md:hidden bg-slate-950/50 backdrop-blur-[2px]">
-          <div className="w-72 max-w-[85vw] bg-white h-full shadow-2xl flex flex-col justify-between border-r border-slate-200 animate-in slide-in-from-left duration-200">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex md:hidden bg-slate-950/60 backdrop-blur-xs">
+            <div className="w-72 max-w-[85vw] bg-white h-full shadow-2xl flex flex-col justify-between border-r border-slate-200 animate-in slide-in-from-left duration-200">
             <div>
               {/* Mobile Drawer Header */}
               <div className="h-14 flex items-center justify-between border-b border-slate-200 px-4 bg-slate-50/50">
@@ -366,6 +368,7 @@ export const App: React.FC = () => {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* MAIN CONTENT SHELL */}
@@ -499,31 +502,33 @@ export const App: React.FC = () => {
 
       {/* Modal Tra cứu Phím tắt Bàn phím */}
       {showShortcutsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-[2px] p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200 overflow-hidden">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5 bg-slate-50/60">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Tổ hợp phím tắt điều khiển nhanh
-              </h3>
-              <button
-                onClick={() => setShowShortcutsModal(false)}
-                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="p-4 divide-y divide-slate-100 max-h-96 overflow-y-auto">
-              {SHORTCUT_ITEMS.map((sc) => (
-                <div key={sc.key} className="flex items-center justify-between py-2 text-[13px]">
-                  <span className="text-slate-600">{sc.desc}</span>
-                  <kbd className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-xs font-semibold text-teal-700">
-                    {sc.key}
-                  </kbd>
-                </div>
-              ))}
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+            <div className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5 bg-slate-50/60">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Tổ hợp phím tắt điều khiển nhanh
+                </h3>
+                <button
+                  onClick={() => setShowShortcutsModal(false)}
+                  className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="p-4 divide-y divide-slate-100 max-h-96 overflow-y-auto">
+                {SHORTCUT_ITEMS.map((sc) => (
+                  <div key={sc.key} className="flex items-center justify-between py-2 text-[13px]">
+                    <span className="text-slate-600">{sc.desc}</span>
+                    <kbd className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-xs font-semibold text-teal-700">
+                      {sc.key}
+                    </kbd>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   );

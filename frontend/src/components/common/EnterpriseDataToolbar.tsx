@@ -16,6 +16,7 @@ import {
 import { toast } from 'sonner';
 import { enterpriseApi } from '../../services/enterprise.api';
 import { ShortcutLegendBar } from '../product/ShortcutLegendBar';
+import { ModalPortal } from './ModalPortal';
 
 export interface ColumnConfig {
   id: string;
@@ -343,8 +344,9 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
 
       {/* Modal Xem trước & Xác nhận Tệp Import */}
       {pendingImportFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/40 backdrop-blur-[2px] p-4">
-          <div className="w-full max-w-md rounded-lg bg-white shadow-xl border border-zinc-200 overflow-hidden">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+            <div className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-zinc-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="border-b border-zinc-200 px-5 py-3.5">
               <h3 className="text-sm font-semibold text-zinc-900">
                 Xác nhận Nhập Dữ liệu từ Tệp
@@ -394,6 +396,7 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {/* Thanh điều khiển nổi khi chọn Checkbox */}
