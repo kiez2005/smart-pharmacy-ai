@@ -562,6 +562,54 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-3 text-xs">
+                {mode === 'LOGIN' && (
+                  <div className="rounded-lg bg-teal-50/80 border border-teal-200/80 p-2.5 space-y-1.5">
+                    <div className="text-[11px] font-bold text-teal-900 flex items-center justify-between">
+                      <span>⚡ Chọn nhanh tài khoản demo (Mật khẩu: 123456):</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEmail('trung.d18cnpm5@epu.edu.vn');
+                          setPassword('123456');
+                        }}
+                        className="text-left px-2.5 py-1.5 rounded-lg bg-white border border-teal-200 text-[11px] hover:bg-teal-100/70 flex items-center justify-between transition-colors shadow-2xs"
+                      >
+                        <span className="font-semibold text-slate-800">1. DS. Nguyễn Văn Trung</span>
+                        <span className="rounded bg-rose-50 text-rose-700 px-1.5 py-0.5 font-bold text-[10px] border border-rose-200">
+                          ADMIN
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEmail('duc.d18cnpm5@epu.edu.vn');
+                          setPassword('123456');
+                        }}
+                        className="text-left px-2.5 py-1.5 rounded-lg bg-white border border-teal-200 text-[11px] hover:bg-teal-100/70 flex items-center justify-between transition-colors shadow-2xs"
+                      >
+                        <span className="font-semibold text-slate-800">2. DS. Đặng Minh Đức</span>
+                        <span className="rounded bg-teal-50 text-teal-700 px-1.5 py-0.5 font-bold text-[10px] border border-teal-200">
+                          PHARMACIST
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEmail('baongoc.pharmacore@epu.edu.vn');
+                          setPassword('123456');
+                        }}
+                        className="text-left px-2.5 py-1.5 rounded-lg bg-white border border-teal-200 text-[11px] hover:bg-teal-100/70 flex items-center justify-between transition-colors shadow-2xs"
+                      >
+                        <span className="font-semibold text-slate-800">3. DS. Lê Hoàng Bảo Ngọc</span>
+                        <span className="rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 font-bold text-[10px] border border-slate-200">
+                          CASHIER
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {mode === 'REGISTER' && (
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
