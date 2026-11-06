@@ -1,331 +1,293 @@
 # KẾ HOẠCH TRIỂN KHAI XỬ LÝ TOÀN DIỆN CÁC VẤN ĐỀ CODE REVIEW
 > **Dự án**: PharmaCore Enterprise ERP — Hệ Thống Quản Trị Nhà Thuốc, POS & AI Lâm Sàng  
-> **Tài liệu tham chiếu**: [CODE_REVIEW_RECOMMENDATIONS.md](./CODE_REVIEW_RECOMMENDATIONS.md)  
-> **Phiên bản**: 2.0 (Đã chốt toàn bộ quy tắc nghiệp vụ & tiêu chuẩn kiểm chứng)  
+> **Tài liệu tham chiếu**: [CODE_REVIEW_RECOMMENDATIONS.md](./CODE_REVIEW_RECOMMENDATIONS.md) & [CODE_REVIEW_FIX_PLAN_CONTRADICTIONS.md](./CODE_REVIEW_FIX_PLAN_CONTRADICTIONS.md)  
+> **Phiên bản**: 3.0 (Đã tháo gỡ triệt để toàn bộ 8 điểm mâu thuẫn kiến trúc & chốt thiết kế chi tiết)  
 > **Ngày cập nhật**: 06/11/2026  
-> **Trạng thái**: ĐÃ CHỐT THIẾT KẾ (FINALIZED) — SẴN SÀNG TRIỂN KHAI  
+> **Trạng thái**: THIẾT KẾ HOÀN CHỈNH (PRODUCTION-READY ARCHITECTURE)  
 
 ---
 
-## I. CÁC QUYẾT ĐỊNH NGHIỆP VỤ & KIẾN TRÚC ĐÃ CHỐT
+## I. GIẢI QUYẾT TRIỆT ĐỂ 8 ĐIỂM MÂU THUẪN ĐÃ NOTE TRONG FIX PLAN
 
-Căn cứ phản hồi và đánh giá rủi ro thực tế, hệ thống chốt dứt điểm các nguyên tắc kiến trúc sau:
-
-### 1. Phân quyền & Quản lý tài khoản (RBAC & Security)
-- **Quy tắc đăng ký tài khoản mới**: Mọi tài khoản đăng ký qua form công khai đều được gán `Role = "CASHIER"` và trạng thái **`Status = "INACTIVE"` (Chờ Admin phê duyệt)**.
-- **Quy tắc đăng nhập**: API `/api/auth/login` **bắt buộc từ chối** tài khoản có `Status !== "ACTIVE"` với thông báo: *"Tài khoản của bạn đang chờ Quản trị viên kích hoạt hoặc đã bị khóa"*.
-- **Cấu hình `JWT_SECRET` (Fail-Fast)**: Ứng dụng **dừng khởi động ngay lập tức (`process.exit(1)`)** nếu biến môi trường `JWT_SECRET` bị thiếu hoặc để rỗng, tuyệt đối không dùng chuỗi hardcode ngầm trong mã nguồn.
-- **Cơ chế gửi Token ở Frontend**: Toàn bộ request từ client sử dụng một Axios Request Interceptor duy nhất để tự động đính kèm `Authorization: Bearer <token>` từ `localStorage`. Nếu nhận mã phản hồi `401 Unauthorized`, hệ thống tự động xóa token và chuyển hướng về modal đăng nhập.
-
-### 2. Quy đổi tồn kho, Giá bán theo đơn vị & Xử lý hóa đơn cũ (Stock & Legacy Invoices)
-- **Quy cách đóng gói sản phẩm**: Bổ sung dữ liệu cấu trúc quy cách (`PackagingSpec`) cho từng sản phẩm: Đơn vị cơ sở (`BaseUnit`: Hộp/Chai/Lọ), Quy cách đóng gói con (`blisterPerBox`, `pillsPerBlister`, `pillsPerBox`), và danh sách đơn vị được phép bán lẻ kèm hệ số quy đổi chuẩn xác.
-- **Lưu trữ trên dòng hóa đơn**: Mỗi bản ghi `InvoiceItem` bắt buộc lưu:
-  - `Unit`: Đơn vị thực tế mà khách hàng chọn mua (`Hộp`, `Vỉ`, `Viên`, `Chai`, `Gói`...).
-  - `Quantity`: Số lượng mua theo đơn vị đó.
-  - `UnitPrice`: Đơn giá chuẩn hóa tương ứng của đơn vị đó.
-  - `BaseQuantityDeducted`: Số lượng tồn kho gốc (tính theo `Product.Unit`) đã bị trừ khỏi kho.
-- **Xử lý hóa đơn cũ (Legacy Invoices Strategy)**:
-  - Viết script migration cập nhật dữ liệu lịch sử: Với các dòng `InvoiceItem` cũ chưa có `BaseQuantityDeducted` và `Unit`:
-    - Nếu đơn giá xấp xỉ giá gốc sản phẩm -> Gán `Unit = product.Unit`, `BaseQuantityDeducted = Quantity`.
-    - Nếu đơn giá nhỏ hơn và tương đương giá vỉ/viên -> Nội suy quy cách của sản phẩm tại thời điểm đó để điền chính xác `BaseQuantityDeducted`.
-  - Khi hoàn trả (`cancelInvoice`): Luôn ưu tiên dùng `BaseQuantityDeducted`. Nếu là hóa đơn cũ chưa thể nội suy an toàn, hệ thống ghi log cảnh báo và chỉ hoàn trả theo đúng số lượng đơn vị cơ sở đã được xác minh.
-
-### 3. Tiêu chí nghiệm thu luồng OCR đơn thuốc
-- **Tiêu chí 1 (Ảnh thật)**: Quét ảnh chụp thật từ máy tính/camera **tuyệt đối không được trả về kết quả đơn mẫu demo**.
-- **Tiêu chí 2 (Xử lý lỗi)**: Ảnh không đọc được (ảnh trắng, ảnh mờ, ảnh chụp phong cảnh, độ tin cậy thấp) **bắt buộc phải trả về lỗi từ chối và yêu cầu người dùng chụp lại**, không được tự ý gán thuốc ngầm.
-- **Tiêu chí 3 (Dược sĩ kiểm duyệt)**: Kết quả bóc tách OCR bắt buộc phải dừng ở bước trung gian cho phép Dược sĩ kiểm tra lại tên thuốc, sửa số lượng, đổi đơn vị và sửa liều dùng. Chỉ khi Dược sĩ bấm **"Xác nhận & Chuyển sang POS"** thì dữ liệu mới được nạp vào giỏ hàng POS.
-
-### 4. Ràng buộc Chiết khấu & Điểm tích lũy thành viên
-- **Bản chất của Chiết khấu**:
-  - `Discount`: Số tiền giảm giá trực tiếp tính bằng **VNĐ**.
-  - `UsedPoints`: Số điểm thành viên tích lũy mà khách hàng muốn quy đổi (Tỷ lệ quy đổi chuẩn: **1 Điểm = 1.000 VNĐ**).
-- **Ràng buộc kiểm tra ở Backend**:
-  - Nếu hóa đơn có dùng điểm (`UsedPoints > 0`): API bắt buộc kiểm tra `customer.LoyaltyPoints >= UsedPoints`. Nếu khách không đủ điểm -> Từ chối lập đơn (lỗi 400).
-  - Tổng số tiền giảm giá từ điểm và chiết khấu trực tiếp: `TotalDiscount = Discount + (UsedPoints * 1000)`.
-  - Ràng buộc: `0 <= TotalDiscount <= Subtotal` (Tổng tiền hàng tính theo giá database). Nếu `TotalDiscount > Subtotal` -> Từ chối lập đơn.
-- **Bảo toàn giao dịch (ACID Transaction)**:
-  - Khi tạo đơn thành công: Trừ `UsedPoints` khỏi tài khoản khách hàng, đồng thời tích lũy điểm mới từ số tiền thực thanh toán (`finalTotal / 10000`).
-  - Khi hủy/hoàn trả hóa đơn: Hoàn trả lại đầy đủ số `UsedPoints` cho khách và thu hồi số điểm thưởng đã cộng thêm.
+Căn cứ tài liệu đối chiếu [`CODE_REVIEW_FIX_PLAN_CONTRADICTIONS.md`](./CODE_REVIEW_FIX_PLAN_CONTRADICTIONS.md), hệ thống thống nhất và chốt dứt điểm giải pháp kỹ thuật cho từng điểm như sau:
 
 ---
 
-## II. DANH SÁCH PHÂN CHIA ROUTE & CƠ CHẾ GỬI TOKEN
+### 1. Nguồn dữ liệu quy cách đóng gói (`PackagingSpec`)
+- **Vấn đề đã note**: Không thể dùng từ điển hardcode 35 thuốc vì sẽ không hỗ trợ khi thêm/sửa thuốc mới; cần giữ nguyên 10 trường bắt buộc của bảng `Product` theo barem chấm điểm.
+- **Giải pháp chuẩn hóa**:
+  - Tạo model quan hệ 1-1 riêng trong Prisma Schema: `ProductPackaging`:
+    ```prisma
+    model ProductPackaging {
+      PackagingID         Int      @id @default(autoincrement())
+      ProductID           Int      @unique
+      PackageUnit         String   // Đơn vị bao gói lớn nhất (VD: "Hộp", "Lọ", "Chai", "Tuýp")
+      BlisterUnit         String?  // Đơn vị trung gian (VD: "Vỉ" nếu có)
+      BlistersPerPackage  Int?     // Số vỉ trong 1 hộp (VD: 25)
+      SmallestUnit        String   // Đơn vị nhỏ nhất có thể bán (VD: "Viên", "Gói", "Ống", "Chai")
+      UnitsPerPackage     Int      @default(1) // Tổng số đơn vị nhỏ nhất trong 1 hộp (VD: 100 viên, 30 gói)
+      UnitsPerBlister     Int?     // Số viên trong 1 vỉ (VD: 4 viên/vỉ)
+      LooseUnits          Int      @default(0) // Số đơn vị nhỏ nhất lẻ dở dang đang mở trong kho
+      AllowFractionalSale Boolean  @default(true) // Có cho phép bán lẻ vỉ/viên hay không
 
-### 1. Bảng phân quyền chi tiết các Endpoint API Backend
-
-| Nhóm API | Phương thức & URL | Mức độ bảo vệ | Quyền hạn cho phép (Roles) | Mô tả nghiệp vụ |
-| :--- | :--- | :---: | :---: | :--- |
-| **Hệ thống & Health** | `GET /api/health` | **Public** | Mọi người | Kiểm tra trạng thái máy chủ & DB |
-| **Xác thực (Auth)** | `POST /api/auth/register` | **Public** | Mọi người | Đăng ký tài khoản (tạo `INACTIVE`) |
-| | `POST /api/auth/login` | **Public** | Mọi người | Đăng nhập (từ chối `INACTIVE`) |
-| | `GET /api/auth/me` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Lấy thông tin cá nhân hiện tại |
-| | `GET/PUT /api/auth/users/*` | **Cần JWT** | `ADMIN` | Quản lý nhân sự, kích hoạt tài khoản |
-| **Danh mục thuốc** | `GET /api/products` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem danh mục, tìm kiếm, phân trang |
-| | `GET /api/products/:id` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem chi tiết thông tin thuốc & thẻ kho |
-| | `POST/PUT /api/products/*` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Thêm mới, cập nhật thông tin thuốc |
-| | `DELETE /api/products/*` | **Cần JWT** | `ADMIN` | Xóa đơn lẻ hoặc xóa hàng loạt thuốc |
-| | `POST /api/products/import` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Nhập file thuốc Excel, JSON, XML |
-| | `GET /api/products/export` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Xuất danh mục thuốc ra file |
-| **Bán lẻ POS & Hóa đơn**| `POST /api/invoices` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xuất bán lẻ, trừ kho theo quy cách |
-| | `GET /api/invoices` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem danh sách & lịch sử hóa đơn |
-| | `POST /api/invoices/:id/cancel`| **Cần JWT** | `ADMIN`, `PHARMACIST` | Hoàn trả hóa đơn, cộng lại kho gốc |
-| **Nhập kho & NCC** | `GET /api/enterprise/*` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Tra cứu NCC, chứng từ phiếu nhập |
-| | `POST /api/enterprise/*` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Lập phiếu nhập kho, thêm mới NCC |
-| **Khách hàng CRM** | `GET /api/enterprise/customers`| **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Tra cứu bệnh nhân, tiền sử dị ứng |
-| | `POST /api/enterprise/customers`| **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Đăng ký hồ sơ bệnh nhân mới |
-| **AI Lâm sàng & OCR** | `POST /api/ai/ocr-prescription`| **Cần JWT** | `ADMIN`, `PHARMACIST` | Nhận diện đơn thuốc OCR |
-| | `POST /api/ai/diagnose-chat` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Trợ lý tư vấn phác đồ lâm sàng |
-| **Liên hệ & CSKH** | `POST /api/contacts` | **Public** | Mọi người | Khách hàng gửi liên hệ/tư vấn |
-| | `GET/PUT /api/contacts/*` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Dược sĩ duyệt & phản hồi thư tư vấn |
-
-### 2. Cơ chế Frontend gửi Token & Quản lý phiên làm việc
-- Toàn bộ dịch vụ Frontend sử dụng một file client duy nhất [`apiClient.ts`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/frontend/src/services/apiClient.ts):
-  ```ts
-  apiClient.interceptors.request.use((config) => {
-    const token = localStorage.getItem('pharmacore_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      product             Product  @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
     }
-    return config;
-  });
+    ```
+  - **Lợi ích**:
+    - Bảng `Product` giữ nguyên 100% đúng 10 trường chuẩn theo yêu cầu của bài tập lớn.
+    - Dữ liệu quy cách được lưu quan hệ trong cơ sở dữ liệu SQLite, không phụ thuộc từ điển tĩnh.
+    - Cập nhật Form Thêm/Sửa sản phẩm ở frontend: bổ sung các trường cấu hình quy cách đóng gói.
+    - Tích hợp vào Export/Import Excel/JSON/XML và script `seed.ts` cho toàn bộ 35 sản phẩm ban đầu.
 
-  apiClient.interceptors.response.use(
-    (response) => response,
-    (error) => {
-      if (error.response?.status === 401) {
-        localStorage.removeItem('pharmacore_token');
-        localStorage.removeItem('pharmacore_user');
-        window.dispatchEvent(new Event('pharmacore_unauthorized'));
-      }
-      return Promise.reject(error);
+---
+
+### 2. Quản lý tồn kho lẻ khi bán và hoàn trả (Xử lý hộp dở dang)
+- **Vấn đề đã note**: Bán 11 viên mà trừ 1 hộp thì 89 viên còn lại đi đâu? Lần bán sau nếu tiếp tục trừ 1 hộp nữa sẽ làm mất thuốc và âm kho.
+- **Giải pháp chuẩn hóa (Mô hình Quản lý Hộp dở dang - Open Package Inventory)**:
+  - Sử dụng trường `ProductPackaging.LooseUnits` (Số viên/gói lẻ dở dang sau khi mở hộp):
+  - **Luồng Bán lẻ 11 Viên Decolgen (Hộp 100 Viên, kho đang có 10 Hộp, `LooseUnits = 0`)**:
+    1. Khách mua 11 Viên. Kiểm tra `LooseUnits = 0 < 11`.
+    2. Hệ thống mở 1 hộp nguyên: `Product.Quantity` giảm 1 (từ 10 xuống 9 Hộp).
+    3. Hộp mở ra được 100 Viên, trừ 11 Viên bán cho khách -> `LooseUnits` còn lại **89 Viên**.
+    4. Bản ghi `InvoiceItem` lưu:
+       - `Quantity = 11`
+       - `Unit = "Viên"`
+       - `UnitPrice = 1.200 đ/viên`
+       - `BaseQuantityDeducted = 1` (Đã mở 1 hộp)
+       - `LooseUnitsDeducted = 11` (Số viên lẻ thực tế lấy ra)
+  - **Lần mua tiếp theo: Khách mua 9 Viên**:
+    1. Kiểm tra `LooseUnits = 89 >= 9` -> Đủ thuốc trong hộp đang mở dở!
+    2. Lấy trực tiếp từ thuốc lẻ: `LooseUnits` giảm từ 89 xuống 80 Viên.
+    3. Tồn kho `Product.Quantity` **vẫn giữ nguyên 9 Hộp** (không mở thêm hộp mới).
+    4. `BaseQuantityDeducted = 0`, `LooseUnitsDeducted = 9`.
+  - **Luồng Hoàn trả hóa đơn 11 Viên**:
+    1. Cộng trả lại 11 viên vào thuốc lẻ: `LooseUnits = 80 + 11 = 91 Viên`.
+    2. Nếu `LooseUnits` cộng dồn đủ $\ge 100$ Viên (tròn 1 hộp) -> Tự động đóng gói lại thành 1 hộp nguyên: `Product.Quantity` tăng 1, `LooseUnits -= 100`.
+    3. Kho hàng chính xác tuyệt đối đến từng viên thuốc, không bao giờ bị lệch hay làm tròn ảo!
+
+---
+
+### 3. Kế hoạch di trú hóa đơn cũ (Legacy Invoices Migration)
+- **Vấn đề đã note**: Hóa đơn cũ không lưu giá/quy cách lúc lập; `BaseQuantityDeducted` không thể để mặc định `1` vì sẽ bị suy đoán sai.
+- **Giải pháp chuẩn hóa**:
+  - Trong `schema.prisma`, định nghĩa trường mới là **`nullable`**:
+    ```prisma
+    Unit                 String?  // Nullable
+    BaseQuantityDeducted Int?     // Nullable (Không gán default 1)
+    LooseUnitsDeducted   Int?     // Nullable
+    ```
+  - **Script Di trú (`scripts/migrate-legacy-invoices.ts`)**:
+    - Quét các `InvoiceItem` có `BaseQuantityDeducted === null`:
+      - **Trường hợp 1 (Xác minh được 100%)**: Nếu `UnitPrice` xấp xỉ `product.Price` (sai số $\le 1\%$) -> Chắc chắn bán nguyên đơn vị gốc (`Hộp`/`Chai`) -> Điền `Unit = product.Unit`, `BaseQuantityDeducted = Quantity`, `LooseUnitsDeducted = 0`.
+      - **Trường hợp 2 (Không thể tự suy đoán)**: Nếu `UnitPrice` khác xa giá sản phẩm gốc -> Giữ nguyên `BaseQuantityDeducted = null` và đánh dấu `LegacyUnverified = true`.
+  - **Luồng Hoàn trả hóa đơn cũ chưa xác minh**:
+    - Nếu Dược sĩ bấm Hủy một hóa đơn cũ mà `BaseQuantityDeducted === null`:
+    - API và Giao diện hiển thị hộp thoại xác nhận:
+      > *"Hóa đơn này được lập trước khi hệ thống chuẩn hóa quy cách. Vui lòng Dược sĩ xác nhận số lượng hộp thực tế cần hoàn nhập kho: [ ... ] Hộp"*.
+    - Dược sĩ xác nhận số lượng thực tế -> Hệ thống cộng kho đúng con số đó, tuyệt đối không tự động đoán bừa.
+
+---
+
+### 4. Lưu vết và Hoàn điểm tích lũy thành viên khi hủy đơn
+- **Vấn đề đã note**: Cần lưu vết số điểm đã dùng và đã cộng trên hóa đơn; luồng hủy phải hoàn điểm an toàn và chỉ hoàn một lần.
+- **Giải pháp chuẩn hóa**:
+  - Mở rộng model `Invoice` trong `schema.prisma`:
+    ```prisma
+    model Invoice {
+      // ... các trường hiện có ...
+      UsedPoints      Int      @default(0) // Số điểm tích lũy đã dùng để trừ tiền
+      PointsDiscount  Float    @default(0) // Số tiền giảm tương ứng (UsedPoints * 1000)
+      PointsEarned    Int      @default(0) // Số điểm được tích lũy mới từ đơn hàng này
     }
-  );
-  ```
+    ```
+  - **Luồng Tạo Hóa Đơn (`createInvoice`)**:
+    - Kiểm tra `customer.LoyaltyPoints >= UsedPoints`.
+    - Trừ điểm dùng: `customer.LoyaltyPoints -= UsedPoints`.
+    - Cộng điểm tích lũy mới: `PointsEarned = Math.floor(finalTotal / 10000)`.
+    - Cập nhật số dư điểm khách: `customer.LoyaltyPoints += PointsEarned`.
+    - Lưu cả 3 trường `UsedPoints`, `PointsDiscount`, `PointsEarned` vào bản ghi `Invoice`.
+  - **Luồng Hủy / Hoàn Hóa Đơn (`cancelInvoice`)**:
+    - Kiểm tra trạng thái: `if (invoice.Status === 'REFUNDED') throw new Error('Hóa đơn này đã được hoàn trả trước đó');` -> **Đảm bảo chỉ hoàn 1 lần duy nhất (Idempotent)**.
+    - Hoàn trả lại số điểm đã dùng cho khách: `customer.LoyaltyPoints += invoice.UsedPoints`.
+    - Thu hồi số điểm đã thưởng: `customer.LoyaltyPoints = Math.max(0, customer.LoyaltyPoints - invoice.PointsEarned)`.
+    - Toàn bộ được thực thi trong một `prisma.$transaction` duy nhất.
 
 ---
 
-## III. KẾ HOẠCH TRIỂN KHAI KỸ THUẬT CHI TIẾT
+### 5. Ma trận phân quyền chi tiết (RBAC) khớp 100% Route thực tế
+- **Vấn đề đã note**: Route nhân sự thực tế là `/api/enterprise/staff`, Contact có `PATCH /:id/reply`, các route chưa được liệt kê allowlist chi tiết.
+- **Bảng Ma Trận Phân Quyền Thực Tế Toàn Diện**:
+
+| Route thực tế | Method | Phân loại | Role cho phép | Nghiệp vụ cụ thể |
+| :--- | :---: | :---: | :---: | :--- |
+| `/api/health` | `GET` | **Public** | Mọi người | Kiểm tra trạng thái server |
+| `/api/auth/register` | `POST` | **Public** | Mọi người | Đăng ký tài khoản (tạo `INACTIVE`) |
+| `/api/auth/login` | `POST` | **Public** | Mọi người | Đăng nhập (từ chối `INACTIVE`) |
+| `/api/auth/me` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Lấy thông tin phiên đăng nhập |
+| `/api/contacts` | `POST` | **Public** | Mọi người | Khách gửi form tư vấn |
+| `/api/contacts` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Dược sĩ xem danh sách thư tư vấn |
+| `/api/contacts/:id/reply` | `PATCH` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Dược sĩ gửi phản hồi tư vấn |
+| `/api/products` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem danh mục, phân trang, tìm kiếm |
+| `/api/products/:id` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem chi tiết thuốc & thẻ kho |
+| `/api/products` | `POST` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Thêm thuốc mới kèm quy cách |
+| `/api/products/:id` | `PUT` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Sửa thông tin thuốc & quy cách |
+| `/api/products/:id/clone` | `POST` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Nhân bản 1 sản phẩm |
+| `/api/products/bulk-clone` | `POST` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Nhân bản hàng loạt thuốc |
+| `/api/products/import` | `POST` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Import Excel / JSON / XML |
+| `/api/products/export` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Export thuốc ra file |
+| `/api/products/:id` | `DELETE`| **Cần JWT** | `ADMIN` | Xóa 1 sản phẩm thuốc |
+| `/api/products/bulk-delete` | `POST` | **Cần JWT** | `ADMIN` | Xóa nhiều sản phẩm thuốc |
+| `/api/invoices` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem danh sách hóa đơn |
+| `/api/invoices` | `POST` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xuất bán POS, trừ kho quy chuẩn |
+| `/api/invoices/:id/cancel` | `POST` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Hủy đơn, hoàn lại kho gốc & điểm |
+| `/api/enterprise/dashboard` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem chỉ số doanh thu & kho |
+| `/api/enterprise/products/:id/stock-card` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem thẻ kho chi tiết |
+| `/api/enterprise/customers` | `GET`, `POST`, `PUT` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Quản lý hồ sơ bệnh nhân CRM |
+| `/api/enterprise/suppliers` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem danh sách nhà cung cấp |
+| `/api/enterprise/suppliers` | `POST`, `PUT` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Thêm, sửa nhà cung cấp |
+| `/api/enterprise/purchase-orders` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Xem danh sách phiếu nhập kho |
+| `/api/enterprise/purchase-orders` | `POST` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Tạo phiếu nhập kho tăng tồn |
+| `/api/enterprise/payments` | `GET` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Sổ quỹ & đối soát thanh toán |
+| `/api/enterprise/staff` | `GET` | **Cần JWT** | `ADMIN` | Xem danh sách tài khoản nhân sự |
+| `/api/enterprise/staff/:id/role` | `PATCH` | **Cần JWT** | `ADMIN` | Thay đổi quyền vai trò nhân viên |
+| `/api/enterprise/staff/:id/status`| `PATCH` | **Cần JWT** | `ADMIN` | **Admin duyệt kích hoạt (`ACTIVE`/`INACTIVE`)** |
+| `/api/enterprise/:entity/bulk-delete`| `POST`| **Cần JWT** | `ADMIN` | Xóa dữ liệu các bảng phụ |
+| `/api/ai/ocr-prescription` | `POST` | **Cần JWT** | `ADMIN`, `PHARMACIST` | Quét ảnh OCR đơn thuốc |
+| `/api/ai/diagnose-chat` | `POST` | **Cần JWT** | `ADMIN`, `PHARMACIST`, `CASHIER` | Chatbot tư vấn dược lâm sàng |
 
 ---
 
-### GIAI ĐOẠN 1: BẢO MẬT, KHÓA TRUY CẬP & PHÂN QUYỀN RBAC (ƯU TIÊN 1)
-
-1. **Khởi tạo Fail-Fast cấu hình môi trường ([`index.ts`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/backend/src/index.ts)):**
-   ```ts
-   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.trim() === '') {
-     console.error('[CRITICAL SECURITY ERROR] Biến môi trường JWT_SECRET chưa được thiết lập!');
-     console.error('Hệ thống dừng khởi động để bảo đảm an toàn dữ liệu.');
-     process.exit(1);
-   }
-   ```
-2. **Cập nhật đăng ký & từ chối tài khoản INACTIVE ([`auth.controller.ts`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/backend/src/controllers/auth.controller.ts)):**
-   - Đăng ký: Bỏ trường `Role` khỏi `registerSchema`. Luôn lưu bản ghi mới với `Role: "CASHIER"` và `Status: "INACTIVE"`. Không sinh JWT trả về ngay lúc đăng ký mà thông báo: *"Đăng ký thành công! Tài khoản đang ở trạng thái chờ Quản trị viên duyệt kích hoạt."*
-   - Đăng nhập: Khi mật khẩu khớp, kiểm tra `if (user.Status !== 'ACTIVE')` -> trả mã `403 Forbidden`.
-   - Seed dữ liệu: Tài khoản quản trị viên mặc định `DS. Nguyễn Văn Trung (ADMIN)` luôn có trạng thái `ACTIVE` để hệ thống vận hành trơn tru.
-3. **Xây dựng Middleware xác thực ([`auth.middleware.ts`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/backend/src/middlewares/auth.middleware.ts)):**
-   - Viết `authenticateToken` giải mã `Bearer <token>`.
-   - Viết `requireRoles(['ADMIN', 'PHARMACIST'])` kiểm tra phân quyền.
-4. **Gắn middleware lên các Router:**
-   - Bảo vệ toàn bộ endpoint trong `product.routes.ts`, `invoice.routes.ts`, `enterprise.routes.ts`, `ai.routes.ts`.
-5. **Cấu hình `apiClient.ts` ở Frontend:**
-   - Thay thế toàn bộ các instance `axios.create` rải rác bằng `apiClient`.
-
----
-
-### GIAI ĐOẠN 2 & 5: QUY CÁCH ĐÓNG GÓI, QUY ĐỔI TỒN KHO & HOÀN TRẢ (ƯU TIÊN 2 & 5)
-
-1. **Cập nhật Prisma Schema & Đồng bộ DB ([`schema.prisma`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/backend/prisma/schema.prisma)):**
-   ```prisma
-   model InvoiceItem {
-     ItemID               Int      @id @default(autoincrement())
-     InvoiceID            Int
-     ProductID            Int
-     Quantity             Int      @default(1)
-     Unit                 String   @default("Hộp")
-     UnitPrice            Float    @default(0)
-     BaseQuantityDeducted Int      @default(1)
-     DosageNote           String?
-
-     invoice              Invoice  @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
-     product              Product  @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)
-   }
-   ```
-   *Chạy `npx prisma db push`.*
-2. **Xây dựng Module Quy Cách & Quy Đổi Dùng Chung ([`packaging.service.ts`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/backend/src/services/packaging.service.ts)):**
-   - Định nghĩa từ điển quy cách đóng gói cho 35 danh mục dược phẩm:
-     - `Panadol Extra`: Hộp 15 Vỉ x 12 Viên = 180 Viên/Hộp.
-     - `Decolgen Forte`: Hộp 25 Vỉ x 4 Viên = 100 Viên/Hộp.
-     - `Tiffy Dey`: Vỉ 4 Viên (Đơn vị gốc là Vỉ, 4 viên/vỉ).
-     - `Berberin`: Lọ 100 Viên (Đơn vị gốc là Lọ, 100 viên/lọ).
-     - `Smecta`: Hộp 30 Gói (Đơn vị gốc là Hộp, 30 gói/hộp, không có vỉ/viên).
-     - `Siro Ho Prospan` / `Natri Clorid`: Chai (Chỉ bán chai, không có vỉ/viên).
-   - Hàm `calculateDeductionAndPrice(product, requestedUnit, requestedQty)`:
-     - Trả về `{ unitPrice, baseQuantityDeducted, validUnits, errorMessage }`.
-     - Đảm bảo tính toán đồng bộ 100% giữa giá tiền bán và lượng trừ tồn kho.
-3. **Cập nhật luồng tạo hóa đơn (`createInvoice`):**
-   - Nhận `Unit` từ client. Gọi module `packaging.service` tính `unitPrice` và `baseQuantityDeducted`.
-   - Kiểm tra `product.Quantity >= baseQuantityDeducted`.
-   - Lưu đầy đủ `Unit`, `UnitPrice`, `Quantity`, `BaseQuantityDeducted` vào bản ghi `InvoiceItem`.
-4. **Sửa dứt điểm luồng hoàn trả (`cancelInvoice`):**
-   - Khi hoàn trả hóa đơn:
+### 6. Khép kín vòng đời Token ở Frontend (Frontend Token Lifecycle)
+- **Vấn đề đã note**: `App.tsx` bỏ qua token, khởi tạo sẵn `ADMIN`, chưa lắng nghe sự kiện 401.
+- **Giải pháp chuẩn hóa**:
+  1. **Nơi lưu Token**: Trong `forms.api.ts` (và `AuthPage.tsx`):
      ```ts
-     for (const item of invoice.items) {
-       // Cộng trả lại chính xác lượng tồn kho gốc đã bị trừ
-       const restoreQty = item.BaseQuantityDeducted > 0 ? item.BaseQuantityDeducted : item.Quantity;
-       await tx.product.update({
-         where: { ProductID: item.ProductID },
-         data: { Quantity: { increment: restoreQty } },
+     localStorage.setItem('pharmacore_token', res.token);
+     localStorage.setItem('pharmacore_user', JSON.stringify(res.user));
+     ```
+  2. **Khởi tạo trạng thái trong `App.tsx`**:
+     - Bỏ gán cứng `currentUser` ban đầu:
+       ```ts
+       const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+         const token = localStorage.getItem('pharmacore_token');
+         const userStr = localStorage.getItem('pharmacore_user');
+         if (token && userStr) {
+           try { return JSON.parse(userStr); } catch { return null; }
+         }
+         return null;
        });
-     }
-     ```
-5. **Script Xử lý Dữ liệu Hóa đơn cũ (Legacy Data Migration):**
-   - Tạo script quét toàn bộ các `InvoiceItem` hiện có trong database:
-     - Nếu `BaseQuantityDeducted` đang trống/bằng 0: Dựa vào `UnitPrice` so với `product.Price` để nội suy đơn vị (`Hộp`, `Vỉ` hay `Viên`) và cập nhật giá trị `BaseQuantityDeducted` tương ứng.
-6. **Đồng bộ giao diện POS Terminal:**
-   - Dropdown hoặc Button chọn đơn vị ở POS chỉ hiển thị những đơn vị hợp lệ mà thuốc đó hỗ trợ.
+       ```
+     - Nếu `currentUser === null`: Hiển thị Modal/Trang Đăng nhập bắt buộc (có nút hỗ trợ đăng nhập nhanh bằng tài khoản demo Admin để chấm bài thuận tiện).
+  3. **Lắng nghe sự kiện hết hạn phiên (`401 Unauthorized`)**:
+     - `apiClient.ts` phát custom event `window.dispatchEvent(new Event('pharmacore_unauthorized'))`.
+     - Trong `App.tsx`:
+       ```ts
+       useEffect(() => {
+         const handleUnauthorized = () => {
+           setCurrentUser(null);
+           toast.error('Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại!');
+         };
+         window.addEventListener('pharmacore_unauthorized', handleUnauthorized);
+         return () => window.removeEventListener('pharmacore_unauthorized', handleUnauthorized);
+       }, []);
+       ```
 
 ---
 
-### GIAI ĐOẠN 3: KIỂM SOÁT CHIẾT KHẤU & ĐỔI ĐIỂM THÀNH VIÊN (ƯU TIÊN 4)
+### 7. Thứ tự khởi tạo cấu hình Fail-Fast `JWT_SECRET`
+- **Vấn đề đã note**: `index.ts` gọi `dotenv.config()` sau khi import controller, controller đã đọc `JWT_SECRET` trước lúc biến môi trường được nạp.
+- **Giải pháp chuẩn hóa**:
+  - Tạo module cấu hình độc lập duy nhất: `backend/src/config/env.ts`:
+    ```ts
+    import dotenv from 'dotenv';
+    dotenv.config();
 
-1. **Ràng buộc Backend ([`invoice.controller.ts`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/backend/src/controllers/invoice.controller.ts)):**
-   - Tiếp nhận `Discount` (tiền VNĐ) và `UsedPoints` (điểm thưởng đổi tiền).
-   - Kiểm tra điều kiện:
-     ```ts
-     if (Discount < 0) throw new Error('Số tiền chiết khấu không được âm');
-     if (UsedPoints < 0) throw new Error('Số điểm quy đổi không được âm');
-     
-     if (CustomerID && UsedPoints > 0) {
-       const customer = await tx.customer.findUnique({ where: { CustomerID } });
-       if (!customer || customer.LoyaltyPoints < UsedPoints) {
-         throw new Error(`Bệnh nhân không đủ điểm tích lũy (Hiện có: ${customer?.LoyaltyPoints || 0} điểm, yêu cầu: ${UsedPoints} điểm)`);
-       }
-     }
-     
-     const pointDiscount = UsedPoints * 1000; // 1 điểm = 1.000 VNĐ
-     const totalDiscount = Discount + pointDiscount;
-     
-     if (totalDiscount > subtotal) {
-       throw new Error(`Tổng chiết khấu (${totalDiscount.toLocaleString()} đ) không được vượt quá tổng tiền hàng (${subtotal.toLocaleString()} đ)`);
-     }
-     ```
-   - Cập nhật số dư điểm của khách trong cùng transaction:
-     - Trừ `UsedPoints`.
-     - Cộng điểm tích lũy mới `Math.floor(finalTotal / 10000)`.
-2. **Ràng buộc Giao diện POS ([`PosTerminalPage.tsx`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/frontend/src/pages/PosTerminalPage.tsx)):**
-   - Thêm ô chọn dùng điểm tích lũy của khách hàng (hiển thị số điểm tối đa có thể dùng `maxPoints = Math.min(customer.LoyaltyPoints, Math.floor(subTotal / 1000))`).
-   - Khóa ô nhập chiết khấu tiền mặt không cho nhập số âm và giới hạn tối đa không vượt quá `subTotal - pointDiscount`.
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.trim() === '') {
+      console.error('================================================================');
+      console.error('[CRITICAL SECURITY ERROR] Biến môi trường JWT_SECRET chưa được thiết lập!');
+      console.error('Ứng dụng bắt buộc dừng khởi động ngay lập tức để bảo vệ hệ thống.');
+      console.error('================================================================');
+      process.exit(1);
+    }
+
+    export const JWT_SECRET = process.env.JWT_SECRET;
+    export const PORT = Number(process.env.PORT) || 5000;
+    ```
+  - Mọi controller, middleware và file `index.ts` đều import `JWT_SECRET` từ `src/config/env.ts`. Điều này đảm bảo `dotenv.config()` luôn được thực thi trước tiên và kiểm tra fail-fast ngay lập tức trước khi server kịp lắng nghe request.
 
 ---
 
-### GIAI ĐOẠN 4: LUỒNG OCR THỰC TẾ & BƯỚC DUYỆT CỦA DƯỢC SĨ (ƯU TIÊN 3)
-
-1. **Đánh dấu rõ ràng Đơn mẫu Demo ([`PrescriptionOcrPage.tsx`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/frontend/src/pages/PrescriptionOcrPage.tsx)):**
-   - Tab "Mẫu đơn thử nghiệm": Đặt badge cảnh báo `[DỮ LIỆU DEMO - BỆNH VIỆN MẪU]`.
-   - Tab "Tải ảnh chụp đơn thuốc": Dành riêng cho file ảnh thực tế.
-2. **Tích hợp OCR Thực thụ & Xử lý Từ chối ảnh rác ([`ai.service.ts`](file:///C:/Users/Trung/.gemini/antigravity/scratch/smart-pharmacy-ai/backend/src/services/ai.service.ts)):**
-   - Khi tải file ảnh thực tế: Thực hiện bóc tách ký tự qua OCR (Tesseract / EasyOCR).
-   - Kiểm tra chuỗi văn bản trích xuất:
-     - Nếu chuỗi rỗng, không chứa ký tự có nghĩa, hoặc không chứa bất kỳ từ khóa thuốc nào trong danh mục:
-       - **Trả về lỗi rõ ràng**: `"Không thể nhận dạng đơn thuốc từ hình ảnh được tải lên. Vui lòng chụp lại ảnh rõ nét, đầy đủ ánh sáng hoặc sử dụng dữ liệu đơn mẫu."`
-       - **Tuyệt đối không chạy fallback trả về đơn thuốc giả lập**.
-3. **Giao diện Dược sĩ Kiểm duyệt & Hiệu chỉnh trước khi nạp sang POS:**
-   - Kết quả OCR hiển thị dưới dạng bảng tương tác (Review Table):
-     - Dược sĩ có thể chọn lại Tên thuốc từ dropdown (đối chiếu danh mục kho).
-     - Điều chỉnh lại Số lượng và Đơn vị tính (`Hộp`/`Vỉ`/`Viên`).
-     - Chỉnh sửa Hướng dẫn liều dùng.
-     - Xóa dòng thuốc nhận diện nhầm hoặc thêm dòng thuốc mới.
-   - Thêm nút **`"Xác nhận đơn thuốc & Chuyển vào giỏ hàng POS"`**: Dữ liệu chỉ được chuyển vào POS khi Dược sĩ đã chủ động bấm nút xác nhận này.
+### 8. Tách biệt kết quả OCR Thô và Đối chiếu Danh mục kho
+- **Vấn đề đã note**: Đơn thuốc có thể chứa thuốc hợp lệ nhưng nhà thuốc chưa nhập kho; không tìm thấy trong kho không đồng nghĩa với ảnh hỏng/không đọc được.
+- **Giải pháp chuẩn hóa**:
+  - Tách quy trình OCR thành **2 pha độc lập**:
+    - **Pha 1: Nhận diện văn bản quang học (OCR Engine)**:
+      - Trích xuất toàn bộ chuỗi văn bản thô từ ảnh (`raw_ocr_text`).
+      - Tiêu chí từ chối ảnh lỗi: Chỉ báo lỗi khi văn bản trích xuất hoàn toàn rỗng, độ tin cậy $< 15\%$ hoặc toàn ký tự rác vô nghĩa (ảnh trắng, ảnh tối đen, ảnh phong cảnh).
+    - **Pha 2: Đối chiếu ngữ nghĩa với Kho hàng (Stock Matching)**:
+      - Phân tích tên thuốc và số lượng từ văn bản.
+      - Tra cứu trong bảng `Product`:
+        - **Thuốc có trong kho (`inStock = true`)**: Hiển thị thẻ màu xanh lá, hiển thị số lượng tồn kho khả dụng.
+        - **Thuốc KHÔNG có trong kho (`inStock = false`, `matchedProduct = null`)**: Hiển thị thẻ cảnh báo màu vàng: *"Thuốc ngoài danh mục: [Tên thuốc trên đơn]"*.
+  - **Giao diện Dược sĩ Phê duyệt trước khi chuyển sang POS**:
+    - Với thuốc ngoài danh mục: Dược sĩ có thể chọn 1 thuốc tương đương có sẵn trong kho để thay thế, hoặc bấm Xóa bỏ dòng đó.
+    - **Tuyệt đối không tự động nạp thuốc ngoài danh mục vào giỏ hàng POS**.
 
 ---
 
-## IV. MA TRẬN FILE THAY ĐỔI & TRÁCH NHIỆM
+## II. MA TRẬN FILE THỰC THI
 
-| STT | File cần tạo / chỉnh sửa | Phân loại | Nội dung thực hiện |
+| STT | File | Hành động | Nội dung thay đổi |
 | :---: | :--- | :---: | :--- |
-| **1** | `backend/.env` | Chỉnh sửa | Đảm bảo biến `JWT_SECRET` bắt buộc |
-| **2** | `backend/src/index.ts` | Chỉnh sửa | Bổ sung kiểm tra Fail-Fast dừng server nếu thiếu `JWT_SECRET` |
-| **3** | `backend/src/middlewares/auth.middleware.ts` | **Tạo mới** | Middleware `authenticateToken` và `requireRoles` |
-| **4** | `backend/src/controllers/auth.controller.ts` | Chỉnh sửa | Đăng ký tạo `INACTIVE`, login từ chối `INACTIVE`, bỏ chọn role |
-| **5** | `backend/src/routes/*.routes.ts` | Chỉnh sửa | Gắn middleware bảo vệ từng router theo đúng ma trận phân quyền |
-| **6** | `backend/prisma/schema.prisma` | Chỉnh sửa | Thêm `Unit`, `BaseQuantityDeducted` vào `InvoiceItem` |
-| **7** | `backend/src/services/packaging.service.ts` | **Tạo mới** | Từ điển quy cách đóng gói & hàm quy đổi trừ kho/tính giá dùng chung |
-| **8** | `backend/src/controllers/invoice.controller.ts` | Chỉnh sửa | Trừ kho quy chuẩn, sửa hoàn trả kho gốc, chặn chiết khấu > subtotal, trừ điểm |
-| **9** | `backend/src/services/ai.service.ts` | Chỉnh sửa | OCR thực tế, từ chối ảnh rác/mờ, chặn tự động fallback |
-| **10**| `backend/scripts/migrate-legacy-invoices.ts` | **Tạo mới** | Migration điền `BaseQuantityDeducted` cho hóa đơn cũ trong DB |
-| **11**| `frontend/src/services/apiClient.ts` | **Tạo mới** | Axios Interceptor tự động gửi JWT và bắt lỗi 401 |
-| **12**| `frontend/src/pages/PosTerminalPage.tsx` | Chỉnh sửa | Chọn đơn vị theo quy cách thực, validate chiết khấu & dùng điểm |
-| **13**| `frontend/src/pages/PrescriptionOcrPage.tsx` | Chỉnh sửa | Huy hiệu demo, bảng Dược sĩ duyệt & sửa đơn trước khi sang POS |
+| **1** | `backend/src/config/env.ts` | **Tạo mới** | Nạp `dotenv` trước tiên, fail-fast `process.exit(1)` nếu thiếu `JWT_SECRET` |
+| **2** | `backend/src/index.ts` | Chỉnh sửa | Import từ `config/env.ts`, gắn router |
+| **3** | `backend/prisma/schema.prisma` | Chỉnh sửa | Tạo model `ProductPackaging`, thêm `Unit?`, `BaseQuantityDeducted?`, `LooseUnitsDeducted?` vào `InvoiceItem`, thêm `UsedPoints`, `PointsDiscount`, `PointsEarned` vào `Invoice` |
+| **4** | `backend/src/services/packaging.service.ts` | **Tạo mới** | Quản lý quy cách đóng gói và logic trừ/hoàn hộp dở dang (`LooseUnits`) |
+| **5** | `backend/src/middlewares/auth.middleware.ts` | **Tạo mới** | `authenticateToken` và `requireRoles` |
+| **6** | `backend/src/controllers/auth.controller.ts` | Chỉnh sửa | Đăng ký tạo `INACTIVE`, login từ chối `INACTIVE`, bỏ chọn Role |
+| **7** | `backend/src/controllers/enterprise.controller.ts` | Chỉnh sửa | Thêm `updateStaffStatus` để Admin duyệt tài khoản |
+| **8** | `backend/src/controllers/invoice.controller.ts` | Chỉnh sửa | Áp dụng trừ kho hộp dở dang, hoàn lại đúng kho gốc, quản lý điểm thành viên |
+| **9** | `backend/src/controllers/ai.controller.ts` & `ai.service.ts` | Chỉnh sửa | Tách OCR thô và đối chiếu kho, xử lý từ chối ảnh lỗi thật |
+| **10**| `backend/scripts/migrate-legacy-invoices.ts` | **Tạo mới** | Script di trú hóa đơn cũ an toàn |
+| **11**| `frontend/src/services/apiClient.ts` | **Tạo mới** | Axios Interceptor tập trung xử lý Bearer Token và 401 |
+| **12**| `frontend/src/App.tsx` | Chỉnh sửa | Khởi tạo phiên từ localStorage, lắng nghe 401, xóa hardcode Admin |
+| **13**| `frontend/src/pages/PosTerminalPage.tsx` | Chỉnh sửa | Chọn đơn vị theo quy cách thực tế, nhập điểm thành viên, validate chiết khấu |
+| **14**| `frontend/src/pages/PrescriptionOcrPage.tsx` | Chỉnh sửa | Phân định tab Demo vs Thật, bảng duyệt thuốc ngoài danh mục |
 
 ---
 
-## V. BỘ KỊCH BẢN KIỂM THỬ BẮT BUỘC (CRITICAL TEST SCENARIOS)
-
-Hệ thống chỉ được coi là nghiệm thu hoàn tất khi vượt qua toàn bộ 5 kịch bản kiểm thử sau:
+## III. BỘ 5 KỊCH BẢN KIỂM THỬ NGHIỆM THU CHI TIẾT
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       5 TÌNH HUỐNG KIỂM THỬ BẮT BUỘC                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ 1. Đăng ký tài khoản mới -> INACTIVE -> Đăng nhập bị từ chối 403           │
-│ 2. Bán 11 viên Decolgen -> Trừ kho đúng quy cách -> Hủy đơn hoàn chuẩn kho │
-│ 3. Chiết khấu lớn hơn tổng tiền hoặc âm -> Backend & Frontend từ chối 400  │
-│ 4. Dùng điểm thành viên vượt quá số dư -> API từ chối; dùng hợp lệ -> trừ   │
-│ 5. Tải ảnh trắng vào OCR -> Báo lỗi; ảnh thật -> Dược sĩ duyệt mới vào POS │
+│ 2. Bán 11 viên Decolgen -> Mở 1 hộp, lưu 89 viên lẻ -> Hủy hoàn lại đúng 10 │
+│ 3. Chiết khấu lớn hơn tổng tiền hoặc âm -> Cả 2 phía từ chối lỗi 400        │
+│ 4. Dùng điểm thành viên vượt quá số dư -> Từ chối; dùng hợp lệ -> trừ/hoàn │
+│ 5. Tải ảnh trắng vào OCR -> Báo lỗi; ảnh có thuốc ngoài kho -> Cảnh báo vàng│
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Kịch bản 1: Tài khoản chưa duyệt đăng nhập & Phân quyền bảo mật
-- **Bước 1**: Gửi `POST /api/auth/register` với thông tin `{ FullName: "Dược sĩ Thử Nghiệm", Email: "test@pharmacore.vn", Password: "Password123" }`.
-- **Kỳ vọng**: 
-  - DB lưu tài khoản với `Role: "CASHIER"`, `Status: "INACTIVE"`.
-  - Phản hồi thông báo: Tài khoản đang chờ duyệt kích hoạt. Không cấp token.
-- **Bước 2**: Gửi `POST /api/auth/login` với email và password trên.
-- **Kỳ vọng**: Trả về mã lỗi `403 Forbidden` ("Tài khoản đang chờ duyệt hoặc đã bị khóa"). Không đăng nhập được.
-- **Bước 3**: Admin cập nhật tài khoản sang `Status: "ACTIVE"` -> Đăng nhập lại -> Đăng nhập thành công và nhận JWT Token.
-- **Bước 4**: Thử xóa biến `JWT_SECRET` trong `.env` và khởi động lại Backend -> Server lập tức dừng và in thông báo lỗi bảo mật (Fail-Fast).
-
-### Kịch bản 2: Bán 11 viên thuốc rồi hủy hóa đơn (Quy đổi lẻ & Hoàn kho)
-- **Chuẩn bị**: Thuốc `Decolgen Forte (Hộp 25 vỉ = 100 viên/hộp)` đang có tồn kho ban đầu là **10 Hộp**.
-- **Bước 1**: Mua 11 Viên Decolgen Forte trên POS.
-  - Theo quy cách: 11 viên vượt quá 1 vỉ (4 viên) và nằm trong 1 hộp (100 viên). Lượng trừ kho gốc làm tròn là **1 Hộp** (hoặc trừ theo tỷ lệ làm tròn quy chuẩn).
-  - Tồn kho sau khi bán giảm từ 10 Hộp xuống còn **9 Hộp**.
-  - Hóa đơn lưu: `Quantity = 11`, `Unit = "Viên"`, `BaseQuantityDeducted = 1`.
-- **Bước 2**: Thực hiện Hủy / Hoàn trả hóa đơn vừa tạo (`POST /api/invoices/:id/cancel`).
-- **Kỳ vọng**:
-  - Tồn kho `Product.Quantity` được cộng lại chính xác `BaseQuantityDeducted = 1 Hộp` -> Trở về đúng **10 Hộp**.
-  - Tuyệt đối không cộng 11 Hộp vào kho (lỗi cũ lấy `item.Quantity`).
-  - Tồn kho không bị âm, không bị phồng ảo.
-
-### Kịch bản 3: Kiểm soát Chiết khấu không hợp lệ
-- **Bước 1**: Giỏ hàng có 1 hộp Panadol Extra (tổng tiền: **55.000 đ**).
-- **Bước 2**: Thử gửi yêu cầu tạo hóa đơn với `Discount = -10.000 đ`.
-- **Kỳ vọng**: Backend trả về `400 Bad Request` ("Số tiền chiết khấu không được âm").
-- **Bước 3**: Thử gửi yêu cầu tạo hóa đơn với `Discount = 100.000 đ` (lớn hơn subtotal 55.000 đ).
-- **Kỳ vọng**:
-  - Giao diện POS hiển thị cảnh báo đỏ và không cho ấn thanh toán.
-  - Backend trả về mã lỗi `400 Bad Request` ("Chiết khấu không được vượt quá tổng giá trị đơn hàng").
-
-### Kịch bản 4: Kiểm soát Đổi điểm tích lũy thành viên
-- **Bước 1**: Khách hàng `Nguyễn Văn A` có `LoyaltyPoints = 20 điểm` (tương đương 20.000 đ).
-- **Bước 2**: Tạo đơn hàng 100.000 đ, yêu cầu dùng `UsedPoints = 50 điểm` (vượt quá 20 điểm).
-- **Kỳ vọng**: Backend từ chối đơn hàng với mã lỗi `400 Bad Request` ("Bệnh nhân không đủ điểm tích lũy").
-- **Bước 3**: Tạo đơn hàng với `UsedPoints = 20 điểm` và `Discount = 0 đ`.
-- **Kỳ vọng**: 
-  - Khách được giảm 20.000 đ, số tiền thực thu là 80.000 đ.
-  - Điểm tích lũy trong hồ sơ bệnh nhân giảm từ 20 về 0, sau đó được cộng thêm điểm mới từ 80.000 đ thực thu.
-- **Bước 4**: Hủy hóa đơn trên -> Điểm tích lũy được hoàn trả lại đúng 20 điểm ban đầu.
-
-### Kịch bản 5: Nghiệm thu Luồng OCR Đơn thuốc & Dược sĩ phê duyệt
-- **Bước 1**: Tải lên một file ảnh trắng hoặc ảnh ngẫu nhiên không có chữ.
-- **Kỳ vọng**: Hệ thống báo lỗi rõ ràng: *"Không nhận dạng được đơn thuốc từ hình ảnh này"*. Tuyệt đối không được trả về danh sách 4 thuốc demo.
-- **Bước 2**: Chọn tab "Đơn thuốc mẫu thử nghiệm (Demo)" -> Giao diện hiển thị rõ badge `[DỮ LIỆU DEMO]`.
-- **Bước 3**: Sau khi nhận diện đơn thuốc thành công:
-  - Giao diện dừng ở bảng Dược sĩ soát đơn (Review Step).
-  - Dược sĩ sửa số lượng từ 1 Hộp thành 2 Hộp, sửa hướng dẫn liều dùng.
-  - Bấm nút `"Xác nhận & Chuyển sang POS"`.
-  - Giỏ hàng POS nhận chính xác số lượng 2 Hộp và liều dùng đã chỉnh sửa.
+1. **Kịch bản 1 (Tài khoản chưa duyệt & Fail-Fast)**:
+   - Đăng ký tài khoản mới -> Nhận `Status = INACTIVE`. Đăng nhập ngay -> Nhận lỗi 403. Admin duyệt sang `ACTIVE` -> Đăng nhập thành công.
+   - Thử xóa `JWT_SECRET` trong `.env` -> Server crash ngay lập tức khi chạy lệnh khởi động.
+2. **Kịch bản 2 (Bán 11 viên & Quản lý hộp dở dang)**:
+   - Thuốc Decolgen (Hộp 100 viên) có 10 Hộp, `LooseUnits = 0`.
+   - Bán 11 viên -> Kho giảm còn 9 Hộp, `LooseUnits = 89`.
+   - Bán tiếp 9 viên -> Kho vẫn 9 Hộp, `LooseUnits = 80`.
+   - Hủy hóa đơn 11 viên -> `LooseUnits = 80 + 11 = 91 Viên`, kho vẫn 9 Hộp. Nếu hủy tiếp hóa đơn 9 viên -> `LooseUnits = 91 + 9 = 100` -> Tự động đóng lại thành **10 Hộp nguyên**!
+3. **Kịch bản 3 (Kiểm soát chiết khấu)**:
+   - Đơn hàng 50.000 đ, nhập chiết khấu `-5.000 đ` hoặc `60.000 đ` -> API trả lỗi 400; POS hiển thị cảnh báo đỏ và chặn nút thanh toán.
+4. **Kịch bản 4 (Điểm thành viên)**:
+   - Khách có 20 điểm (20.000 đ), nhập dùng 30 điểm -> Bị từ chối lỗi 400.
+   - Dùng 10 điểm -> Giảm 10.000 đ, điểm trong hồ sơ giảm còn 10 điểm.
+   - Hủy đơn hàng -> Điểm được hoàn trả lại đúng 20 điểm ban đầu.
+5. **Kịch bản 5 (OCR ảnh lỗi & Thuốc ngoài danh mục)**:
+   - Tải ảnh trắng/mờ -> Báo lỗi: *"Không nhận dạng được văn bản từ ảnh"*, không trả về thuốc demo.
+   - Quét đơn có thuốc ngoài danh mục -> Bảng duyệt đánh dấu vàng *"Thuốc ngoài danh mục"*. Bắt buộc Dược sĩ đổi thuốc hoặc xóa trước khi chuyển sang POS.
 
 ---
 
-> Toàn bộ nội dung trên đã được chốt và cập nhật hoàn chỉnh vào file [`CODE_REVIEW_FIX_PLAN.md`](./CODE_REVIEW_FIX_PLAN.md).
+> Toàn bộ nội dung kế hoạch chuẩn hóa trên đã được đồng bộ vào file [`CODE_REVIEW_FIX_PLAN.md`](./CODE_REVIEW_FIX_PLAN.md).
