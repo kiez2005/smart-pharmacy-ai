@@ -58,7 +58,17 @@ Hệ thống phần mềm quản trị doanh nghiệp dược phẩm (`ERP`), b�
 
 ## 4. Hướng Dẫn Cài Đặt & Khởi Chạy Nhanh
 
-### Bước 1: Khởi chạy Backend API & Cơ sở dữ liệu (Port `5000`)
+### 🚀 Cách 1: Khởi Chạy Nhanh Bằng 1 Cú Nhấp Chuột (Dành cho Windows)
+Chỉ cần nhấp đúp vào file **`run-app.bat`** ở thư mục gốc:
+- Tự động kiểm tra môi trường Node.js.
+- Tự động cài đặt thư viện (`npm install`) và khởi tạo cơ sở dữ liệu nếu chạy lần đầu.
+- Tự động bật đồng thời **Backend API** (cổng `5000`) và **Frontend Web UI** (cổng `5173`).
+- Tự động mở trình duyệt web tại địa chỉ `http://localhost:5173`.
+- Khi muốn tắt toàn bộ hệ thống: Nhấp đúp vào file **`stop-app.bat`**.
+
+---
+
+### 💻 Cách 2: Khởi Chạy Thủ Công Bằng Terminal
 ```bash
 cd backend
 npm install
