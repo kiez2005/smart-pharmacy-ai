@@ -1,5 +1,6 @@
 import { Product } from '@prisma/client';
 import { prisma } from '../config/prisma';
+import { packagingService } from './packaging.service';
 import {
   PaginatedProductResponse,
   ProductInputDTO,
@@ -54,6 +55,7 @@ class ProductService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { [sortBy]: sortOrder },
+        include: { packaging: true },
       }),
       prisma.product.findMany({ select: { ProductType: true }, distinct: ['ProductType'] }),
       prisma.product.findMany({ select: { Unit: true }, distinct: ['Unit'] }),
@@ -97,6 +99,7 @@ class ProductService {
   public async getById(id: number): Promise<Product | null> {
     return prisma.product.findUnique({
       where: { ProductID: id },
+      include: { packaging: true },
     });
   }
 
@@ -105,6 +108,7 @@ class ProductService {
    */
   public async create(data: ProductInputDTO): Promise<Product> {
     const created = await prisma.product.create({ data });
+    await packagingService.getOrCreatePackagingSpec(created);
     void this.triggerSearchSync();
     return created;
   }

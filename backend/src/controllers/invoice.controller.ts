@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
+import { packagingService } from '../services/packaging.service';
 
 const invoiceItemSchema = z.object({
   ProductID: z.coerce.number().int().positive(),
   Quantity: z.coerce.number().int().positive('Số lượng mua phải >= 1'),
-  UnitMode: z.enum(['BASE', 'BLISTER', 'PILL']).optional().default('BASE'),
+  Unit: z.string().trim().optional(),
   DosageNote: z.string().trim().optional().default('Sáng 1 viên, Tối 1 viên sau ăn'),
 });
 
@@ -13,7 +14,8 @@ const createInvoiceSchema = z.object({
   CustomerName: z.string().trim().min(2, 'Vui lòng nhập tên khách hàng / bệnh nhân'),
   CustomerPhone: z.string().trim().optional().default(''),
   CustomerID: z.coerce.number().int().positive().nullable().optional(),
-  Discount: z.coerce.number().min(0).optional().default(0),
+  Discount: z.coerce.number().min(0, 'Số tiền chiết khấu không được âm').optional().default(0),
+  UsedPoints: z.coerce.number().int().min(0, 'Số điểm tích lũy không được âm').optional().default(0),
   Note: z.string().trim().optional().default(''),
   PaymentMethod: z.enum(['CASH', 'VIETQR', 'CARD']).optional().default('VIETQR'),
   items: z.array(invoiceItemSchema).min(1, 'Hóa đơn phải có ít nhất 1 sản phẩm thuốc'),
@@ -58,7 +60,7 @@ export const getInvoices = async (_req: Request, res: Response): Promise<void> =
 };
 
 /**
- * TẠO HÓA ĐƠN BÁN THUỐC & THANH TOÁN + TỰ ĐỘNG TRỪ TỒN KHO PRODUCT (POST /api/invoices)
+ * TẠO HÓA ĐƠN BÁN THUỐC & THANH TOÁN + TRỪ TỒN KHO THEO QUY CÁCH (POST /api/invoices)
  */
 export const createInvoice = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -72,15 +74,49 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const { CustomerName, CustomerPhone, CustomerID, Discount, Note, PaymentMethod, items } =
-      parsed.data;
+    const {
+      CustomerName,
+      CustomerPhone,
+      CustomerID,
+      Discount,
+      UsedPoints,
+      Note,
+      PaymentMethod,
+      items,
+    } = parsed.data;
 
     const createdInvoice = await prisma.$transaction(async (tx) => {
+      // 1. Kiểm tra điểm tích lũy của khách hàng nếu có yêu cầu dùng điểm
+      const pointDiscount = (UsedPoints || 0) * 1000; // 1 điểm = 1.000 VNĐ
+      let customerRecord = null;
+
+      if (CustomerID) {
+        customerRecord = await tx.customer.findUnique({
+          where: { CustomerID },
+        });
+
+        if (!customerRecord) {
+          throw new Error(`Không tìm thấy hồ sơ bệnh nhân mã #${CustomerID}`);
+        }
+
+        if (UsedPoints > 0 && customerRecord.LoyaltyPoints < UsedPoints) {
+          throw new Error(
+            `Bệnh nhân "${customerRecord.FullName}" không đủ điểm tích lũy để quy đổi! (Hiện có: ${customerRecord.LoyaltyPoints} điểm, yêu cầu: ${UsedPoints} điểm)`
+          );
+        }
+      } else if (UsedPoints > 0) {
+        throw new Error('Chỉ khách hàng có hồ sơ thành viên mới được sử dụng điểm tích lũy');
+      }
+
+      // 2. Tính toán tiền hàng và trừ tồn kho theo quy cách
       let subtotal = 0;
       const preparedItems: Array<{
         ProductID: number;
         Quantity: number;
+        Unit: string;
         UnitPrice: number;
+        BaseQuantityDeducted: number;
+        LooseUnitsDeducted: number;
         DosageNote: string;
       }> = [];
 
@@ -93,81 +129,60 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           throw new Error(`Không tìm thấy thuốc có mã #${item.ProductID}`);
         }
 
-        // RÀNG BUỘC TỒN KHO TUYỆT ĐỐI: Không có hàng thì không được bán
-        if (product.Quantity <= 0) {
-          throw new Error(
-            `Dược phẩm "${product.ProductName}" đã hết tồn kho (0 ${product.Unit}), không thể xuất bán!`
-          );
+        // Tính toán quy đổi đơn vị bán, đơn giá chuẩn và tồn kho cần trừ
+        const calc = await packagingService.calculateDeductionAndPrice(
+          product,
+          item.Unit,
+          item.Quantity,
+          tx
+        );
+
+        // Cập nhật tồn kho hộp nguyên trong bảng Product (nếu có mở hộp)
+        if (calc.packagesToOpen > 0) {
+          await tx.product.update({
+            where: { ProductID: product.ProductID },
+            data: { Quantity: product.Quantity - calc.packagesToOpen },
+          });
         }
 
-        let baseDeduction = item.Quantity;
-        let itemUnitPrice = product.Price;
-
-        // Ràng buộc quy đổi đa đơn vị (Hộp / Vỉ / Viên)
-        if (item.UnitMode === 'BLISTER') {
-          const isBox = product.Unit === 'Hộp';
-          const maxBlisters = isBox ? product.Quantity * 10 : product.Quantity;
-          if (item.Quantity > maxBlisters) {
-            throw new Error(
-              `Thuốc "${product.ProductName}" chỉ còn tồn ${maxBlisters} Vỉ${isBox ? ` (quy đổi từ ${product.Quantity} Hộp)` : ''}, không đủ để xuất bán ${item.Quantity} Vỉ!`
-            );
-          }
-          baseDeduction = isBox ? Math.max(1, Math.ceil(item.Quantity / 10)) : item.Quantity;
-          itemUnitPrice = Math.max(1000, Math.round(product.Price / 10));
-        } else if (item.UnitMode === 'PILL') {
-          const isBox = product.Unit === 'Hộp';
-          const maxPills = isBox ? product.Quantity * 100 : product.Quantity * 10;
-          if (item.Quantity > maxPills) {
-            throw new Error(
-              `Thuốc "${product.ProductName}" chỉ còn tồn ${maxPills} Viên${isBox ? ` (quy đổi từ ${product.Quantity} Hộp)` : ''}, không đủ để xuất bán ${item.Quantity} Viên!`
-            );
-          }
-          baseDeduction = isBox ? Math.max(1, Math.ceil(item.Quantity / 100)) : Math.max(1, Math.ceil(item.Quantity / 10));
-          itemUnitPrice = Math.max(500, Math.round(product.Price / 50));
-        } else {
-          // Bán theo Đơn vị gốc (Hộp, Chai, Tuýp, etc.)
-          if (product.Quantity < item.Quantity) {
-            throw new Error(
-              `Thuốc "${product.ProductName}" chỉ còn tồn kho ${product.Quantity} ${product.Unit}, không đủ số lượng để xuất bán ${item.Quantity} ${product.Unit}!`
-            );
-          }
-          baseDeduction = item.Quantity;
-          itemUnitPrice = product.Price;
-        }
-
-        if (product.Quantity < baseDeduction) {
-          throw new Error(
-            `Thuốc "${product.ProductName}" không đủ tồn kho để quy đổi xuất bán (Tồn: ${product.Quantity} ${product.Unit})!`
-          );
-        }
-
-        // Trừ tồn kho tuyệt đối không âm (Non-negative guarantee)
-        const remainingQuantity = Math.max(0, product.Quantity - baseDeduction);
-        await tx.product.update({
-          where: { ProductID: product.ProductID },
-          data: { Quantity: remainingQuantity },
+        // Cập nhật số thuốc lẻ dở dang trong bảng ProductPackaging
+        const spec = await packagingService.getOrCreatePackagingSpec(product, tx);
+        await tx.productPackaging.update({
+          where: { PackagingID: spec.PackagingID },
+          data: { LooseUnits: calc.newLooseUnits },
         });
 
-        subtotal += itemUnitPrice * item.Quantity;
+        subtotal += calc.unitPrice * item.Quantity;
+
         preparedItems.push({
           ProductID: product.ProductID,
           Quantity: item.Quantity,
-          UnitPrice: itemUnitPrice,
+          Unit: calc.requestedUnit,
+          UnitPrice: calc.unitPrice,
+          BaseQuantityDeducted: calc.packagesToOpen,
+          LooseUnitsDeducted: calc.totalSmallestUnitsDeducted,
           DosageNote: item.DosageNote,
         });
       }
 
-      const finalTotal = Math.max(0, subtotal - Discount);
+      // 3. RÀNG BUỘC CHIẾT KHẤU NGHIÊM NGẶT
+      const totalDiscount = Discount + pointDiscount;
+      if (totalDiscount > subtotal) {
+        throw new Error(
+          `Tổng chiết khấu (${totalDiscount.toLocaleString('vi-VN')} đ: Chiết khấu ${Discount.toLocaleString('vi-VN')} đ + Đổi điểm ${pointDiscount.toLocaleString('vi-VN')} đ) không được vượt quá tổng giá trị đơn hàng (${subtotal.toLocaleString('vi-VN')} đ)!`
+        );
+      }
 
-      // Cộng điểm tích lũy cho bệnh nhân nếu có hồ sơ CustomerID
-      if (CustomerID) {
-        const pointsEarned = Math.floor(finalTotal / 10000);
-        if (pointsEarned > 0) {
-          await tx.customer.update({
-            where: { CustomerID },
-            data: { LoyaltyPoints: { increment: pointsEarned } },
-          });
-        }
+      const finalTotal = Math.max(0, subtotal - totalDiscount);
+      const pointsEarned = Math.floor(finalTotal / 10000); // 10.000đ = 1 điểm tích lũy mới
+
+      // Cập nhật số dư điểm của khách hàng trong cùng transaction
+      if (CustomerID && customerRecord) {
+        const updatedPoints = customerRecord.LoyaltyPoints - UsedPoints + pointsEarned;
+        await tx.customer.update({
+          where: { CustomerID },
+          data: { LoyaltyPoints: Math.max(0, updatedPoints) },
+        });
       }
 
       const invoiceCode = `HD-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
@@ -180,6 +195,9 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           CustomerPhone,
           ...(CustomerID ? { CustomerID } : {}),
           Discount,
+          UsedPoints,
+          PointsDiscount: pointDiscount,
+          PointsEarned: pointsEarned,
           Note,
           TotalAmount: finalTotal,
           Status: 'PAID',
@@ -220,7 +238,7 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
 };
 
 /**
- * HỦY / HOÀN TRẢ HÓA ĐƠN & TỰ ĐỘNG CỘNG TRẢ LẠI TỒN KHO PRODUCT
+ * HỦY / HOÀN TRẢ HÓA ĐƠN & HOÀN LẠI KHO GỐC + ĐIỂM TÍCH LŨY
  * POST /api/invoices/:id/cancel
  */
 export const cancelInvoice = async (req: Request, res: Response): Promise<void> => {
@@ -234,25 +252,47 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
     const updated = await prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.findUnique({
         where: { InvoiceID: invoiceId },
-        include: { items: true, payment: true },
+        include: { items: { include: { product: true } }, payment: true, customer: true },
       });
 
       if (!invoice) {
         throw new Error('Không tìm thấy chứng từ hóa đơn');
       }
 
+      // Đảm bảo tính duy nhất (Idempotent) - Chống hoàn trả 2 lần
       if (invoice.Status === 'REFUNDED' || invoice.Status === 'CANCELLED') {
-        throw new Error('Hóa đơn này đã được hoàn trả trước đó');
+        throw new Error('Hóa đơn này đã được hoàn trả trước đó, không thể hủy lần thứ hai!');
       }
 
-      // Hoàn trả lại số lượng vào bảng Product
+      // 1. Hoàn trả lại tồn kho chính xác theo quy cách đóng gói
       for (const item of invoice.items) {
-        await tx.product.update({
-          where: { ProductID: item.ProductID },
-          data: { Quantity: { increment: item.Quantity } },
+        if (!item.product) continue;
+
+        // Nếu hóa đơn cũ chưa có BaseQuantityDeducted -> Hoàn trả số lượng an toàn theo Quantity
+        const packagesDeducted =
+          item.BaseQuantityDeducted !== null ? item.BaseQuantityDeducted : item.Quantity;
+        const smallestUnitsDeducted =
+          item.LooseUnitsDeducted !== null ? item.LooseUnitsDeducted : item.Quantity;
+
+        await packagingService.restoreStockOnRefund(
+          item.product,
+          packagesDeducted,
+          smallestUnitsDeducted,
+          tx
+        );
+      }
+
+      // 2. Hoàn trả điểm tích lũy đã dùng & Thu hồi điểm thưởng đã cộng
+      if (invoice.CustomerID && invoice.customer) {
+        const restoredPoints =
+          invoice.customer.LoyaltyPoints + invoice.UsedPoints - invoice.PointsEarned;
+        await tx.customer.update({
+          where: { CustomerID: invoice.CustomerID },
+          data: { LoyaltyPoints: Math.max(0, restoredPoints) },
         });
       }
 
+      // 3. Cập nhật trạng thái Payment sang REFUNDED
       if (invoice.payment) {
         await tx.payment.update({
           where: { PaymentID: invoice.payment.PaymentID },
@@ -260,6 +300,7 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
         });
       }
 
+      // 4. Cập nhật trạng thái Invoice sang REFUNDED
       return tx.invoice.update({
         where: { InvoiceID: invoiceId },
         data: { Status: 'REFUNDED' },
@@ -273,7 +314,7 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
 
     res.json({
       success: true,
-      message: `Đã hoàn trả hóa đơn ${updated.InvoiceCode} và nhập lại thuốc vào kho`,
+      message: `Đã hoàn trả hóa đơn ${updated.InvoiceCode}, cộng trả thuốc vào kho và khôi phục điểm tích lũy thành công!`,
       data: {
         ...updated,
         Status: 'CANCELLED',

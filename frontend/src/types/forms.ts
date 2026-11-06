@@ -14,7 +14,10 @@ export interface InvoiceItemRecord {
   InvoiceID: number;
   ProductID: number;
   Quantity: number;
+  Unit?: string;
   UnitPrice: number;
+  BaseQuantityDeducted?: number;
+  LooseUnitsDeducted?: number;
   DosageNote?: string;
   product: Product;
 }
@@ -59,6 +62,9 @@ export interface InvoiceRecord {
   CustomerPhone?: string;
   SubTotal?: number;
   Discount?: number;
+  UsedPoints?: number;
+  PointsDiscount?: number;
+  PointsEarned?: number;
   TotalAmount: number;
   Status: 'COMPLETED' | 'CANCELLED' | string;
   Note?: string;
@@ -73,12 +79,13 @@ export interface CreateInvoicePayload {
   CustomerName: string;
   CustomerPhone: string;
   Discount?: number;
+  UsedPoints?: number;
   Note: string;
   PaymentMethod: 'CASH' | 'VIETQR' | 'CARD';
   items: Array<{
     ProductID: number;
     Quantity: number;
-    UnitMode?: 'BASE' | 'BLISTER' | 'PILL';
+    Unit?: string;
     DosageNote: string;
   }>;
 }

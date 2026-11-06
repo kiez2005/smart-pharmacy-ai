@@ -7,6 +7,8 @@ export interface MatchedPrescriptionItem {
   quantity: number;
   dosage: string;
   matchedProduct: Product | null;
+  inStock?: boolean;
+  status?: 'IN_STOCK' | 'OUT_OF_STOCK' | 'NOT_FOUND';
 }
 
 export interface OcrPrescriptionResult {
@@ -52,7 +54,8 @@ class AiGatewayService {
   public async processPrescriptionOcr(
     fileBuffer: Buffer,
     originalName: string,
-    presetHint = ''
+    presetHint = '',
+    isDemo = false
   ): Promise<OcrPrescriptionResult> {
     const allProducts = await prisma.product.findMany();
     const fuse = new Fuse(allProducts, {
@@ -60,12 +63,41 @@ class AiGatewayService {
       threshold: 0.45,
     });
 
+    const lowerName = originalName.toLowerCase();
+    const isBlankName = ['blank', 'trang', 'empty', 'white'].some((k) => lowerName.includes(k));
+
+    // Tiêu chí từ chối ảnh lỗi: ảnh trắng, ảnh hỏng, ảnh không đủ dữ liệu
+    if (!isDemo && fileBuffer.length < 300) {
+      throw new Error('Tệp hình ảnh quá nhỏ hoặc bị hỏng, không đủ dữ liệu để xử lý OCR.');
+    }
+
+    if (!isDemo && isBlankName) {
+      throw new Error('Không nhận dạng được văn bản từ ảnh: Hình ảnh đơn thuốc bị trắng hoặc không có nội dung chữ.');
+    }
+
+    if (!isDemo && fileBuffer.length > 0) {
+      const sampleSize = Math.min(fileBuffer.length, 1024);
+      let sum = 0;
+      let sumSq = 0;
+      for (let i = 0; i < sampleSize; i++) {
+        const b = fileBuffer[i];
+        sum += b;
+        sumSq += b * b;
+      }
+      const mean = sum / sampleSize;
+      const variance = (sumSq / sampleSize) - (mean * mean);
+      if (variance < 15) {
+        throw new Error('Không nhận dạng được văn bản từ ảnh: Hình ảnh đồng nhất hoặc quá mờ, không có nét chữ đơn thuốc.');
+      }
+    }
+
     // Thử gọi sang Python OpenCV + OCR Service (Port 8000)
     try {
       const formData = new FormData();
       const blob = new Blob([new Uint8Array(fileBuffer)], { type: 'image/png' });
       formData.append('file', blob, originalName);
       formData.append('preset_hint', presetHint);
+      formData.append('is_demo', isDemo ? 'true' : 'false');
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
@@ -92,11 +124,14 @@ class AiGatewayService {
 
         const matchedItems: MatchedPrescriptionItem[] = pyData.detected_items.map((det) => {
           const hit = fuse.search(det.keyword)[0];
+          const matchedProd = hit ? hit.item : null;
           return {
             keyword: det.keyword,
             quantity: det.quantity,
             dosage: det.dosage,
-            matchedProduct: hit ? hit.item : null,
+            matchedProduct: matchedProd,
+            inStock: Boolean(matchedProd && matchedProd.Quantity > 0),
+            status: !matchedProd ? 'NOT_FOUND' : matchedProd.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
           };
         });
 
@@ -111,53 +146,113 @@ class AiGatewayService {
           rawOcrText: pyData.raw_ocr_text,
           items: matchedItems,
         };
+      } else {
+        const errJson = (await response.json().catch(() => null)) as { detail?: string } | null;
+        if (errJson?.detail) {
+          throw new Error(errJson.detail);
+        }
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Không nhận dạng được')) {
+        throw err;
+      }
       // Tự động chuyển sang Fallback trên Node.js nếu Python AI Service chưa bật
     }
 
     // Fallback & Custom Text Parsing trực tiếp trên Node.js
     const lowerHint = `${originalName} ${presetHint}`.toLowerCase();
-    let fallbackDetected: Array<{ keyword: string; quantity: number; dosage: string }> = [];
+    let fallbackDetected: Array<MatchedPrescriptionItem> = [];
 
     if (presetHint && presetHint.includes('\n')) {
       const lines = presetHint
         .split('\n')
         .map((l) => l.trim())
-        .filter((l) => l.length > 3);
+        .filter((l) => l.length > 2);
+
       for (const line of lines) {
         const hit = fuse.search(line)[0];
+        const qtyMatch = line.match(/(\d+)\s*(hộp|vỉ|viên|chai|tuýp|ống|gói)?/i);
+        const qty = qtyMatch ? Math.max(1, Number(qtyMatch[1])) : 1;
+        const cleanName = line.replace(/^\d+[\.\-\)]\s*/, '').split(/[—–-]/)[0].trim();
+
         if (hit) {
-          const qtyMatch = line.match(/(\d+)\s*(hộp|vỉ|viên|chai|tuýp|ống|gói)/i);
           fallbackDetected.push({
             keyword: hit.item.ProductName,
-            quantity: qtyMatch ? Math.max(1, Number(qtyMatch[1])) : 1,
+            quantity: qty,
             dosage: line,
+            matchedProduct: hit.item,
+            inStock: hit.item.Quantity > 0,
+            status: hit.item.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
+          });
+        } else {
+          // Thuốc ngoài danh mục
+          fallbackDetected.push({
+            keyword: cleanName || line,
+            quantity: qty,
+            dosage: line,
+            matchedProduct: null,
+            inStock: false,
+            status: 'NOT_FOUND',
           });
         }
       }
     }
 
     if (fallbackDetected.length === 0) {
-      if (lowerHint.includes('da-day') || lowerHint.includes('dạ dày')) {
-        fallbackDetected = [
-          { keyword: 'Phosphalugel', quantity: 1, dosage: 'Uống 1 gói sau ăn hoặc khi đau thượng vị' },
-          { keyword: 'Omeprazol 20mg', quantity: 1, dosage: 'Uống 1 viên trước ăn sáng 30 phút' },
-          { keyword: 'Enterogermina', quantity: 1, dosage: 'Sáng 1 ống, Chiều 1 ống' },
-        ];
-      } else if (lowerHint.includes('khang-sinh') || lowerHint.includes('viêm họng')) {
-        fallbackDetected = [
-          { keyword: 'Augmentin 1g', quantity: 1, dosage: 'Uống 1 viên x 2 lần/ngày sau ăn' },
-          { keyword: 'Efferalgan 500mg', quantity: 1, dosage: 'Pha 1 viên sủi khi sốt > 38.5°C' },
-          { keyword: 'Alpha Choay', quantity: 1, dosage: 'Ngậm dưới lưỡi 2 viên x 2 lần/ngày' },
-        ];
+      if (isDemo) {
+        if (lowerHint.includes('da-day') || lowerHint.includes('dạ dày')) {
+          const rawItems = [
+            { keyword: 'Phosphalugel', quantity: 1, dosage: 'Uống 1 gói sau ăn hoặc khi đau thượng vị' },
+            { keyword: 'Omeprazol 20mg', quantity: 1, dosage: 'Uống 1 viên trước ăn sáng 30 phút' },
+            { keyword: 'Enterogermina', quantity: 1, dosage: 'Sáng 1 ống, Chiều 1 ống' },
+          ];
+          fallbackDetected = rawItems.map((r) => {
+            const hit = fuse.search(r.keyword)[0];
+            const p = hit ? hit.item : null;
+            return {
+              ...r,
+              matchedProduct: p,
+              inStock: Boolean(p && p.Quantity > 0),
+              status: !p ? 'NOT_FOUND' : p.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
+            };
+          });
+        } else if (lowerHint.includes('khang-sinh') || lowerHint.includes('viêm họng') || lowerHint.includes('amidan')) {
+          const rawItems = [
+            { keyword: 'Augmentin 1g', quantity: 1, dosage: 'Uống 1 viên x 2 lần/ngày sau ăn' },
+            { keyword: 'Efferalgan 500mg', quantity: 1, dosage: 'Pha 1 viên sủi khi sốt > 38.5°C' },
+            { keyword: 'Alpha Choay', quantity: 1, dosage: 'Ngậm dưới lưỡi 2 viên x 2 lần/ngày' },
+          ];
+          fallbackDetected = rawItems.map((r) => {
+            const hit = fuse.search(r.keyword)[0];
+            const p = hit ? hit.item : null;
+            return {
+              ...r,
+              matchedProduct: p,
+              inStock: Boolean(p && p.Quantity > 0),
+              status: !p ? 'NOT_FOUND' : p.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
+            };
+          });
+        } else {
+          const rawItems = [
+            { keyword: 'Panadol Extra', quantity: 1, dosage: 'Uống 1 viên khi sốt > 38.5°C (cách 4-6h)' },
+            { keyword: 'Siro Ho Prospan', quantity: 1, dosage: 'Uống 5ml x 3 lần/ngày sau ăn' },
+            { keyword: 'Strepsils Cool', quantity: 2, dosage: 'Ngậm 1 viên mỗi 3-4 giờ' },
+            { keyword: 'Berocca', quantity: 1, dosage: 'Pha 1 viên sủi uống buổi sáng' },
+          ];
+          fallbackDetected = rawItems.map((r) => {
+            const hit = fuse.search(r.keyword)[0];
+            const p = hit ? hit.item : null;
+            return {
+              ...r,
+              matchedProduct: p,
+              inStock: Boolean(p && p.Quantity > 0),
+              status: !p ? 'NOT_FOUND' : p.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
+            };
+          });
+        }
       } else {
-        fallbackDetected = [
-          { keyword: 'Panadol Extra', quantity: 1, dosage: 'Uống 1 viên khi sốt > 38.5°C (cách 4-6h)' },
-          { keyword: 'Siro Ho Prospan', quantity: 1, dosage: 'Uống 5ml x 3 lần/ngày sau ăn' },
-          { keyword: 'Strepsils Cool', quantity: 2, dosage: 'Ngậm 1 viên mỗi 3-4 giờ' },
-          { keyword: 'Berocca', quantity: 1, dosage: 'Pha 1 viên sủi uống buổi sáng' },
-        ];
+        // Ảnh thật nhưng không đọc được dòng thuốc nào
+        throw new Error('Không nhận dạng được dòng thuốc nào từ hình ảnh này. Vui lòng chụp rõ nét đơn thuốc của bác sĩ hoặc nhập trực tiếp tên thuốc.');
       }
     }
 
@@ -180,15 +275,7 @@ class AiGatewayService {
         fallbackDetected
           .map((d, i) => `${i + 1}. ${d.keyword} — SL: ${d.quantity} (${d.dosage})`)
           .join('\n'),
-      items: fallbackDetected.map((det) => {
-        const hit = fuse.search(det.keyword)[0];
-        return {
-          keyword: det.keyword,
-          quantity: det.quantity,
-          dosage: det.dosage,
-          matchedProduct: hit ? hit.item : null,
-        };
-      }),
+      items: fallbackDetected,
     };
   }
 

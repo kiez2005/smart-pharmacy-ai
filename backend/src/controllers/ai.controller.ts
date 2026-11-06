@@ -11,11 +11,21 @@ const diagnoseSchema = z.object({
  */
 export const ocrPrescription = async (req: Request, res: Response): Promise<void> => {
   try {
+    const isDemo = req.body?.isDemo === true || req.body?.isDemo === 'true';
     const presetHint = String(req.body?.presetHint || '');
+
+    if (!req.file && !isDemo && !presetHint.trim()) {
+      res.status(400).json({
+        success: false,
+        message: 'Vui lòng chọn ảnh đơn thuốc thực tế hoặc chọn mẫu đơn demo.',
+      });
+      return;
+    }
+
     const buffer = req.file ? req.file.buffer : Buffer.from('demo-prescription-image');
     const filename = req.file ? req.file.originalname : `${presetHint || 'don-thuoc-cam-cum'}.png`;
 
-    const result = await aiGatewayService.processPrescriptionOcr(buffer, filename, presetHint);
+    const result = await aiGatewayService.processPrescriptionOcr(buffer, filename, presetHint, isDemo);
 
     res.json({
       success: true,
@@ -23,9 +33,9 @@ export const ocrPrescription = async (req: Request, res: Response): Promise<void
       data: result,
     });
   } catch (error) {
-    res.status(500).json({
+    res.status(400).json({
       success: false,
-      message: 'Lỗi khi xử lý OCR đơn thuốc',
+      message: error instanceof Error ? error.message : 'Không thể xử lý OCR đơn thuốc',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }

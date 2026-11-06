@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { apiClient } from './apiClient';
 import {
   CustomerRecord,
   DashboardAnalytics,
@@ -12,10 +12,13 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
-const http = axios.create({
-  baseURL: `${API_BASE_URL}/enterprise`,
-  timeout: 15000,
-});
+const http = {
+  get: <T = any>(url: string, config?: any) => apiClient.get<T>(`/enterprise${url}`, config),
+  post: <T = any>(url: string, data?: any, config?: any) => apiClient.post<T>(`/enterprise${url}`, data, config),
+  put: <T = any>(url: string, data?: any, config?: any) => apiClient.put<T>(`/enterprise${url}`, data, config),
+  patch: <T = any>(url: string, data?: any, config?: any) => apiClient.patch<T>(`/enterprise${url}`, data, config),
+  delete: <T = any>(url: string, config?: any) => apiClient.delete<T>(`/enterprise${url}`, config),
+};
 
 export const enterpriseApi = {
   async getDashboard(): Promise<DashboardAnalytics> {

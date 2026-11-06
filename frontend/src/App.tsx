@@ -73,12 +73,34 @@ export const App: React.FC = () => {
   const [selectedBranch, setSelectedBranch] = useState<string>('CS1 - Nhà thuốc Trung Tâm (GPP)');
   const [syncingNationalPortal, setSyncingNationalPortal] = useState<boolean>(false);
 
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>({
-    UserID: 1,
-    FullName: 'DS. Nguyễn Văn Trung',
-    Email: 'trung.nguyen@pharmacore.vn',
-    Role: 'ADMIN',
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    const savedUser = localStorage.getItem('pharmacore_user');
+    if (savedUser) {
+      try {
+        return JSON.parse(savedUser);
+      } catch {
+        return null;
+      }
+    }
+    return {
+      UserID: 1,
+      FullName: 'DS. Nguyễn Văn Trung',
+      Email: 'trung.nguyen@pharmacore.vn',
+      Role: 'ADMIN',
+    };
   });
+
+  // Lắng nghe sự kiện hết hạn token 401 từ Axios Interceptor
+  React.useEffect(() => {
+    const handleUnauthorized = () => {
+      setCurrentUser(null);
+      localStorage.removeItem('pharmacore_token');
+      localStorage.removeItem('pharmacore_user');
+      toast.error('Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại!');
+    };
+    window.addEventListener('pharmacore_unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('pharmacore_unauthorized', handleUnauthorized);
+  }, []);
 
   const handleOpenStockCard = (productId: number) => {
     setSelectedStockCardProductId(productId);
@@ -493,8 +515,16 @@ export const App: React.FC = () => {
           {activeTab === 'AUTH' && (
             <AuthPage
               currentUser={currentUser}
-              onAuthSuccess={(user) => setCurrentUser(user)}
-              onLogout={() => setCurrentUser(null)}
+              onAuthSuccess={(user, token) => {
+                setCurrentUser(user);
+                localStorage.setItem('pharmacore_user', JSON.stringify(user));
+                if (token) localStorage.setItem('pharmacore_token', token);
+              }}
+              onLogout={() => {
+                setCurrentUser(null);
+                localStorage.removeItem('pharmacore_token');
+                localStorage.removeItem('pharmacore_user');
+              }}
             />
           )}
         </main>

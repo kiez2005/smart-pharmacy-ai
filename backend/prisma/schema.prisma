@@ -28,6 +28,25 @@ model Product {
 
   invoiceItems       InvoiceItem[]
   purchaseOrderItems PurchaseOrderItem[]
+  packaging          ProductPackaging?
+}
+
+// ============================================================================
+// 1b. BẢNG QUY CÁCH ĐÓNG GÓI & QUẢN LÝ TỒN KHO LẺ DỞ DANG (PRODUCT_PACKAGING)
+// ============================================================================
+model ProductPackaging {
+  PackagingID         Int      @id @default(autoincrement())
+  ProductID           Int      @unique
+  PackageUnit         String   // Đơn vị bao gói lớn nhất (VD: "Hộp", "Lọ", "Chai", "Tuýp")
+  BlisterUnit         String?  // Đơn vị trung gian (VD: "Vỉ" nếu có)
+  BlistersPerPackage  Int?     // Số vỉ trong 1 hộp (VD: 25)
+  SmallestUnit        String   // Đơn vị nhỏ nhất có thể bán (VD: "Viên", "Gói", "Ống", "Chai")
+  UnitsPerPackage     Int      @default(1) // Tổng số đơn vị nhỏ nhất trong 1 hộp (VD: 100 viên, 30 gói)
+  UnitsPerBlister     Int?     // Số viên trong 1 vỉ (VD: 4 viên/vỉ)
+  LooseUnits          Int      @default(0) // Số đơn vị nhỏ nhất lẻ dở dang đang mở trong kho
+  AllowFractionalSale Boolean  @default(true) // Cho phép bán lẻ vỉ/viên
+
+  product             Product  @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
 }
 
 // ============================================================================
@@ -126,6 +145,9 @@ model Invoice {
   CustomerID    Int?
   Note          String?
   Discount      Float         @default(0)
+  UsedPoints    Int           @default(0)
+  PointsDiscount Float        @default(0)
+  PointsEarned  Int           @default(0)
   TotalAmount   Float         @default(0)
   Status        String        @default("PAID") // PAID | REFUNDED
   CreateDate    DateTime      @default(now())
@@ -139,12 +161,15 @@ model Invoice {
 }
 
 model InvoiceItem {
-  ItemID      Int     @id @default(autoincrement())
-  InvoiceID   Int
-  ProductID   Int
-  Quantity    Int     @default(1)
-  UnitPrice   Float   @default(0)
-  DosageNote  String?
+  ItemID               Int     @id @default(autoincrement())
+  InvoiceID            Int
+  ProductID            Int
+  Quantity             Int     @default(1)
+  Unit                 String?
+  UnitPrice            Float   @default(0)
+  BaseQuantityDeducted Int?
+  LooseUnitsDeducted   Int?
+  DosageNote           String?
 
   invoice     Invoice @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
   product     Product @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)

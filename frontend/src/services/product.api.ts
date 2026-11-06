@@ -1,12 +1,7 @@
-import axios from 'axios';
+import { apiClient as http } from './apiClient';
 import { ExportFormat, Product, ProductFormValues, ProductListResponse } from '../types/product';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-
-const http = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 15000,
-});
 
 export interface FetchProductsParams {
   page: number;
@@ -19,6 +14,12 @@ export interface FetchProductsParams {
 }
 
 export const productApi = {
+  // Lấy toàn bộ danh mục thuốc
+  async getAllProducts(): Promise<Product[]> {
+    const res = await this.list({ page: 1, limit: 100 });
+    return res.items;
+  },
+
   // #1 & #6: Phân trang (10-15 item/page) + Tìm kiếm thông minh
   async list(params: FetchProductsParams): Promise<ProductListResponse> {
     const res = await http.get<{ success: boolean; data: ProductListResponse }>('/products', {

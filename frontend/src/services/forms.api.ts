@@ -1,17 +1,10 @@
-import axios from 'axios';
+import { apiClient as http } from './apiClient';
 import {
   ContactRecord,
   CreateInvoicePayload,
   InvoiceRecord,
   UserProfile,
 } from '../types/forms';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-
-const http = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 15000,
-});
 
 export const formsApi = {
   // Form Đăng nhập & Đăng ký
@@ -20,6 +13,11 @@ export const formsApi = {
       success: boolean;
       data: { token: string; user: UserProfile };
     }>('/auth/login', { Email, Password });
+
+    if (res.data.data.token) {
+      localStorage.setItem('pharmacore_token', res.data.data.token);
+      localStorage.setItem('pharmacore_user', JSON.stringify(res.data.data.user));
+    }
     return res.data.data;
   },
 
@@ -28,12 +26,21 @@ export const formsApi = {
     Email: string;
     Password: string;
     Phone: string;
-  }): Promise<{ token: string; user: UserProfile }> {
+  }): Promise<{ message: string; user: UserProfile }> {
     const res = await http.post<{
       success: boolean;
-      data: { token: string; user: UserProfile };
+      message: string;
+      data: { user: UserProfile };
     }>('/auth/register', payload);
-    return res.data.data;
+    return {
+      message: res.data.message,
+      user: res.data.data.user,
+    };
+  },
+
+  logout(): void {
+    localStorage.removeItem('pharmacore_token');
+    localStorage.removeItem('pharmacore_user');
   },
 
   // Form Hóa đơn & Thanh toán

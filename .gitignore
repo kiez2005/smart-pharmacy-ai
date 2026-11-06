@@ -28,6 +28,7 @@ __pycache__/
 venv/
 
 # IDE & OS
+.archify/
 .vscode/
 .idea/
 .DS_Store

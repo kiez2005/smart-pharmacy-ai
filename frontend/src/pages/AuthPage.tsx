@@ -181,9 +181,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           Password: password,
           Phone: phone,
         });
-        toast.success(`Đã tạo tài khoản nhân sự: ${res.user.FullName}`);
-        onAuthSuccess(res.user, res.token);
+        toast.info(res.message || 'Đăng ký thành công! Tài khoản đang chờ Quản trị viên kích hoạt.');
         setFullName('');
+        setEmail('');
+        setPassword('');
         setShowAuthModal(false);
         await loadStaff();
       }

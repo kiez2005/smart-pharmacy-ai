@@ -5,6 +5,8 @@ export interface MatchedPrescriptionItem {
   quantity: number;
   dosage: string;
   matchedProduct: Product | null;
+  inStock?: boolean;
+  status?: 'IN_STOCK' | 'OUT_OF_STOCK' | 'NOT_FOUND';
 }
 
 export interface OcrPrescriptionResponse {

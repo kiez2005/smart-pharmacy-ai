@@ -3,15 +3,14 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
+import { JWT_SECRET } from '../config/env';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'smart_pharmacy_d18cnpm5_secret_key_2026';
-
+// Schema đăng ký tài khoản công khai: Bỏ hoàn toàn trường Role để chống leo thang đặc quyền
 const registerSchema = z.object({
   FullName: z.string().trim().min(2, 'Họ tên phải có ít nhất 2 ký tự'),
   Email: z.string().trim().email('Email không hợp lệ'),
   Password: z.string().min(6, 'Mật khẩu phải có ít nhất 6 ký tự'),
   Phone: z.string().trim().optional().default(''),
-  Role: z.enum(['ADMIN', 'PHARMACIST', 'CUSTOMER']).optional().default('PHARMACIST'),
 });
 
 const loginSchema = z.object({
@@ -21,6 +20,7 @@ const loginSchema = z.object({
 
 /**
  * FORM ĐĂNG KÝ TÀI KHOẢN (POST /api/auth/register)
+ * Mọi tài khoản tạo mới mặc định nhận Role="CASHIER" và Status="INACTIVE" (Chờ Admin duyệt)
  */
 export const registerUser = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -34,7 +34,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const { FullName, Email, Password, Phone, Role } = parsed.data;
+    const { FullName, Email, Password, Phone } = parsed.data;
     const existing = await prisma.user.findUnique({ where: { Email } });
     if (existing) {
       res.status(409).json({
@@ -51,27 +51,23 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
         Email,
         Password: hashedPassword,
         Phone,
-        Role,
+        Role: 'CASHIER', // Quyền thấp nhất mặc định
+        Status: 'INACTIVE', // Chờ Admin duyệt kích hoạt
       },
     });
 
-    const token = jwt.sign(
-      { UserID: user.UserID, Email: user.Email, Role: user.Role },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
     res.status(201).json({
       success: true,
-      message: 'Đăng ký tài khoản thành công',
+      message:
+        'Đăng ký tài khoản thành công! Tài khoản đang ở trạng thái chờ Quản trị viên kích hoạt trước khi có thể đăng nhập.',
       data: {
-        token,
         user: {
           UserID: user.UserID,
           FullName: user.FullName,
           Email: user.Email,
           Phone: user.Phone,
           Role: user.Role,
+          Status: user.Status,
         },
       },
     });
@@ -86,6 +82,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
 
 /**
  * FORM ĐĂNG NHẬP HỆ THỐNG (POST /api/auth/login)
+ * Từ chối đăng nhập nếu tài khoản có Status !== 'ACTIVE'
  */
 export const loginUser = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -118,8 +115,23 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Kiểm tra trạng thái kích hoạt tài khoản
+    if (user.Status !== 'ACTIVE') {
+      res.status(403).json({
+        success: false,
+        message:
+          'Tài khoản của bạn đang ở trạng thái chờ Quản trị viên kích hoạt hoặc đã bị khóa. Vui lòng liên hệ Admin!',
+      });
+      return;
+    }
+
     const token = jwt.sign(
-      { UserID: user.UserID, Email: user.Email, Role: user.Role },
+      {
+        UserID: user.UserID,
+        Email: user.Email,
+        Role: user.Role,
+        FullName: user.FullName,
+      },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -135,6 +147,7 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
           Email: user.Email,
           Phone: user.Phone,
           Role: user.Role,
+          Status: user.Status,
         },
       },
     });
@@ -142,6 +155,44 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({
       success: false,
       message: 'Lỗi máy chủ khi đăng nhập',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * LẤY THÔNG TIN TÀI KHOẢN ĐANG ĐĂNG NHẬP (GET /api/auth/me)
+ */
+export const getMe = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Chưa đăng nhập' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { UserID: req.user.UserID },
+      select: {
+        UserID: true,
+        FullName: true,
+        Email: true,
+        Phone: true,
+        Role: true,
+        Status: true,
+        CreateDate: true,
+      },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'Không tìm thấy người dùng' });
+      return;
+    }
+
+    res.json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy thông tin người dùng',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }

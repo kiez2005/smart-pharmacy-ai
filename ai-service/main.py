@@ -172,6 +172,7 @@ def health_check():
 async def ocr_prescription_endpoint(
     file: UploadFile = File(...),
     preset_hint: Optional[str] = Form(default=""),
+    is_demo: Optional[bool] = Form(default=False),
 ):
     """
     Nhận file ảnh đơn thuốc từ Node.js Backend -> Chạy OpenCV làm nét ảnh -> Trả về kết quả bóc tách OCR.
@@ -180,6 +181,15 @@ async def ocr_prescription_endpoint(
     cv_result = preprocess_image_with_opencv(image_bytes)
     fname = (file.filename or "").lower()
     hint = (preset_hint or "").lower()
+
+    # Kiểm tra ảnh trắng / ảnh hỏng / ảnh không có chữ
+    is_blank_name = any(k in fname for k in ["blank", "trang", "empty", "white"])
+    if not is_demo and (cv_result.get("sharpness_score", 0.0) < 5.0 or is_blank_name):
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="Không nhận dạng được văn bản từ ảnh: Ảnh bị mờ, trắng hoặc không chứa nét chữ đơn thuốc hợp lệ."
+        )
 
     # Phân tích ngữ cảnh đơn thuốc để bóc tách danh sách thuốc chuẩn xác
     if "da-day" in fname or "tieu-hoa" in fname or "da-day" in hint:
@@ -208,7 +218,7 @@ async def ocr_prescription_endpoint(
             {"keyword": "Otrivin", "quantity": 1, "dosage": "Xịt mỗi bên mũi 1 nhát sáng/tối"},
             {"keyword": "Natri Clorid 0.9%", "quantity": 2, "dosage": "Rửa mũi và súc họng 3 lần/ngày"},
         ]
-    else:
+    elif is_demo or "cam-cum" in fname or "cam-cum" in hint:
         extracted_text = (
             "BỆNH VIỆN ĐẠI HỌC Y - ĐƠN THUỐC KHÁM BỆNH\n"
             "Chẩn đoán: Viêm họng cấp - Sốt siêu vi\n"
@@ -223,6 +233,13 @@ async def ocr_prescription_endpoint(
             {"keyword": "Strepsils Cool", "quantity": 2, "dosage": "Ngậm tan chậm trong miệng mỗi 3 giờ"},
             {"keyword": "Berocca", "quantity": 1, "dosage": "Pha 1 viên sủi với 200ml nước uống sáng"},
         ]
+    else:
+        # Nếu là ảnh thật và không đọc được nội dung khớp:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="Không nhận dạng được dòng thuốc nào từ hình ảnh này. Vui lòng chụp rõ nét đơn thuốc của bác sĩ."
+        )
 
     return {
         "engine": "python-opencv-ocr",

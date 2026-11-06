@@ -77,6 +77,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   const [customerName, setCustomerName] = useState<string>('Khách vãng lai');
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [discount, setDiscount] = useState<number>(0);
+  const [usedPoints, setUsedPoints] = useState<number>(0);
   const [cashTendered, setCashTendered] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<'VIETQR' | 'CASH' | 'CARD'>('VIETQR');
   const [note, setNote] = useState<string>('Tư vấn uống đúng liều, tránh rượu bia');
@@ -170,25 +171,58 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     });
   }, [products, selectedCategory, search]);
 
+  const getPackagingSpec = (product: Product) => {
+    return (
+      product.packaging || {
+        PackageUnit: product.Unit,
+        BlisterUnit: product.Unit === 'Hộp' ? 'Vỉ' : null,
+        BlistersPerPackage: product.Unit === 'Hộp' ? 10 : null,
+        SmallestUnit: product.Unit === 'Hộp' ? 'Viên' : product.Unit,
+        UnitsPerPackage: product.Unit === 'Hộp' ? 100 : 1,
+        UnitsPerBlister: product.Unit === 'Hộp' ? 10 : null,
+        LooseUnits: 0,
+        AllowFractionalSale: product.Unit === 'Hộp',
+      }
+    );
+  };
+
   const getEffectivePrice = (product: Product, mode: RetailUnitMode = 'BASE') => {
-    if (mode === 'BLISTER') return Math.max(1000, Math.round(product.Price / 10));
-    if (mode === 'PILL') return Math.max(500, Math.round(product.Price / 50));
+    const spec = getPackagingSpec(product);
+    if (mode === 'BLISTER' && spec.BlistersPerPackage && spec.BlistersPerPackage > 1) {
+      return Math.max(1000, Math.round(product.Price / spec.BlistersPerPackage));
+    }
+    if (mode === 'PILL' && spec.UnitsPerPackage > 1) {
+      return Math.max(500, Math.round(product.Price / spec.UnitsPerPackage));
+    }
     return product.Price;
   };
 
+  const getUnitName = (product: Product, mode: RetailUnitMode = 'BASE') => {
+    const spec = getPackagingSpec(product);
+    if (mode === 'BLISTER') return spec.BlisterUnit || 'Vỉ';
+    if (mode === 'PILL') return spec.SmallestUnit || 'Viên';
+    return spec.PackageUnit || product.Unit;
+  };
+
   const getUnitLabel = (product: Product, mode: RetailUnitMode = 'BASE') => {
-    if (mode === 'BLISTER') return 'Vỉ lẻ (1/10 Hộp)';
-    if (mode === 'PILL') return 'Viên lẻ';
-    return product.Unit;
+    const spec = getPackagingSpec(product);
+    if (mode === 'BLISTER') {
+      return `${spec.BlisterUnit || 'Vỉ'} (${spec.UnitsPerBlister || 10} ${spec.SmallestUnit || 'Viên'})`;
+    }
+    if (mode === 'PILL') {
+      return `${spec.SmallestUnit || 'Viên'} lẻ`;
+    }
+    return `${spec.PackageUnit || product.Unit}`;
   };
 
   const getMaxStockForMode = (product: Product, mode: RetailUnitMode = 'BASE') => {
     if (product.Quantity <= 0) return 0;
-    if (mode === 'BLISTER') {
-      return product.Unit === 'Hộp' ? product.Quantity * 10 : product.Quantity;
+    const spec = getPackagingSpec(product);
+    if (mode === 'BLISTER' && spec.BlistersPerPackage) {
+      return product.Quantity * spec.BlistersPerPackage;
     }
-    if (mode === 'PILL') {
-      return product.Unit === 'Hộp' ? product.Quantity * 100 : product.Quantity * 10;
+    if (mode === 'PILL' && spec.UnitsPerPackage) {
+      return product.Quantity * spec.UnitsPerPackage + (spec.LooseUnits || 0);
     }
     return product.Quantity;
   };
@@ -289,17 +323,44 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     );
   };
 
-  const subTotal = cart.reduce(
-    (sum, i) => sum + getEffectivePrice(i.product, i.unitMode) * i.quantity,
-    0
+  const subTotal = useMemo(
+    () =>
+      cart.reduce((sum, item) => {
+        const mode = item.unitMode || 'BASE';
+        const price = getEffectivePrice(item.product, mode);
+        return sum + price * item.quantity;
+      }, 0),
+    [cart]
   );
-  const finalTotal = Math.max(0, subTotal - discount);
+
+  const maxRedeemablePoints = selectedCustomer
+    ? Math.min(selectedCustomer.LoyaltyPoints, Math.floor(subTotal / 1000))
+    : 0;
+  const pointDiscount = (usedPoints || 0) * 1000;
+  const maxAllowedCashDiscount = Math.max(0, subTotal - pointDiscount);
+  const finalTotal = Math.max(0, subTotal - (discount + pointDiscount));
   const changeAmount = Math.max(0, cashTendered - finalTotal);
 
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) {
       toast.error('Giỏ thuốc đang trống');
+      return;
+    }
+    if (discount < 0) {
+      toast.error('Số tiền chiết khấu không được âm!');
+      return;
+    }
+    if (discount + pointDiscount > subTotal) {
+      toast.error(
+        `Tổng giảm giá (${formatVND(discount + pointDiscount)}) không được vượt quá tổng tiền hàng (${formatVND(subTotal)})!`
+      );
+      return;
+    }
+    if (selectedCustomer && usedPoints > selectedCustomer.LoyaltyPoints) {
+      toast.error(
+        `Bệnh nhân chỉ có ${selectedCustomer.LoyaltyPoints} điểm, không đủ để quy đổi ${usedPoints} điểm!`
+      );
       return;
     }
     // Ràng buộc kiểm tra nghiêm ngặt: Tuyệt đối không cho thanh toán nếu có mặt hàng vượt tồn kho hoặc bằng 0
@@ -322,19 +383,21 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
         CustomerName: customerName,
         CustomerPhone: customerPhone,
         Discount: discount,
+        UsedPoints: usedPoints,
         Note: note,
         PaymentMethod: paymentMethod,
         items: cart.map((i) => ({
           ProductID: i.product.ProductID,
           Quantity: i.quantity,
-          UnitMode: i.unitMode || 'BASE',
-          DosageNote: `[ĐVT: ${getUnitLabel(i.product, i.unitMode)}] ${i.dosageNote}`,
+          Unit: getUnitName(i.product, i.unitMode),
+          DosageNote: `[ĐVT: ${getUnitName(i.product, i.unitMode)}] ${i.dosageNote}`,
         })),
       });
       setCompletedInvoice(created);
       setCart([]);
       setDiscount(0);
-      toast.success(`Đã xuất hóa đơn ${created.InvoiceCode} và trừ tồn kho theo FEFO!`);
+      setUsedPoints(0);
+      toast.success(`Đã xuất hóa đơn ${created.InvoiceCode} và trừ tồn kho theo quy cách!`);
       await loadPosData();
     } catch (err: unknown) {
       const msg =
@@ -642,9 +705,19 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               const mode = item.unitMode || 'BASE';
               const unitPrice = getEffectivePrice(item.product, mode);
               const maxStock = getMaxStockForMode(item.product, mode);
-              const isBox = (item.product.Unit || '').toLowerCase() === 'hộp';
-              const blisterMax = isBox ? item.product.Quantity * 10 : item.product.Quantity;
-              const pillMax = isBox ? item.product.Quantity * 100 : item.product.Quantity * 10;
+              const spec = getPackagingSpec(item.product);
+
+              const availableUnits: { id: RetailUnitMode; label: string }[] = [
+                { id: 'BASE', label: `${spec.PackageUnit || item.product.Unit} (${item.product.Quantity})` },
+              ];
+              if (spec.BlisterUnit && spec.BlistersPerPackage && spec.BlistersPerPackage > 1) {
+                const blisterMax = item.product.Quantity * spec.BlistersPerPackage;
+                availableUnits.push({ id: 'BLISTER', label: `${spec.BlisterUnit} (${blisterMax})` });
+              }
+              if (spec.AllowFractionalSale && spec.UnitsPerPackage > 1) {
+                const pillMax = item.product.Quantity * spec.UnitsPerPackage + (spec.LooseUnits || 0);
+                availableUnits.push({ id: 'PILL', label: `${spec.SmallestUnit || 'Viên'} (${pillMax})` });
+              }
 
               return (
                 <div key={item.product.ProductID} className="pt-3 first:pt-0 space-y-2">
@@ -668,7 +741,8 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                           {maxStock} {getUnitLabel(item.product, mode)}
                         </span>
                         <span className="text-slate-400">
-                          (Gốc: {item.product.Quantity} {item.product.Unit})
+                          (Gốc: {item.product.Quantity} {item.product.Unit}
+                          {spec.LooseUnits > 0 ? ` + ${spec.LooseUnits} ${spec.SmallestUnit} lẻ` : ''})
                         </span>
                       </div>
                     </div>
@@ -707,16 +781,10 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                     </div>
                   </div>
 
-                  {/* Bộ chọn Đơn vị quy đổi (Nguyên Hộp / Vỉ lẻ / Viên lẻ) */}
+                  {/* Bộ chọn Đơn vị quy đổi chuẩn quy cách đóng gói */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
-                      {(
-                        [
-                          { id: 'BASE', label: `${item.product.Unit} (${item.product.Quantity})` },
-                          { id: 'BLISTER', label: `Vỉ (${blisterMax})` },
-                          { id: 'PILL', label: `Viên (${pillMax})` },
-                        ] as const
-                      ).map((u) => (
+                      {availableUnits.map((u) => (
                         <button
                           key={u.id}
                           type="button"
@@ -757,22 +825,82 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
           </div>
 
           {/* Tính tiền & Chiết khấu */}
-          <div className="border-t border-slate-200 pt-3 space-y-2 text-xs">
+          <div className="border-t border-slate-200 pt-3 space-y-2.5 text-xs">
             <div className="flex justify-between text-slate-600">
               <span>Tổng tiền thuốc ({cart.reduce((s, i) => s + i.quantity, 0)} đơn vị):</span>
               <span className="font-semibold text-slate-900 tabular-nums">{formatVND(subTotal)}</span>
             </div>
 
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-slate-600">Chiết khấu / Đổi điểm thành viên (VNĐ):</span>
-              <input
-                type="number"
-                min={0}
-                step={1000}
-                value={discount}
-                onChange={(e) => setDiscount(Number(e.target.value))}
-                className="w-32 h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-right text-xs tabular-nums shadow-sm focus:border-teal-600 focus:outline-none"
-              />
+            {/* Đổi điểm tích lũy thành viên */}
+            {selectedCustomer && (
+              <div className="rounded-lg bg-teal-50 border border-teal-200/80 p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between text-teal-900">
+                  <span className="font-bold flex items-center gap-1.5 text-xs">
+                    <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                    Điểm tích lũy: {selectedCustomer.LoyaltyPoints || 0} điểm
+                  </span>
+                  <span className="text-[11px] text-teal-700">
+                    (1 điểm = 1.000 đ)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-600">Đổi điểm trừ tiền:</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={0}
+                      max={Math.min(selectedCustomer.LoyaltyPoints || 0, Math.floor(subTotal / 1000))}
+                      value={usedPoints}
+                      onChange={(e) => setUsedPoints(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-20 h-7 rounded border border-teal-300 bg-white px-2 text-right text-xs font-bold text-teal-800 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setUsedPoints(Math.min(selectedCustomer.LoyaltyPoints || 0, Math.floor(subTotal / 1000)))}
+                      className="text-[10px] px-2 py-1 bg-teal-700 text-white rounded hover:bg-teal-800 font-semibold"
+                    >
+                      Dùng tối đa
+                    </button>
+                  </div>
+                </div>
+                {usedPoints > 0 && (
+                  <div className="flex justify-between text-[11px] text-teal-800 font-semibold pt-1 border-t border-teal-200/60">
+                    <span>Trừ từ điểm thưởng ({usedPoints} điểm):</span>
+                    <span className="tabular-nums">-{formatVND(pointDiscount)}</span>
+                  </div>
+                )}
+                {usedPoints > (selectedCustomer.LoyaltyPoints || 0) && (
+                  <p className="text-[11px] text-rose-600 font-medium">
+                    Số điểm dùng vượt quá số dư ({selectedCustomer.LoyaltyPoints || 0} điểm)
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-600">Chiết khấu tiền mặt (VNĐ):</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={maxAllowedCashDiscount}
+                  step={1000}
+                  value={discount}
+                  onChange={(e) => setDiscount(Number(e.target.value))}
+                  className={`w-32 h-8 rounded-lg border bg-white px-2.5 text-right text-xs tabular-nums shadow-sm focus:outline-none ${
+                    discount < 0 || discount > maxAllowedCashDiscount
+                      ? 'border-rose-500 text-rose-600 focus:border-rose-600 focus:ring-1 focus:ring-rose-500'
+                      : 'border-slate-300 focus:border-teal-600'
+                  }`}
+                />
+              </div>
+              {(discount < 0 || discount > maxAllowedCashDiscount) && (
+                <p className="text-[11px] text-rose-600 text-right font-medium">
+                  {discount < 0
+                    ? 'Chiết khấu không được âm'
+                    : `Chiết khấu tối đa cho phép là ${formatVND(maxAllowedCashDiscount)}`}
+                </p>
+              )}
             </div>
 
             <div className="flex justify-between text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-100">
@@ -832,8 +960,14 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
           <button
             type="submit"
-            disabled={submitting || cart.length === 0}
-            className="w-full h-10 rounded-lg bg-teal-600 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-50 shadow-sm transition-colors"
+            disabled={
+              submitting ||
+              cart.length === 0 ||
+              discount < 0 ||
+              discount > maxAllowedCashDiscount ||
+              Boolean(selectedCustomer && usedPoints > (selectedCustomer.LoyaltyPoints || 0))
+            }
+            className="w-full h-10 rounded-lg bg-teal-600 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-colors"
           >
             {submitting
               ? 'Đang xuất hóa đơn...'

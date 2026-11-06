@@ -1,3 +1,16 @@
+export interface ProductPackaging {
+  PackagingID: number;
+  ProductID: number;
+  PackageUnit: string;
+  BlisterUnit?: string | null;
+  BlistersPerPackage?: number | null;
+  SmallestUnit: string;
+  UnitsPerPackage: number;
+  UnitsPerBlister?: number | null;
+  LooseUnits: number;
+  AllowFractionalSale: boolean;
+}
+
 // Kiểu dữ liệu chuẩn 10 trường bắt buộc của bảng Product theo Sheet "Yêu cầu bài tập lớn"
 export interface Product {
   ProductID: number;
@@ -10,6 +23,7 @@ export interface Product {
   Description: string;
   CreateDate: string;
   UpdateDate: string;
+  packaging?: ProductPackaging | null;
 }
 
 export interface ProductFormValues {
