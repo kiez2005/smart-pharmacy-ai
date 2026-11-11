@@ -18,6 +18,18 @@ const DEFAULT_VALUES: ProductFormValues = {
   Unit: 'Hộp',
   Price: 50000,
   Description: '',
+  packaging: {
+    PackageUnit: 'Hộp',
+    BlisterUnit: 'Vỉ',
+    SmallestUnit: 'Viên',
+    CartonUnit: 'Thùng',
+    BoxesPerCarton: 20,
+    BlistersPerPackage: 10,
+    UnitsPerPackage: 100,
+    AllowFractionalSale: true,
+    WholesalePrice: 44000,
+    MinWholesaleQty: 10,
+  },
 };
 
 const PRODUCT_TYPES = [
@@ -47,6 +59,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   useEffect(() => {
     if (editingProduct) {
+      const pkg = editingProduct.packaging;
+      const isTabletBox = editingProduct.Unit.toLowerCase().includes('hộp');
       setValues({
         ProductName: editingProduct.ProductName,
         PathImage: editingProduct.PathImage,
@@ -55,6 +69,18 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         Unit: editingProduct.Unit,
         Price: editingProduct.Price,
         Description: editingProduct.Description,
+        packaging: {
+          PackageUnit: editingProduct.Unit,
+          BlisterUnit: pkg?.BlisterUnit ?? (isTabletBox ? 'Vỉ' : null),
+          SmallestUnit: pkg?.SmallestUnit ?? (isTabletBox ? 'Viên' : editingProduct.Unit),
+          CartonUnit: pkg?.CartonUnit ?? 'Thùng',
+          BoxesPerCarton: pkg?.BoxesPerCarton ?? 20,
+          BlistersPerPackage: pkg?.BlistersPerPackage ?? (isTabletBox ? 10 : null),
+          UnitsPerPackage: pkg?.UnitsPerPackage ?? (isTabletBox ? 100 : 1),
+          AllowFractionalSale: pkg?.AllowFractionalSale ?? isTabletBox,
+          WholesalePrice: pkg?.WholesalePrice ?? Math.round((editingProduct.Price * 0.88) / 500) * 500,
+          MinWholesaleQty: pkg?.MinWholesaleQty ?? 10,
+        },
       });
     } else {
       setValues(DEFAULT_VALUES);
@@ -194,7 +220,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
-                  Giá bán niêm yết (VNĐ)
+                  Giá bán lẻ niêm yết (VNĐ / {values.Unit})
                 </label>
                 <input
                   type="number"
@@ -202,9 +228,137 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                   step={500}
                   required
                   value={values.Price}
-                  onChange={(e) => setValues({ ...values, Price: Number(e.target.value) })}
+                  onChange={(e) => {
+                    const price = Number(e.target.value);
+                    setValues({
+                      ...values,
+                      Price: price,
+                      packaging: {
+                        ...values.packaging,
+                        WholesalePrice: Math.round((price * 0.88) / 500) * 500,
+                      },
+                    });
+                  }}
                   className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 tabular-nums shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
                 />
+              </div>
+
+              {/* Khối Cấu hình Quy cách Đóng gói 4 cấp & Giá Bán Buôn B2B */}
+              <div className="sm:col-span-2 rounded-xl border border-teal-200/80 bg-teal-50/40 p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xs font-bold text-teal-900">
+                      Quy cách đóng gói 4 cấp (GPP) & Giá Bán Buôn Đại lý B2B (GDP)
+                    </h3>
+                    <p className="text-[11px] text-teal-700/80">
+                      Hỗ trợ bán lẻ cắt liều (Hộp → Vỉ → Viên) và xuất buôn nguyên Thùng/Hộp cho đại lý
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(values.packaging?.AllowFractionalSale)}
+                      onChange={(e) =>
+                        setValues({
+                          ...values,
+                          packaging: {
+                            ...values.packaging,
+                            AllowFractionalSale: e.target.checked,
+                          },
+                        })
+                      }
+                      className="rounded border-teal-300 text-teal-600 focus:ring-teal-500"
+                    />
+                    <span>Cho phép bán lẻ Vỉ/Viên</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Giá sỉ B2B (VNĐ/{values.Unit})
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={500}
+                      value={values.packaging?.WholesalePrice ?? Math.round(values.Price * 0.88)}
+                      onChange={(e) =>
+                        setValues({
+                          ...values,
+                          packaging: {
+                            ...values.packaging,
+                            WholesalePrice: Number(e.target.value),
+                          },
+                        })
+                      }
+                      className="w-full h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-semibold text-indigo-700 tabular-nums"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      SL tối thiểu hưởng giá sỉ
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={values.packaging?.MinWholesaleQty ?? 10}
+                      onChange={(e) =>
+                        setValues({
+                          ...values,
+                          packaging: {
+                            ...values.packaging,
+                            MinWholesaleQty: Number(e.target.value),
+                          },
+                        })
+                      }
+                      className="w-full h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900 tabular-nums"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Số {values.Unit} / 1 Thùng
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={values.packaging?.BoxesPerCarton ?? 20}
+                      onChange={(e) =>
+                        setValues({
+                          ...values,
+                          packaging: {
+                            ...values.packaging,
+                            BoxesPerCarton: Number(e.target.value),
+                          },
+                        })
+                      }
+                      className="w-full h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900 tabular-nums"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Tổng Viên / 1 {values.Unit}
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={values.packaging?.UnitsPerPackage ?? 100}
+                      onChange={(e) =>
+                        setValues({
+                          ...values,
+                          packaging: {
+                            ...values.packaging,
+                            UnitsPerPackage: Number(e.target.value),
+                          },
+                        })
+                      }
+                      className="w-full h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900 tabular-nums"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Hình ảnh sản phẩm: Tải file từ máy tính HOẶC nhập URL */}

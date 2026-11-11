@@ -80,10 +80,15 @@ export interface ProductStockCardResponse {
   exports: Array<{
     ItemID: number;
     Quantity: number;
+    Unit?: string;
+    BaseQuantityDeducted?: number;
+    LooseUnitsDeducted?: number;
     UnitPrice: number;
     DosageNote?: string;
     invoice: {
       InvoiceCode: string;
+      OrderType?: string;
+      Channel?: string;
       CustomerName: string;
       Status: string;
       CreateDate: string;

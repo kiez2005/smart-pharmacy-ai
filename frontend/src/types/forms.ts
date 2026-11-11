@@ -25,14 +25,16 @@ export interface InvoiceItemRecord {
 export interface PaymentRecord {
   PaymentID: number;
   InvoiceID: number;
-  PaymentMethod: 'CASH' | 'VIETQR' | 'CARD';
+  PaymentMethod: 'CASH' | 'VIETQR' | 'CARD' | 'CREDIT' | 'COD' | string;
   TransactionCode?: string;
   PaidAmount: number;
-  Status: 'PAID' | 'REFUNDED' | string;
+  Status: 'PAID' | 'REFUNDED' | 'PENDING' | 'PARTIAL' | string;
   PaymentDate: string;
   invoice?: {
     InvoiceID: number;
     InvoiceCode: string;
+    OrderType?: string;
+    Channel?: string;
     CustomerName: string;
     CustomerPhone?: string;
     Status: string;
@@ -47,6 +49,12 @@ export interface CustomerRecord {
   Email?: string;
   BirthYear?: number;
   Gender?: string;
+  CustomerType?: 'RETAIL' | 'WHOLESALE' | string;
+  CompanyName?: string;
+  TaxCode?: string;
+  Address?: string;
+  CreditLimit?: number;
+  DebtBalance?: number;
   Allergies?: string;
   ChronicCond?: string;
   LoyaltyPoints: number;
@@ -57,16 +65,25 @@ export interface CustomerRecord {
 export interface InvoiceRecord {
   InvoiceID: number;
   InvoiceCode: string;
+  OrderType?: 'RETAIL' | 'WHOLESALE' | string;
+  Channel?: 'POS' | 'ONLINE' | string;
+  FulfillmentStatus?: 'PENDING' | 'CONFIRMED' | 'SHIPPING' | 'COMPLETED' | 'CANCELLED' | string;
   CustomerID?: number | null;
   CustomerName: string;
   CustomerPhone?: string;
+  ShippingAddress?: string;
+  ShippingMethod?: string;
+  ShippingFee?: number;
+  VatAmount?: number;
+  PaidAmount?: number;
+  DebtAmount?: number;
   SubTotal?: number;
   Discount?: number;
   UsedPoints?: number;
   PointsDiscount?: number;
   PointsEarned?: number;
   TotalAmount: number;
-  Status: 'COMPLETED' | 'CANCELLED' | string;
+  Status: 'COMPLETED' | 'CANCELLED' | 'PARTIAL' | 'DEBT' | string;
   Note?: string;
   CreateDate: string;
   customer?: CustomerRecord | null;
@@ -78,10 +95,17 @@ export interface CreateInvoicePayload {
   CustomerID?: number | null;
   CustomerName: string;
   CustomerPhone: string;
+  OrderType?: 'RETAIL' | 'WHOLESALE';
+  Channel?: 'POS' | 'ONLINE';
+  ShippingAddress?: string;
+  ShippingMethod?: string;
+  ShippingFee?: number;
+  VatRate?: number;
+  PaidAmount?: number;
   Discount?: number;
   UsedPoints?: number;
   Note: string;
-  PaymentMethod: 'CASH' | 'VIETQR' | 'CARD';
+  PaymentMethod: 'CASH' | 'VIETQR' | 'CARD' | 'CREDIT' | 'COD';
   items: Array<{
     ProductID: number;
     Quantity: number;

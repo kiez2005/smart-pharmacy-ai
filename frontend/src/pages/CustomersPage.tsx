@@ -41,11 +41,17 @@ export const CustomersPage: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({});
 
-  // Modal Tạo / Sửa Hồ sơ Bệnh nhân
+  // Modal Tạo / Sửa Hồ sơ Bệnh nhân & Đại lý B2B
+  const [customerTypeFilter, setCustomerTypeFilter] = useState<'ALL' | 'RETAIL' | 'WHOLESALE'>('ALL');
   const [showModal, setShowModal] = useState<boolean>(false);
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null);
   const [formData, setFormData] = useState({
+    CustomerType: 'RETAIL' as 'RETAIL' | 'WHOLESALE',
     FullName: '',
+    CompanyName: '',
+    TaxCode: '',
+    Address: '',
+    CreditLimit: 50000000,
     Phone: '',
     Email: '',
     BirthYear: 1985,
@@ -79,7 +85,12 @@ export const CustomersPage: React.FC = () => {
   const openCreateModal = () => {
     setEditingCustomer(null);
     setFormData({
+      CustomerType: customerTypeFilter === 'WHOLESALE' ? 'WHOLESALE' : 'RETAIL',
       FullName: '',
+      CompanyName: '',
+      TaxCode: '',
+      Address: '',
+      CreditLimit: 50000000,
       Phone: '',
       Email: '',
       BirthYear: 1990,
@@ -93,7 +104,12 @@ export const CustomersPage: React.FC = () => {
   const openEditModal = (cust: CustomerRecord) => {
     setEditingCustomer(cust);
     setFormData({
+      CustomerType: cust.CustomerType === 'WHOLESALE' ? 'WHOLESALE' : 'RETAIL',
       FullName: cust.FullName,
+      CompanyName: cust.CompanyName || '',
+      TaxCode: cust.TaxCode || '',
+      Address: cust.Address || '',
+      CreditLimit: cust.CreditLimit ?? 50000000,
       Phone: cust.Phone,
       Email: cust.Email || '',
       BirthYear: cust.BirthYear || 1990,
@@ -177,15 +193,19 @@ export const CustomersPage: React.FC = () => {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return customers;
-    return customers.filter(
-      (c) =>
+    return customers.filter((c) => {
+      const cType = c.CustomerType || 'RETAIL';
+      const matchType = customerTypeFilter === 'ALL' || cType === customerTypeFilter;
+      const matchQ =
+        !q ||
         c.FullName.toLowerCase().includes(q) ||
+        (c.CompanyName || '').toLowerCase().includes(q) ||
         c.Phone.toLowerCase().includes(q) ||
         c.CustomerCode.toLowerCase().includes(q) ||
-        (c.Allergies || '').toLowerCase().includes(q)
-    );
-  }, [customers, search]);
+        (c.Allergies || '').toLowerCase().includes(q);
+      return matchType && matchQ;
+    });
+  }, [customers, search, customerTypeFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const pagedCustomers = useMemo(
@@ -267,6 +287,41 @@ export const CustomersPage: React.FC = () => {
           }
         }}
         onReload={loadCustomers}
+        extraFilters={
+          <div className="flex items-center gap-1.5">
+            {[
+              { id: 'ALL', label: `Tất cả (${customers.length})` },
+              {
+                id: 'RETAIL',
+                label: `Bệnh nhân lẻ (${
+                  customers.filter((c) => (c.CustomerType || 'RETAIL') === 'RETAIL').length
+                })`,
+              },
+              {
+                id: 'WHOLESALE',
+                label: `Đại lý B2B (${
+                  customers.filter((c) => c.CustomerType === 'WHOLESALE').length
+                })`,
+              },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setCustomerTypeFilter(tab.id as 'ALL' | 'RETAIL' | 'WHOLESALE');
+                  setPage(1);
+                }}
+                className={`h-9 rounded-lg px-3 text-xs font-semibold transition-all shadow-sm ${
+                  customerTypeFilter === tab.id
+                    ? 'bg-teal-600 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        }
       />
 
       {/* 4 Thẻ KPI Hồ sơ Bệnh nhân & Cảnh báo Dị ứng (Clickable Drill-down) */}
@@ -437,9 +492,25 @@ export const CustomersPage: React.FC = () => {
                       )}
                       {visibleColumns.FullName !== false && (
                         <td className="py-3 px-4">
-                          <div className="font-semibold text-slate-900">{c.FullName}</div>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-bold border ${
+                                c.CustomerType === 'WHOLESALE'
+                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                  : 'bg-teal-50 text-teal-700 border-teal-200'
+                              }`}
+                            >
+                              {c.CustomerType === 'WHOLESALE' ? 'Đại lý B2B' : 'Bệnh nhân lẻ'}
+                            </span>
+                            <span className="font-semibold text-slate-900">
+                              {c.CompanyName || c.FullName}
+                            </span>
+                          </div>
                           <div className="text-[11px] text-slate-500">
-                            {c.Phone} · {c.Gender} ({c.BirthYear})
+                            {c.Phone} ·{' '}
+                            {c.CustomerType === 'WHOLESALE'
+                              ? `MST: ${c.TaxCode || 'N/A'} | Nợ: ${formatVND(c.DebtBalance || 0)}`
+                              : `${c.Gender} (${c.BirthYear})`}
                           </div>
                         </td>
                       )}
@@ -687,7 +758,96 @@ export const CustomersPage: React.FC = () => {
             <div className="p-4 sm:p-5 space-y-3 text-xs overflow-y-auto flex-1">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  Họ và tên bệnh nhân *
+                  Phân loại đối tượng hồ sơ
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, CustomerType: 'RETAIL' })}
+                    className={`h-9 rounded-lg border text-xs font-bold ${
+                      formData.CustomerType === 'RETAIL'
+                        ? 'border-teal-600 bg-teal-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-700'
+                    }`}
+                  >
+                    Bệnh nhân lẻ (GPP)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, CustomerType: 'WHOLESALE' })}
+                    className={`h-9 rounded-lg border text-xs font-bold ${
+                      formData.CustomerType === 'WHOLESALE'
+                        ? 'border-indigo-600 bg-indigo-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-700'
+                    }`}
+                  >
+                    Đại lý / Phòng khám B2B
+                  </button>
+                </div>
+              </div>
+
+              {formData.CustomerType === 'WHOLESALE' && (
+                <div className="rounded-xl bg-indigo-50/50 border border-indigo-200 p-3 space-y-2.5">
+                  <div>
+                    <label className="block font-semibold text-indigo-900 mb-1">
+                      Tên pháp nhân Quầy thuốc / Phòng khám B2B *
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.CompanyName}
+                      onChange={(e) => setFormData({ ...formData, CompanyName: e.target.value })}
+                      placeholder="VD: Quầy Thuốc Liên Kết Dân Sinh Số 9"
+                      className="w-full h-8 rounded-lg border border-indigo-200 bg-white px-2.5 text-xs text-slate-900"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-semibold text-indigo-900 mb-1">
+                        Mã số thuế / GPKD
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.TaxCode}
+                        onChange={(e) => setFormData({ ...formData, TaxCode: e.target.value })}
+                        placeholder="010899..."
+                        className="w-full h-8 rounded-lg border border-indigo-200 bg-white px-2.5 text-xs text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-indigo-900 mb-1">
+                        Hạn mức Công nợ (VNĐ)
+                      </label>
+                      <input
+                        type="number"
+                        step={5000000}
+                        value={formData.CreditLimit}
+                        onChange={(e) =>
+                          setFormData({ ...formData, CreditLimit: Number(e.target.value) })
+                        }
+                        className="w-full h-8 rounded-lg border border-indigo-200 bg-white px-2.5 text-xs font-bold text-indigo-700 tabular-nums"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-indigo-900 mb-1">
+                      Địa chỉ giao thuốc B2B
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.Address}
+                      onChange={(e) => setFormData({ ...formData, Address: e.target.value })}
+                      placeholder="Số nhà, đường, quận/huyện..."
+                      className="w-full h-8 rounded-lg border border-indigo-200 bg-white px-2.5 text-xs text-slate-900"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  {formData.CustomerType === 'WHOLESALE'
+                    ? 'Họ tên Dược sĩ / Người đại diện *'
+                    : 'Họ và tên bệnh nhân *'}
                 </label>
                 <input
                   type="text"

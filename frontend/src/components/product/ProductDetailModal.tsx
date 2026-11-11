@@ -56,11 +56,20 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="grid grid-cols-3 gap-3 pt-1">
                 <div>
-                  <div className="text-xs text-zinc-500">Giá bán niêm yết</div>
-                  <div className="text-base font-semibold text-zinc-900 tabular-nums mt-0.5">
+                  <div className="text-xs text-zinc-500">Giá bán lẻ (GPP)</div>
+                  <div className="text-base font-semibold text-teal-700 tabular-nums mt-0.5">
                     {product.Price.toLocaleString('vi-VN')} ₫
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-zinc-500">Giá bán buôn B2B</div>
+                  <div className="text-base font-semibold text-indigo-700 tabular-nums mt-0.5">
+                    {(product.packaging?.WholesalePrice ?? Math.round(product.Price * 0.88)).toLocaleString('vi-VN')} ₫
+                  </div>
+                  <div className="text-[10px] text-zinc-400">
+                    Từ {product.packaging?.MinWholesaleQty ?? 10} {product.Unit}
                   </div>
                 </div>
                 <div>
@@ -68,6 +77,11 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   <div className="text-base font-semibold text-zinc-900 tabular-nums mt-0.5">
                     {product.Quantity.toLocaleString('vi-VN')} {product.Unit}
                   </div>
+                  {(product.packaging?.LooseUnits ?? 0) > 0 && (
+                    <div className="text-[11px] font-semibold text-amber-700">
+                      + {product.packaging?.LooseUnits} {product.packaging?.SmallestUnit || 'Viên'} lẻ
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

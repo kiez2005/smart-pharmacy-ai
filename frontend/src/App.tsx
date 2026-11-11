@@ -20,12 +20,14 @@ import {
   ChevronRight,
   RefreshCw,
   MapPin,
+  Globe,
 } from 'lucide-react';
 import { DashboardPage } from './pages/DashboardPage';
 import { ProductManagementPage } from './pages/ProductManagementPage';
 import { ProductStockCardPage } from './pages/ProductStockCardPage';
 import { SuppliersAndPurchaseOrdersPage } from './pages/SuppliersAndPurchaseOrdersPage';
 import { PosTerminalPage, PosCartItem } from './pages/PosTerminalPage';
+import { OnlineStorePage } from './pages/OnlineStorePage';
 import { InvoicesManagementPage } from './pages/InvoicesManagementPage';
 import { PaymentsLedgerPage } from './pages/PaymentsLedgerPage';
 import { CustomersPage } from './pages/CustomersPage';
@@ -42,6 +44,7 @@ export type ActiveTab =
   | 'STOCK_CARD'
   | 'IMPORTS'
   | 'POS'
+  | 'ONLINE_STORE'
   | 'INVOICES'
   | 'PAYMENTS'
   | 'CUSTOMERS'
@@ -132,29 +135,22 @@ export const App: React.FC = () => {
     }>;
   }> = [
     {
-      groupLabel: 'Quản trị Kho & Dược phẩm',
+      groupLabel: 'Phân khu 1: Quản trị Kho & Dược phẩm',
       items: [
         { id: 'DASHBOARD', label: 'Tổng quan điều hành', icon: LayoutDashboard },
-        { id: 'PRODUCTS', label: 'Danh mục dược phẩm', icon: Package, badge: 'GPP' },
+        { id: 'PRODUCTS', label: 'Danh mục dược phẩm', icon: Package, badge: 'GPP/GDP' },
         { id: 'STOCK_CARD', label: 'Thẻ kho & Kiểm kê', icon: FileSpreadsheet, badge: 'FEFO' },
         { id: 'IMPORTS', label: 'Nhà cung cấp & Nhập kho', icon: Truck },
       ],
     },
     {
-      groupLabel: 'Bán lẻ POS & Tài chính',
+      groupLabel: 'Phân khu 2: Bán lẻ, Bán buôn & Online',
       items: [
-        { id: 'POS', label: 'Quầy thu ngân POS', icon: ShoppingCart, badge: 'POS' },
-        { id: 'INVOICES', label: 'Hóa đơn & Hoàn trả hàng', icon: Receipt },
+        { id: 'POS', label: 'Bán lẻ POS & Bán buôn B2B', icon: ShoppingCart, badge: 'POS/B2B' },
+        { id: 'ONLINE_STORE', label: 'Nhà thuốc Online & Giao vận', icon: Globe, badge: 'ONLINE' },
+        { id: 'INVOICES', label: 'Hóa đơn, Công nợ & Hoàn trả', icon: Receipt },
         { id: 'PAYMENTS', label: 'Sổ quỹ Thu - Chi & VietQR', icon: Wallet },
-        { id: 'CUSTOMERS', label: 'Hồ sơ bệnh nhân & Dị ứng', icon: Users },
-      ],
-    },
-    {
-      groupLabel: 'Lâm sàng AI & Hệ thống',
-      items: [
-        { id: 'AI_OCR', label: 'Số hóa đơn thuốc (OCR)', icon: ScanLine, badge: 'AI' },
-        { id: 'AI_CLINICAL', label: 'Dược lâm sàng & Tương tác', icon: Stethoscope },
-        { id: 'CONTACT', label: 'Tư vấn dược sĩ & CSKH', icon: MessageSquare },
+        { id: 'CUSTOMERS', label: 'Bệnh nhân & Đại lý B2B', icon: Users },
         { id: 'AUTH', label: 'Nhân sự & Phân quyền', icon: Shield },
       ],
     },
@@ -459,11 +455,20 @@ export const App: React.FC = () => {
 
             <button
               type="button"
+              onClick={() => setActiveTab('ONLINE_STORE')}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 sm:px-3 text-xs font-semibold text-sky-700 hover:bg-sky-100 shadow-2xs transition-colors"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Bán thuốc Online</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('POS')}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-2.5 sm:px-3.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-2xs transition-colors"
             >
               <ShoppingCart className="h-3.5 w-3.5" />
-              <span className="hidden xs:inline">Bán hàng POS</span>
+              <span className="hidden xs:inline">POS & Bán buôn B2B</span>
               <span className="xs:hidden">POS</span>
             </button>
 
@@ -504,6 +509,7 @@ export const App: React.FC = () => {
               onNavigateToInvoices={() => setActiveTab('INVOICES')}
             />
           )}
+          {activeTab === 'ONLINE_STORE' && <OnlineStorePage />}
           {activeTab === 'INVOICES' && <InvoicesManagementPage />}
           {activeTab === 'PAYMENTS' && <PaymentsLedgerPage />}
           {activeTab === 'CUSTOMERS' && <CustomersPage />}

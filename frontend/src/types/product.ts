@@ -2,6 +2,8 @@ export interface ProductPackaging {
   PackagingID: number;
   ProductID: number;
   PackageUnit: string;
+  CartonUnit?: string | null;
+  BoxesPerCarton?: number;
   BlisterUnit?: string | null;
   BlistersPerPackage?: number | null;
   SmallestUnit: string;
@@ -9,6 +11,8 @@ export interface ProductPackaging {
   UnitsPerBlister?: number | null;
   LooseUnits: number;
   AllowFractionalSale: boolean;
+  WholesalePrice?: number | null;
+  MinWholesaleQty?: number;
 }
 
 // Kiểu dữ liệu chuẩn 10 trường bắt buộc của bảng Product theo Sheet "Yêu cầu bài tập lớn"
@@ -34,6 +38,7 @@ export interface ProductFormValues {
   Unit: string;
   Price: number;
   Description: string;
+  packaging?: Partial<ProductPackaging>;
 }
 
 export type ExportFormat = 'xlsx' | 'json' | 'xml';

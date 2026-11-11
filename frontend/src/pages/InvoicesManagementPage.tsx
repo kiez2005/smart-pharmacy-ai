@@ -147,9 +147,37 @@ export const InvoicesManagementPage: React.FC = () => {
     }
   };
 
+  const handleCollectDebt = async (invoice: InvoiceRecord) => {
+    const remaining = invoice.DebtAmount || 0;
+    if (remaining <= 0) return;
+    if (
+      !window.confirm(
+        `Xác nhận thu đủ khoản công nợ ${formatVND(remaining)} của hóa đơn ${invoice.InvoiceCode} (${invoice.CustomerName})?`
+      )
+    ) {
+      return;
+    }
+    try {
+      await formsApi.collectDebt(invoice.InvoiceID, remaining);
+      toast.success(`Đã thu nợ thành công ${formatVND(remaining)} cho chứng từ ${invoice.InvoiceCode}!`);
+      await loadInvoices();
+    } catch {
+      toast.error('Không thể cập nhật phiếu thu công nợ');
+    }
+  };
+
   const filtered = useMemo(() => {
     return invoices.filter((inv) => {
-      const matchStatus = statusFilter === 'ALL' || inv.Status === statusFilter;
+      let matchStatus = true;
+      if (statusFilter === 'COMPLETED' || statusFilter === 'CANCELLED') {
+        matchStatus = inv.Status === statusFilter;
+      } else if (statusFilter === 'WHOLESALE') {
+        matchStatus = inv.OrderType === 'WHOLESALE' || inv.InvoiceCode.startsWith('BB-');
+      } else if (statusFilter === 'ONLINE') {
+        matchStatus = inv.Channel === 'ONLINE' || inv.InvoiceCode.startsWith('ONL-');
+      } else if (statusFilter === 'DEBT') {
+        matchStatus = (inv.DebtAmount || 0) > 0 && inv.Status !== 'CANCELLED';
+      }
       const q = search.trim().toLowerCase();
       const matchQuery =
         !q ||
@@ -225,12 +253,31 @@ export const InvoicesManagementPage: React.FC = () => {
         }}
         onReload={loadInvoices}
         extraFilters={
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {[
               { id: 'ALL', label: `Tất cả (${invoices.length})` },
               {
-                id: 'COMPLETED',
-                label: `Hoàn tất (${completedInvoices.length})`,
+                id: 'WHOLESALE',
+                label: `Bán buôn B2B (${
+                  invoices.filter(
+                    (i) => i.OrderType === 'WHOLESALE' || i.InvoiceCode.startsWith('BB-')
+                  ).length
+                })`,
+              },
+              {
+                id: 'ONLINE',
+                label: `Đơn Online (${
+                  invoices.filter(
+                    (i) => i.Channel === 'ONLINE' || i.InvoiceCode.startsWith('ONL-')
+                  ).length
+                })`,
+              },
+              {
+                id: 'DEBT',
+                label: `Công nợ (${
+                  invoices.filter((i) => (i.DebtAmount || 0) > 0 && i.Status !== 'CANCELLED')
+                    .length
+                })`,
               },
               {
                 id: 'CANCELLED',
@@ -244,7 +291,7 @@ export const InvoicesManagementPage: React.FC = () => {
                   setStatusFilter(tab.id);
                   setPage(1);
                 }}
-                className={`h-9 rounded-lg px-3.5 text-xs font-semibold transition-all shadow-sm ${
+                className={`h-9 rounded-lg px-3 text-xs font-semibold transition-all shadow-sm ${
                   statusFilter === tab.id
                     ? 'bg-teal-600 text-white'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
@@ -444,15 +491,25 @@ export const InvoicesManagementPage: React.FC = () => {
                       )}
                       {visibleColumns.RxClass !== false && (
                         <td className="py-3 px-4 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold border ${
-                              isRx
-                                ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                : 'bg-sky-50 text-sky-700 border-sky-200'
-                            }`}
-                          >
-                            {isRx ? 'Rx - Theo đơn BS' : 'OTC - Cắt liều lẻ'}
-                          </span>
+                          {inv.OrderType === 'WHOLESALE' || inv.InvoiceCode.startsWith('BB-') ? (
+                            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              Bán buôn B2B (GDP)
+                            </span>
+                          ) : inv.Channel === 'ONLINE' || inv.InvoiceCode.startsWith('ONL-') ? (
+                            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+                              Đặt hàng Online
+                            </span>
+                          ) : (
+                            <span
+                              className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold border ${
+                                isRx
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                  : 'bg-teal-50 text-teal-700 border-teal-200'
+                              }`}
+                            >
+                              {isRx ? 'Rx - Theo đơn BS' : 'OTC - Bán lẻ POS'}
+                            </span>
+                          )}
                         </td>
                       )}
                       {visibleColumns.PaymentMethod !== false && (
@@ -460,6 +517,11 @@ export const InvoicesManagementPage: React.FC = () => {
                           <span className="rounded-md bg-slate-100 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-slate-700 border border-slate-200/60">
                             {inv.payment?.PaymentMethod || 'CASH'}
                           </span>
+                          {(inv.DebtAmount || 0) > 0 && inv.Status !== 'CANCELLED' && (
+                            <div className="text-[10px] font-bold text-rose-600 mt-0.5">
+                              Nợ: {formatVND(inv.DebtAmount || 0)}
+                            </div>
+                          )}
                         </td>
                       )}
                       {visibleColumns.TotalAmount !== false && (
@@ -602,7 +664,8 @@ export const InvoicesManagementPage: React.FC = () => {
                       <div key={item.ItemID} className="py-3 space-y-1">
                         <div className="flex items-center justify-between font-bold text-slate-900">
                           <span>
-                            {item.product?.ProductName} × {item.Quantity} {item.product?.Unit}
+                            {item.product?.ProductName} × {item.Quantity}{' '}
+                            {item.Unit || item.product?.Unit}
                           </span>
                           <span className="tabular-nums text-teal-700">
                             {formatVND(item.Quantity * item.UnitPrice)}
@@ -623,12 +686,48 @@ export const InvoicesManagementPage: React.FC = () => {
                       <span className="tabular-nums">-{formatVND(selectedInvoice.Discount)}</span>
                     </div>
                   ) : null}
+                  {(selectedInvoice.VatAmount || 0) > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>Thuế GTGT Dược phẩm (VAT 5%):</span>
+                      <span className="tabular-nums">
+                        +{formatVND(selectedInvoice.VatAmount || 0)}
+                      </span>
+                    </div>
+                  )}
+                  {(selectedInvoice.ShippingFee || 0) > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>Phí vận chuyển bảo quản:</span>
+                      <span className="tabular-nums">
+                        +{formatVND(selectedInvoice.ShippingFee || 0)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm font-bold text-teal-900">
                     <span>Tổng thanh toán hóa đơn:</span>
                     <span className="text-base tabular-nums">
                       {formatVND(selectedInvoice.TotalAmount)}
                     </span>
                   </div>
+                  {(selectedInvoice.DebtAmount || 0) > 0 &&
+                    selectedInvoice.Status === 'COMPLETED' && (
+                      <div className="mt-2 pt-2 border-t border-teal-200 flex items-center justify-between">
+                        <div>
+                          <span className="text-rose-700 font-bold block">
+                            Còn nợ công nợ: {formatVND(selectedInvoice.DebtAmount || 0)}
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            Đã thanh toán: {formatVND(selectedInvoice.PaidAmount || 0)}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleCollectDebt(selectedInvoice)}
+                          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-xs"
+                        >
+                          Thu đủ Công nợ
+                        </button>
+                      </div>
+                    )}
                 </div>
 
                 {selectedInvoice.payment?.PaymentMethod === 'VIETQR' &&

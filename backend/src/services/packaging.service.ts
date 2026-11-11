@@ -284,13 +284,32 @@ export class PackagingService {
       where: { ProductID: product.ProductID },
     });
 
+    const defaultWholesalePrice = Math.max(
+      1000,
+      Math.round((product.Price * 0.85) / 500) * 500
+    );
+
     if (!spec) {
       const derived = derivePackagingSpec(product);
       spec = await tx.productPackaging.create({
         data: {
           ProductID: product.ProductID,
           ...derived,
+          CartonUnit: 'Thùng',
+          BoxesPerCarton: 20,
+          WholesalePrice: defaultWholesalePrice,
+          MinWholesaleQty: 10,
           LooseUnits: 0,
+        },
+      });
+    } else if (spec.WholesalePrice === null || spec.WholesalePrice === undefined) {
+      spec = await tx.productPackaging.update({
+        where: { PackagingID: spec.PackagingID },
+        data: {
+          WholesalePrice: defaultWholesalePrice,
+          CartonUnit: spec.CartonUnit || 'Thùng',
+          BoxesPerCarton: spec.BoxesPerCarton || 20,
+          MinWholesaleQty: spec.MinWholesaleQty || 10,
         },
       });
     }
@@ -299,22 +318,46 @@ export class PackagingService {
   }
 
   /**
-   * Lấy danh sách các đơn vị bán hợp lệ kèm đơn giá quy chuẩn tương ứng
+   * Lấy danh sách các đơn vị bán hợp lệ kèm đơn giá quy chuẩn tương ứng (Bán lẻ GPP & Bán buôn GDP)
    */
-  public getAllowedUnits(product: Product, spec: ProductPackaging): UnitOption[] {
+  public getAllowedUnits(
+    product: Product,
+    spec: ProductPackaging,
+    orderType: 'RETAIL' | 'WHOLESALE' = 'RETAIL'
+  ): UnitOption[] {
+    const wholesaleBoxPrice =
+      spec.WholesalePrice ||
+      Math.max(1000, Math.round((product.Price * 0.85) / 500) * 500);
+    const boxesPerCarton = spec.BoxesPerCarton || 20;
+    const cartonUnitName = spec.CartonUnit || 'Thùng';
+    const cartonPrice =
+      Math.round((wholesaleBoxPrice * boxesPerCarton * 0.96) / 1000) * 1000;
+
     const options: UnitOption[] = [
       {
         unit: spec.PackageUnit,
-        label: `${spec.PackageUnit} (Nguyên bao gói)`,
+        label:
+          orderType === 'WHOLESALE'
+            ? `${spec.PackageUnit} (Giá sỉ B2B)`
+            : `${spec.PackageUnit} (Nguyên bao gói)`,
         conversionToSmallest: spec.UnitsPerPackage,
-        pricePerUnit: product.Price,
+        pricePerUnit: orderType === 'WHOLESALE' ? wholesaleBoxPrice : product.Price,
         isPackageUnit: true,
         isBlister: false,
         isSmallestUnit: spec.UnitsPerPackage === 1,
       },
+      {
+        unit: cartonUnitName,
+        label: `${cartonUnitName} (${boxesPerCarton} ${spec.PackageUnit} - Sỉ nguyên kiện)`,
+        conversionToSmallest: boxesPerCarton * spec.UnitsPerPackage,
+        pricePerUnit: cartonPrice,
+        isPackageUnit: false,
+        isBlister: false,
+        isSmallestUnit: false,
+      },
     ];
 
-    if (spec.AllowFractionalSale) {
+    if (spec.AllowFractionalSale && orderType !== 'WHOLESALE') {
       if (spec.BlisterUnit && spec.BlistersPerPackage && spec.BlistersPerPackage > 1) {
         const blisterPrice = Math.max(
           1000,
@@ -356,21 +399,55 @@ export class PackagingService {
   }
 
   /**
-   * Tính toán chính xác giá bán và lượng trừ tồn kho (hộp nguyên + viên lẻ dở dang)
+   * Tính toán chính xác giá bán và lượng trừ tồn kho (hộp nguyên + viên lẻ dở dang + thùng bán buôn)
    */
   public async calculateDeductionAndPrice(
     product: Product,
     requestedUnit: string | undefined,
     requestedQty: number,
-    tx: any = defaultPrisma
+    tx: any = defaultPrisma,
+    orderType: 'RETAIL' | 'WHOLESALE' = 'RETAIL'
   ): Promise<UnitCalculationResult> {
     const spec = await this.getOrCreatePackagingSpec(product, tx);
-    const options = this.getAllowedUnits(product, spec);
+    const options = this.getAllowedUnits(product, spec, orderType);
+    const cartonUnitName = spec.CartonUnit || 'Thùng';
+    const boxesPerCarton = spec.BoxesPerCarton || 20;
 
     // Xác định đơn vị được chọn
     const matchedOption =
       options.find((opt) => opt.unit.toLowerCase() === (requestedUnit || '').toLowerCase()) ||
       options[0]; // Mặc định là PackageUnit
+
+    // Nếu mua theo Thùng hoặc chế độ Bán Buôn (WHOLESALE) hoặc mua nguyên Hộp
+    const isCarton = matchedOption.unit.toLowerCase() === cartonUnitName.toLowerCase();
+    if (isCarton || matchedOption.isPackageUnit) {
+      const boxesNeeded = isCarton ? requestedQty * boxesPerCarton : requestedQty;
+      if (product.Quantity < boxesNeeded) {
+        throw new Error(
+          `Thuốc "${product.ProductName}" không đủ tồn kho nguyên hộp! Yêu cầu: ${requestedQty} ${matchedOption.unit} (${boxesNeeded} ${spec.PackageUnit}), nhưng kho chỉ còn ${product.Quantity} ${spec.PackageUnit}!`
+        );
+      }
+
+      // Tự động áp dụng giá sỉ nếu mua từ MinWholesaleQty hộp trở lên ngay cả ở chế độ lẻ
+      let finalUnitPrice = matchedOption.pricePerUnit;
+      if (
+        matchedOption.isPackageUnit &&
+        orderType === 'RETAIL' &&
+        requestedQty >= (spec.MinWholesaleQty || 10)
+      ) {
+        finalUnitPrice =
+          spec.WholesalePrice ||
+          Math.max(1000, Math.round((product.Price * 0.85) / 500) * 500);
+      }
+
+      return {
+        unitPrice: finalUnitPrice,
+        packagesToOpen: boxesNeeded,
+        newLooseUnits: spec.LooseUnits,
+        totalSmallestUnitsDeducted: boxesNeeded * spec.UnitsPerPackage,
+        requestedUnit: matchedOption.unit,
+      };
+    }
 
     const unitPrice = matchedOption.pricePerUnit;
     const totalSmallestUnitsNeeded = requestedQty * matchedOption.conversionToSmallest;
@@ -431,8 +508,11 @@ export class PackagingService {
     let currentLoose = spec.LooseUnits + totalSmallestUnitsDeducted;
     let currentPackages = product.Quantity;
 
-    // Nếu thuốc lẻ tích lũy đủ thành các hộp nguyên -> Tự động đóng gói lại
-    if (spec.UnitsPerPackage > 1 && currentLoose >= spec.UnitsPerPackage) {
+    if (spec.UnitsPerPackage <= 1) {
+      currentPackages += packagesDeducted;
+      currentLoose = 0;
+    } else if (currentLoose >= spec.UnitsPerPackage) {
+      // Nếu thuốc lẻ tích lũy đủ thành các hộp nguyên -> Tự động đóng gói lại
       const fullBoxesFormed = Math.floor(currentLoose / spec.UnitsPerPackage);
       currentPackages += fullBoxesFormed;
       currentLoose = currentLoose % spec.UnitsPerPackage;

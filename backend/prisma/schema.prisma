@@ -32,12 +32,14 @@ model Product {
 }
 
 // ============================================================================
-// 1b. BẢNG QUY CÁCH ĐÓNG GÓI & QUẢN LÝ TỒN KHO LẺ DỞ DANG (PRODUCT_PACKAGING)
+// 1b. BẢNG QUY CÁCH ĐÓNG GÓI, GIÁ BÁN BUÔN & TỒN KHO LẺ DỞ DANG (PRODUCT_PACKAGING)
 // ============================================================================
 model ProductPackaging {
   PackagingID         Int      @id @default(autoincrement())
   ProductID           Int      @unique
-  PackageUnit         String   // Đơn vị bao gói lớn nhất (VD: "Hộp", "Lọ", "Chai", "Tuýp")
+  PackageUnit         String   // Đơn vị bao gói cơ sở (VD: "Hộp", "Lọ", "Chai", "Tuýp")
+  CartonUnit          String?  @default("Thùng") // Đơn vị kiện bán buôn
+  BoxesPerCarton      Int      @default(20)      // Số hộp trong 1 thùng bán buôn
   BlisterUnit         String?  // Đơn vị trung gian (VD: "Vỉ" nếu có)
   BlistersPerPackage  Int?     // Số vỉ trong 1 hộp (VD: 25)
   SmallestUnit        String   // Đơn vị nhỏ nhất có thể bán (VD: "Viên", "Gói", "Ống", "Chai")
@@ -45,6 +47,8 @@ model ProductPackaging {
   UnitsPerBlister     Int?     // Số viên trong 1 vỉ (VD: 4 viên/vỉ)
   LooseUnits          Int      @default(0) // Số đơn vị nhỏ nhất lẻ dở dang đang mở trong kho
   AllowFractionalSale Boolean  @default(true) // Cho phép bán lẻ vỉ/viên
+  WholesalePrice      Float?   // Giá bán buôn (B2B) trên 1 PackageUnit (Hộp)
+  MinWholesaleQty     Int      @default(10) // Số lượng hộp tối thiểu áp dụng giá sỉ
 
   product             Product  @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
 }
@@ -68,7 +72,7 @@ model User {
 }
 
 // ============================================================================
-// 3. BẢNG HỒ SƠ BỆNH NHÂN / KHÁCH HÀNG & TIỀN SỬ DỊ ỨNG (CUSTOMER)
+// 3. BẢNG HỒ SƠ BỆNH NHÂN / KHÁCH SỈ ĐẠI LÝ & TIỀN SỬ DỊ ỨNG (CUSTOMER)
 // ============================================================================
 model Customer {
   CustomerID    Int       @id @default(autoincrement())
@@ -78,6 +82,12 @@ model Customer {
   Email         String?
   Gender        String    @default("Khác")
   BirthYear     Int?
+  CustomerType  String    @default("RETAIL") // RETAIL (Khách lẻ/Bệnh nhân) | WHOLESALE (Đại lý/Phòng khám B2B)
+  CompanyName   String?   // Tên Quầy thuốc / Phòng khám / Pháp nhân B2B
+  TaxCode       String?   // Mã số thuế doanh nghiệp
+  Address       String?   // Địa chỉ giao hàng / Trụ sở
+  CreditLimit   Float     @default(50000000) // Hạn mức công nợ bán buôn tối đa
+  DebtBalance   Float     @default(0)        // Dư nợ phải thu hiện tại
   Allergies     String    @default("Không có") // VD: "Dị ứng Penicillin, Amoxicillin"
   ChronicCond   String    @default("Không có") // VD: "Viêm loét dạ dày, Cao huyết áp"
   LoyaltyPoints Int       @default(0)
@@ -135,29 +145,38 @@ model PurchaseOrderItem {
 }
 
 // ============================================================================
-// 6. BẢNG HÓA ĐƠN BÁN HÀNG & CHI TIẾT ĐƠN THUỐC (INVOICE & INVOICE_ITEM)
+// 6. BẢNG HÓA ĐƠN BÁN HÀNG ĐA KÊNH: BÁN LẺ POS, BÁN BUÔN B2B & ONLINE
 // ============================================================================
 model Invoice {
-  InvoiceID     Int           @id @default(autoincrement())
-  InvoiceCode   String        @unique
-  CustomerName  String
-  CustomerPhone String?
-  CustomerID    Int?
-  Note          String?
-  Discount      Float         @default(0)
-  UsedPoints    Int           @default(0)
-  PointsDiscount Float        @default(0)
-  PointsEarned  Int           @default(0)
-  TotalAmount   Float         @default(0)
-  Status        String        @default("PAID") // PAID | REFUNDED
-  CreateDate    DateTime      @default(now())
-  UpdateDate    DateTime      @updatedAt
+  InvoiceID         Int           @id @default(autoincrement())
+  InvoiceCode       String        @unique
+  OrderType         String        @default("RETAIL")    // RETAIL (Bán lẻ GPP) | WHOLESALE (Bán buôn B2B GDP)
+  Channel           String        @default("POS")       // POS (Tại quầy) | ONLINE (Web nhà thuốc trực tuyến)
+  FulfillmentStatus String        @default("COMPLETED") // PENDING | CONFIRMED | SHIPPING | COMPLETED | CANCELLED
+  CustomerName      String
+  CustomerPhone     String?
+  CustomerID        Int?
+  ShippingAddress   String?       // Địa chỉ giao hàng (cho đơn Online / Bán buôn giao tận nơi)
+  ShippingMethod    String?       // EXPRESS_2H | STANDARD | PICKUP
+  ShippingFee       Float         @default(0)
+  VatAmount         Float         @default(0)           // Thuế GTGT dược phẩm (5%)
+  PaidAmount        Float         @default(0)           // Số tiền khách đã thanh toán
+  DebtAmount        Float         @default(0)           // Số tiền ghi công nợ phải thu
+  Note              String?
+  Discount          Float         @default(0)
+  UsedPoints        Int           @default(0)
+  PointsDiscount    Float         @default(0)
+  PointsEarned      Int           @default(0)
+  TotalAmount       Float         @default(0)
+  Status            String        @default("PAID")      // PAID | PARTIAL | DEBT | REFUNDED
+  CreateDate        DateTime      @default(now())
+  UpdateDate        DateTime      @updatedAt
 
-  UserID        Int?
-  user          User?         @relation(fields: [UserID], references: [UserID])
-  customer      Customer?     @relation(fields: [CustomerID], references: [CustomerID])
-  items         InvoiceItem[]
-  payment       Payment?
+  UserID            Int?
+  user              User?         @relation(fields: [UserID], references: [UserID])
+  customer          Customer?     @relation(fields: [CustomerID], references: [CustomerID])
+  items             InvoiceItem[]
+  payment           Payment?
 }
 
 model InvoiceItem {

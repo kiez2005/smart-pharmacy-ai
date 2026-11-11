@@ -104,25 +104,87 @@ class ProductService {
   }
 
   /**
-   * 2. Thêm mới sản phẩm thuốc
+   * 2. Thêm mới sản phẩm thuốc kèm quy cách đóng gói & giá bán buôn
    */
-  public async create(data: ProductInputDTO): Promise<Product> {
+  public async create(data: ProductInputDTO, packagingInput?: Record<string, any>): Promise<Product> {
     const created = await prisma.product.create({ data });
-    await packagingService.getOrCreatePackagingSpec(created);
+    const spec = await packagingService.getOrCreatePackagingSpec(created);
+    if (packagingInput && typeof packagingInput === 'object') {
+      await prisma.productPackaging.update({
+        where: { PackagingID: spec.PackagingID },
+        data: {
+          PackageUnit: packagingInput.PackageUnit || created.Unit,
+          CartonUnit: packagingInput.CartonUnit || 'Thùng',
+          BoxesPerCarton: Number(packagingInput.BoxesPerCarton) || 20,
+          BlisterUnit: packagingInput.BlisterUnit ?? spec.BlisterUnit,
+          BlistersPerPackage:
+            packagingInput.BlistersPerPackage !== undefined
+              ? Number(packagingInput.BlistersPerPackage) || null
+              : spec.BlistersPerPackage,
+          SmallestUnit: packagingInput.SmallestUnit || spec.SmallestUnit,
+          UnitsPerPackage: Math.max(1, Number(packagingInput.UnitsPerPackage) || spec.UnitsPerPackage),
+          UnitsPerBlister:
+            packagingInput.UnitsPerBlister !== undefined
+              ? Number(packagingInput.UnitsPerBlister) || null
+              : spec.UnitsPerBlister,
+          WholesalePrice:
+            packagingInput.WholesalePrice !== undefined
+              ? Number(packagingInput.WholesalePrice)
+              : spec.WholesalePrice,
+          MinWholesaleQty: Math.max(1, Number(packagingInput.MinWholesaleQty) || 10),
+          AllowFractionalSale:
+            packagingInput.AllowFractionalSale !== undefined
+              ? Boolean(packagingInput.AllowFractionalSale)
+              : spec.AllowFractionalSale,
+        },
+      });
+    }
     void this.triggerSearchSync();
-    return created;
+    return (await this.getById(created.ProductID)) || created;
   }
 
   /**
-   * 3. Cập nhật sản phẩm thuốc
+   * 3. Cập nhật sản phẩm thuốc kèm quy cách đóng gói & giá bán buôn
    */
-  public async update(id: number, data: ProductUpdateDTO): Promise<Product> {
+  public async update(id: number, data: ProductUpdateDTO, packagingInput?: Record<string, any>): Promise<Product> {
     const updated = await prisma.product.update({
       where: { ProductID: id },
       data,
     });
+    const spec = await packagingService.getOrCreatePackagingSpec(updated);
+    if (packagingInput && typeof packagingInput === 'object') {
+      await prisma.productPackaging.update({
+        where: { PackagingID: spec.PackagingID },
+        data: {
+          PackageUnit: packagingInput.PackageUnit || updated.Unit,
+          CartonUnit: packagingInput.CartonUnit || spec.CartonUnit || 'Thùng',
+          BoxesPerCarton: Number(packagingInput.BoxesPerCarton) || spec.BoxesPerCarton || 20,
+          BlisterUnit:
+            packagingInput.BlisterUnit !== undefined ? packagingInput.BlisterUnit : spec.BlisterUnit,
+          BlistersPerPackage:
+            packagingInput.BlistersPerPackage !== undefined
+              ? Number(packagingInput.BlistersPerPackage) || null
+              : spec.BlistersPerPackage,
+          SmallestUnit: packagingInput.SmallestUnit || spec.SmallestUnit,
+          UnitsPerPackage: Math.max(1, Number(packagingInput.UnitsPerPackage) || spec.UnitsPerPackage),
+          UnitsPerBlister:
+            packagingInput.UnitsPerBlister !== undefined
+              ? Number(packagingInput.UnitsPerBlister) || null
+              : spec.UnitsPerBlister,
+          WholesalePrice:
+            packagingInput.WholesalePrice !== undefined
+              ? Number(packagingInput.WholesalePrice)
+              : spec.WholesalePrice,
+          MinWholesaleQty: Math.max(1, Number(packagingInput.MinWholesaleQty) || spec.MinWholesaleQty || 10),
+          AllowFractionalSale:
+            packagingInput.AllowFractionalSale !== undefined
+              ? Boolean(packagingInput.AllowFractionalSale)
+              : spec.AllowFractionalSale,
+        },
+      });
+    }
     void this.triggerSearchSync();
-    return updated;
+    return (await this.getById(updated.ProductID)) || updated;
   }
 
   /**

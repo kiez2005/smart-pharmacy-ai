@@ -403,13 +403,18 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
     );
   };
 
-  const getConversionSpec = (unit: string) => {
-    const u = unit.toLowerCase();
-    if (u.includes('hộp')) return '1 Hộp = 10 Vỉ × 10 Viên';
+  const getConversionSpec = (product: Product) => {
+    const pkg = product.packaging;
+    const boxesPerCarton = pkg?.BoxesPerCarton ?? 20;
+    const u = product.Unit.toLowerCase();
+    if (pkg && pkg.UnitsPerPackage > 1) {
+      return `1 Thùng = ${boxesPerCarton} ${product.Unit} | 1 ${product.Unit} = ${pkg.BlistersPerPackage ? `${pkg.BlistersPerPackage} ${pkg.BlisterUnit || 'Vỉ'} × ${Math.round(pkg.UnitsPerPackage / pkg.BlistersPerPackage)} ` : `${pkg.UnitsPerPackage} `}${pkg.SmallestUnit}`;
+    }
+    if (u.includes('hộp')) return `1 Thùng = ${boxesPerCarton} Hộp | 1 Hộp = 10 Vỉ × 10 Viên`;
     if (u.includes('vỉ')) return '1 Vỉ = 10 Viên nén';
-    if (u.includes('chai') || u.includes('lọ')) return '1 Chai = 100ml dung dịch';
-    if (u.includes('tuýp') || u.includes('ống')) return '1 Tuýp = 20 Viên sủi';
-    return `Đơn vị gốc: ${unit}`;
+    if (u.includes('chai') || u.includes('lọ')) return `1 Thùng = ${boxesPerCarton} Chai | 1 Chai = 100ml`;
+    if (u.includes('tuýp') || u.includes('ống')) return `1 Thùng = ${boxesPerCarton} Tuýp | 1 Tuýp = 20 Viên`;
+    return `1 Thùng = ${boxesPerCarton} ${product.Unit}`;
   };
 
   const columns = useMemo<ColumnDef<Product>[]>(
@@ -531,30 +536,41 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
         ),
         cell: ({ row }) => {
           const qty = row.original.Quantity;
+          const loose = row.original.packaging?.LooseUnits ?? 0;
+          const smallestUnit = row.original.packaging?.SmallestUnit || 'Viên';
           const isLow = qty > 0 && qty <= 60;
           const isOut = qty === 0;
           return (
-            <div className="inline-flex items-center gap-1.5 tabular-nums text-[13px]">
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  isOut ? 'bg-rose-500' : isLow ? 'bg-amber-500' : 'bg-emerald-500'
-                }`}
-              />
-              <span className="font-bold text-slate-900">{qty.toLocaleString('vi-VN')}</span>
+            <div>
+              <div className="inline-flex items-center gap-1.5 tabular-nums text-[13px]">
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    isOut ? 'bg-rose-500' : isLow ? 'bg-amber-500' : 'bg-emerald-500'
+                  }`}
+                />
+                <span className="font-bold text-slate-900">
+                  {qty.toLocaleString('vi-VN')} {row.original.Unit}
+                </span>
+              </div>
+              {loose > 0 && (
+                <div className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/70 rounded px-1.5 py-0.5 mt-0.5 w-fit">
+                  + {loose} {smallestUnit} lẻ (hộp dở)
+                </div>
+              )}
             </div>
           );
         },
       },
       {
         accessorKey: 'Unit',
-        header: 'Đơn vị & Quy cách',
+        header: 'Đơn vị & Quy cách 4 cấp',
         cell: ({ row }) => (
           <div>
             <span className="text-[13px] font-semibold text-slate-800 block">
               {row.original.Unit}
             </span>
             <span className="text-[10px] text-slate-500">
-              {getConversionSpec(row.original.Unit)}
+              {getConversionSpec(row.original)}
             </span>
           </div>
         ),
@@ -567,15 +583,26 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
             onClick={() => handleSortColumn('Price')}
             className="inline-flex items-center gap-1 hover:text-slate-900"
           >
-            <span>Giá bán lẻ</span>
+            <span>Giá bán lẻ / Giá sỉ B2B</span>
             {renderSortIcon('Price')}
           </button>
         ),
-        cell: ({ row }) => (
-          <span className="font-bold text-teal-700 text-[13px] tabular-nums">
-            {row.original.Price.toLocaleString('vi-VN')} ₫
-          </span>
-        ),
+        cell: ({ row }) => {
+          const wholesale =
+            row.original.packaging?.WholesalePrice ??
+            Math.round((row.original.Price * 0.88) / 500) * 500;
+          const minQty = row.original.packaging?.MinWholesaleQty ?? 10;
+          return (
+            <div>
+              <span className="font-bold text-teal-700 text-[13px] tabular-nums block">
+                Lẻ: {row.original.Price.toLocaleString('vi-VN')} ₫
+              </span>
+              <span className="text-[11px] font-semibold text-indigo-600 tabular-nums block">
+                Sỉ B2B: {wholesale.toLocaleString('vi-VN')} ₫ (≥{minQty})
+              </span>
+            </div>
+          );
+        },
       },
       {
         accessorKey: 'Description',

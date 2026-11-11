@@ -126,6 +126,7 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
     const productId = Number(req.params.id);
     const product = await prisma.product.findUnique({
       where: { ProductID: productId },
+      include: { packaging: true },
     });
 
     if (!product) {
@@ -166,10 +167,15 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
     const exports = rawExports.map((exp) => ({
       ItemID: exp.ItemID,
       Quantity: exp.Quantity,
+      Unit: exp.Unit || product.Unit,
+      BaseQuantityDeducted: exp.BaseQuantityDeducted ?? exp.Quantity,
+      LooseUnitsDeducted: exp.LooseUnitsDeducted ?? 0,
       UnitPrice: exp.UnitPrice,
       DosageNote: exp.DosageNote,
       invoice: {
         InvoiceCode: exp.invoice.InvoiceCode,
+        OrderType: exp.invoice.OrderType || 'RETAIL',
+        Channel: exp.invoice.Channel || 'POS',
         CustomerName: exp.invoice.CustomerName,
         Status: exp.invoice.Status === 'PAID' ? 'COMPLETED' : exp.invoice.Status,
         CreateDate: exp.invoice.CreateDate,
@@ -397,6 +403,12 @@ const customerSchema = z.object({
   Email: z.string().trim().optional().default(''),
   Gender: z.string().trim().optional().default('Khác'),
   BirthYear: z.coerce.number().int().optional(),
+  CustomerType: z.enum(['RETAIL', 'WHOLESALE']).optional().default('RETAIL'),
+  CompanyName: z.string().trim().optional().default(''),
+  TaxCode: z.string().trim().optional().default(''),
+  Address: z.string().trim().optional().default(''),
+  CreditLimit: z.coerce.number().min(0).optional().default(50000000),
+  DebtBalance: z.coerce.number().min(0).optional().default(0),
   Allergies: z.string().trim().optional().default('Không ghi nhận'),
   ChronicCond: z.string().trim().optional().default('Không'),
 });
@@ -416,7 +428,7 @@ export const getCustomers = async (_req: Request, res: Response): Promise<void> 
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Lỗi khi tải danh sách hồ sơ bệnh nhân',
+      message: 'Lỗi khi tải danh sách hồ sơ bệnh nhân / đại lý',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
@@ -426,11 +438,12 @@ export const createCustomer = async (req: Request, res: Response): Promise<void>
   try {
     const parsed = customerSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ success: false, message: 'Thông tin bệnh nhân không hợp lệ' });
+      res.status(400).json({ success: false, message: 'Thông tin khách hàng / đại lý không hợp lệ' });
       return;
     }
 
-    const code = `BN-${String(Date.now()).slice(-4)}`;
+    const prefix = parsed.data.CustomerType === 'WHOLESALE' ? 'DL' : 'BN';
+    const code = `${prefix}-${String(Date.now()).slice(-4)}`;
     const created = await prisma.customer.create({
       data: {
         CustomerCode: code,
@@ -441,7 +454,7 @@ export const createCustomer = async (req: Request, res: Response): Promise<void>
   } catch (error) {
     res.status(400).json({
       success: false,
-      message: 'Số điện thoại bệnh nhân đã tồn tại trong hệ thống',
+      message: 'Số điện thoại đã tồn tại trong hệ thống',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }

@@ -15,6 +15,9 @@ import {
   Printer,
   Sparkles,
   CalendarClock,
+  Building2,
+  PackageCheck,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { productApi } from '../services/product.api';
@@ -25,7 +28,7 @@ import { CustomerRecord, DrugInteractionResult } from '../types/enterprise';
 import { InvoiceRecord } from '../types/forms';
 import { ModalPortal } from '../components/common/ModalPortal';
 
-export type RetailUnitMode = 'BASE' | 'BLISTER' | 'PILL';
+export type RetailUnitMode = 'CARTON' | 'BASE' | 'BLISTER' | 'PILL';
 
 export interface PosCartItem {
   product: Product;
@@ -72,14 +75,19 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     },
   ]);
 
-  // Thông tin Bệnh nhân & Thanh toán
+  // Chế độ Bán hàng: Bán Lẻ POS (GPP) hoặc Xuất Bán Buôn Đại Lý B2B (GDP)
+  const [orderType, setOrderType] = useState<'RETAIL' | 'WHOLESALE'>('RETAIL');
+  const [includeVat, setIncludeVat] = useState<boolean>(false);
+  const [paidAmountInput, setPaidAmountInput] = useState<number>(0);
+
+  // Thông tin Bệnh nhân / Đại lý & Thanh toán
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [customerName, setCustomerName] = useState<string>('Khách vãng lai');
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [discount, setDiscount] = useState<number>(0);
   const [usedPoints, setUsedPoints] = useState<number>(0);
   const [cashTendered, setCashTendered] = useState<number>(0);
-  const [paymentMethod, setPaymentMethod] = useState<'VIETQR' | 'CASH' | 'CARD'>('VIETQR');
+  const [paymentMethod, setPaymentMethod] = useState<'VIETQR' | 'CASH' | 'CARD' | 'CREDIT'>('VIETQR');
   const [note, setNote] = useState<string>('Tư vấn uống đúng liều, tránh rượu bia');
   const [submitting, setSubmitting] = useState<boolean>(false);
 
@@ -172,33 +180,48 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   }, [products, selectedCategory, search]);
 
   const getPackagingSpec = (product: Product) => {
-    return (
-      product.packaging || {
-        PackageUnit: product.Unit,
-        BlisterUnit: product.Unit === 'Hộp' ? 'Vỉ' : null,
-        BlistersPerPackage: product.Unit === 'Hộp' ? 10 : null,
-        SmallestUnit: product.Unit === 'Hộp' ? 'Viên' : product.Unit,
-        UnitsPerPackage: product.Unit === 'Hộp' ? 100 : 1,
-        UnitsPerBlister: product.Unit === 'Hộp' ? 10 : null,
-        LooseUnits: 0,
-        AllowFractionalSale: product.Unit === 'Hộp',
-      }
-    );
+    const pkg = product.packaging;
+    const isBox = product.Unit === 'Hộp';
+    return {
+      PackageUnit: pkg?.PackageUnit || product.Unit,
+      CartonUnit: pkg?.CartonUnit || 'Thùng',
+      BoxesPerCarton: pkg?.BoxesPerCarton || 20,
+      BlisterUnit: pkg?.BlisterUnit ?? (isBox ? 'Vỉ' : null),
+      BlistersPerPackage: pkg?.BlistersPerPackage ?? (isBox ? 10 : null),
+      SmallestUnit: pkg?.SmallestUnit || (isBox ? 'Viên' : product.Unit),
+      UnitsPerPackage: pkg?.UnitsPerPackage || (isBox ? 100 : 1),
+      UnitsPerBlister: pkg?.UnitsPerBlister ?? (isBox ? 10 : null),
+      LooseUnits: pkg?.LooseUnits || 0,
+      AllowFractionalSale: pkg?.AllowFractionalSale ?? isBox,
+      WholesalePrice: pkg?.WholesalePrice ?? Math.round((product.Price * 0.88) / 500) * 500,
+      MinWholesaleQty: pkg?.MinWholesaleQty ?? 10,
+    };
   };
 
-  const getEffectivePrice = (product: Product, mode: RetailUnitMode = 'BASE') => {
+  const getEffectivePrice = (
+    product: Product,
+    mode: RetailUnitMode = 'BASE',
+    qty: number = 1
+  ) => {
     const spec = getPackagingSpec(product);
+    if (mode === 'CARTON') {
+      return Math.round(spec.WholesalePrice * spec.BoxesPerCarton * 0.96);
+    }
     if (mode === 'BLISTER' && spec.BlistersPerPackage && spec.BlistersPerPackage > 1) {
       return Math.max(1000, Math.round(product.Price / spec.BlistersPerPackage));
     }
     if (mode === 'PILL' && spec.UnitsPerPackage > 1) {
       return Math.max(500, Math.round(product.Price / spec.UnitsPerPackage));
     }
+    if (orderType === 'WHOLESALE' || qty >= spec.MinWholesaleQty) {
+      return spec.WholesalePrice;
+    }
     return product.Price;
   };
 
   const getUnitName = (product: Product, mode: RetailUnitMode = 'BASE') => {
     const spec = getPackagingSpec(product);
+    if (mode === 'CARTON') return spec.CartonUnit || 'Thùng';
     if (mode === 'BLISTER') return spec.BlisterUnit || 'Vỉ';
     if (mode === 'PILL') return spec.SmallestUnit || 'Viên';
     return spec.PackageUnit || product.Unit;
@@ -206,6 +229,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
   const getUnitLabel = (product: Product, mode: RetailUnitMode = 'BASE') => {
     const spec = getPackagingSpec(product);
+    if (mode === 'CARTON') {
+      return `${spec.CartonUnit || 'Thùng'} (${spec.BoxesPerCarton} ${product.Unit})`;
+    }
     if (mode === 'BLISTER') {
       return `${spec.BlisterUnit || 'Vỉ'} (${spec.UnitsPerBlister || 10} ${spec.SmallestUnit || 'Viên'})`;
     }
@@ -216,19 +242,25 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   };
 
   const getMaxStockForMode = (product: Product, mode: RetailUnitMode = 'BASE') => {
-    if (product.Quantity <= 0) return 0;
     const spec = getPackagingSpec(product);
-    if (mode === 'BLISTER' && spec.BlistersPerPackage) {
-      return product.Quantity * spec.BlistersPerPackage;
+    if (mode === 'CARTON') {
+      return Math.floor(product.Quantity / (spec.BoxesPerCarton || 20));
+    }
+    const totalSmallestUnits = product.Quantity * spec.UnitsPerPackage + (spec.LooseUnits || 0);
+    if (mode === 'BLISTER' && spec.UnitsPerBlister && spec.UnitsPerBlister > 0) {
+      return Math.floor(totalSmallestUnits / spec.UnitsPerBlister);
     }
     if (mode === 'PILL' && spec.UnitsPerPackage) {
-      return product.Quantity * spec.UnitsPerPackage + (spec.LooseUnits || 0);
+      return totalSmallestUnits;
     }
     return product.Quantity;
   };
 
+  const hasSellableStock = (product: Product) =>
+    getMaxStockForMode(product, 'PILL') > 0 || product.Quantity > 0;
+
   const addToCart = (product: Product, defaultMode: RetailUnitMode = 'BASE', customNote?: string) => {
-    if (product.Quantity <= 0) {
+    if (!hasSellableStock(product)) {
       toast.error(`"${product.ProductName}" đã hết tồn kho (0 ${product.Unit}), không thể xuất bán!`);
       return;
     }
@@ -256,9 +288,56 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     });
   };
 
-  // Combo Cắt Liều Mẫu chuẩn nhà thuốc thương mại
-  const applyComboPack = (comboType: 'FLU' | 'STOMACH' | 'IMMUNE') => {
+  const handleSwitchMode = (mode: 'RETAIL' | 'WHOLESALE') => {
+    setOrderType(mode);
+    if (mode === 'WHOLESALE') {
+      const firstAgency = customers.find((c) => c.CustomerType === 'WHOLESALE');
+      if (firstAgency) {
+        setSelectedCustomerId(firstAgency.CustomerID);
+        setCustomerName(firstAgency.CompanyName || firstAgency.FullName);
+        setCustomerPhone(firstAgency.Phone);
+      }
+      setIncludeVat(true);
+      setNote('Xuất bán buôn đại lý đạt chuẩn GDP - Kèm phiếu kiểm nghiệm lô');
+    } else {
+      setSelectedCustomerId(null);
+      setCustomerName('Khách vãng lai');
+      setCustomerPhone('');
+      setIncludeVat(false);
+      if (paymentMethod === 'CREDIT') setPaymentMethod('VIETQR');
+      setNote('Tư vấn uống đúng liều, tránh rượu bia');
+    }
+  };
+
+  // Combo Cắt Liều Mẫu chuẩn nhà thuốc thương mại & Combo Xuất Buôn B2B
+  const applyComboPack = (comboType: 'FLU' | 'STOMACH' | 'IMMUNE' | 'B2B_AGENCY' | 'B2B_CLINIC') => {
     if (products.length === 0) return;
+    if (comboType === 'B2B_AGENCY') {
+      const slice = products.slice(0, 3);
+      setCart(
+        slice.map((p) => ({
+          product: p,
+          quantity: 10,
+          unitMode: 'BASE',
+          dosageNote: 'Xuất sỉ đại lý 10 Hộp nguyên niêm phong nhà sản xuất',
+        }))
+      );
+      toast.success('Đã nạp Đơn sỉ mẫu Quầy thuốc Liên kết (3 mặt hàng × 10 Hộp)');
+      return;
+    }
+    if (comboType === 'B2B_CLINIC') {
+      const slice = products.slice(0, 2);
+      setCart(
+        slice.map((p) => ({
+          product: p,
+          quantity: 1,
+          unitMode: 'CARTON',
+          dosageNote: 'Xuất nguyên Thùng (20 Hộp) kèm COA kiểm nghiệm lô',
+        }))
+      );
+      toast.success('Đã nạp Đơn sỉ Phòng khám Đa khoa (2 mặt hàng × 1 Thùng)');
+      return;
+    }
     if (comboType === 'FLU') {
       const slice = products.slice(0, 2);
       setCart(
@@ -327,10 +406,10 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     () =>
       cart.reduce((sum, item) => {
         const mode = item.unitMode || 'BASE';
-        const price = getEffectivePrice(item.product, mode);
+        const price = getEffectivePrice(item.product, mode, item.quantity);
         return sum + price * item.quantity;
       }, 0),
-    [cart]
+    [cart, orderType]
   );
 
   const maxRedeemablePoints = selectedCustomer
@@ -338,7 +417,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     : 0;
   const pointDiscount = (usedPoints || 0) * 1000;
   const maxAllowedCashDiscount = Math.max(0, subTotal - pointDiscount);
-  const finalTotal = Math.max(0, subTotal - (discount + pointDiscount));
+  const netAfterDiscount = Math.max(0, subTotal - (discount + pointDiscount));
+  const vatAmount = includeVat ? Math.round(netAfterDiscount * 0.05) : 0;
+  const finalTotal = netAfterDiscount + vatAmount;
   const changeAmount = Math.max(0, cashTendered - finalTotal);
 
   const handleCheckout = async (e: React.FormEvent) => {
@@ -363,9 +444,13 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       );
       return;
     }
+    if (paymentMethod === 'CREDIT' && !selectedCustomerId) {
+      toast.error('Vui lòng chọn Hồ sơ Đại lý / Khách hàng để ghi nhận công nợ!');
+      return;
+    }
     // Ràng buộc kiểm tra nghiêm ngặt: Tuyệt đối không cho thanh toán nếu có mặt hàng vượt tồn kho hoặc bằng 0
     for (const item of cart) {
-      if (item.product.Quantity <= 0) {
+      if (!hasSellableStock(item.product)) {
         toast.error(`Thuốc "${item.product.ProductName}" đã hết tồn kho (0 ${item.product.Unit}). Vui lòng xóa khỏi giỏ.`);
         return;
       }
@@ -378,12 +463,18 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
     setSubmitting(true);
     try {
+      const paidAmt =
+        paymentMethod === 'CREDIT' ? Math.max(0, Math.min(finalTotal, paidAmountInput)) : finalTotal;
       const created = await formsApi.createInvoice({
         CustomerID: selectedCustomerId,
         CustomerName: customerName,
         CustomerPhone: customerPhone,
+        OrderType: orderType,
+        Channel: 'POS',
         Discount: discount,
         UsedPoints: usedPoints,
+        VatRate: includeVat ? 5 : 0,
+        PaidAmount: paidAmt,
         Note: note,
         PaymentMethod: paymentMethod,
         items: cart.map((i) => ({
@@ -397,7 +488,12 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       setCart([]);
       setDiscount(0);
       setUsedPoints(0);
-      toast.success(`Đã xuất hóa đơn ${created.InvoiceCode} và trừ tồn kho theo quy cách!`);
+      setPaidAmountInput(0);
+      toast.success(
+        orderType === 'WHOLESALE'
+          ? `Đã xuất Hóa đơn Bán buôn B2B ${created.InvoiceCode} và trừ kho theo Thùng/Hộp!`
+          : `Đã xuất Hóa đơn Bán lẻ ${created.InvoiceCode} và trừ tồn kho theo quy cách!`
+      );
       await loadPosData();
     } catch (err: unknown) {
       const msg =
@@ -414,65 +510,130 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      {/* Header + Chuyển đổi chế độ Bán Lẻ POS (GPP) vs Xuất Bán Buôn Đại Lý B2B (GDP) */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Quầy Thu Ngân Bán Lẻ POS & Cắt Liều Đa Đơn Vị
+              {orderType === 'WHOLESALE'
+                ? 'Trung Tâm Xuất Bán Buôn Đại Lý & Phòng Khám (Chuẩn GDP)'
+                : 'Quầy Thu Ngân Bán Lẻ POS & Cắt Liều Đa Đơn Vị (Chuẩn GPP)'}
             </h1>
-            <span className="inline-flex items-center rounded-full bg-teal-50 px-2.5 py-0.5 text-[11px] font-semibold text-teal-700 border border-teal-200">
-              Hộp · Vỉ · Viên lẻ
+            <span
+              className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold border ${
+                orderType === 'WHOLESALE'
+                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                  : 'bg-teal-50 text-teal-700 border-teal-200'
+              }`}
+            >
+              {orderType === 'WHOLESALE' ? 'Thùng · Hộp Sỉ · Công Nợ B2B' : 'Hộp · Vỉ · Viên lẻ'}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Hỗ trợ bán nguyên hộp hoặc cắt liều theo Vỉ/Viên, tự động chọn lô FEFO, kiểm tra dị ứng bệnh nhân và tạo mã VietQR.
+            {orderType === 'WHOLESALE'
+              ? 'Áp dụng bảng giá sỉ B2B, chiết khấu theo bậc doanh số, xuất hóa đơn VAT 5% và quản lý hạn mức công nợ đại lý.'
+              : 'Hỗ trợ bán nguyên hộp hoặc cắt liều theo Vỉ/Viên, tự động chọn lô FEFO, kiểm tra dị ứng bệnh nhân và tạo mã VietQR.'}
           </p>
         </div>
-        {onNavigateToInvoices && (
-          <button
-            type="button"
-            onClick={onNavigateToInvoices}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
-          >
-            <span>Lịch sử Hóa đơn & Hoàn trả</span>
-          </button>
-        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
+            <button
+              type="button"
+              onClick={() => handleSwitchMode('RETAIL')}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                orderType === 'RETAIL'
+                  ? 'bg-teal-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ShoppingCart className="h-3.5 w-3.5" />
+              <span>Bán Lẻ POS (GPP)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSwitchMode('WHOLESALE')}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                orderType === 'WHOLESALE'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Building2 className="h-3.5 w-3.5" />
+              <span>Xuất Bán Buôn B2B (GDP)</span>
+            </button>
+          </div>
+
+          {onNavigateToInvoices && (
+            <button
+              type="button"
+              onClick={onNavigateToInvoices}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
+            >
+              <span>Lịch sử Hóa đơn & Hoàn trả</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* Cột Trái (7 cols): Danh mục chọn thuốc nhanh + Combo Cắt Liều Mẫu */}
         <div className="lg:col-span-7 rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-4">
-          {/* Combo Cắt Liều Mẫu 1-Click */}
-          <div className="rounded-xl bg-teal-50/60 border border-teal-200/80 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-teal-900">
-              <Sparkles className="h-4 w-4 text-teal-600 shrink-0" />
-              <span>Combo Cắt Liều Nhanh:</span>
+          {/* Combo Cắt Liều Mẫu 1-Click hoặc Đơn Sỉ B2B Mẫu */}
+          {orderType === 'WHOLESALE' ? (
+            <div className="rounded-xl bg-indigo-50/70 border border-indigo-200/80 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-indigo-900">
+                <PackageCheck className="h-4 w-4 text-indigo-600 shrink-0" />
+                <span>Đơn Sỉ B2B Mẫu:</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => applyComboPack('B2B_AGENCY')}
+                  className="rounded-lg bg-white border border-indigo-200 px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-600 hover:text-white transition-colors shadow-2xs"
+                >
+                  + Lô Sỉ Quầy Thuốc (3 mã × 10 Hộp)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyComboPack('B2B_CLINIC')}
+                  className="rounded-lg bg-white border border-indigo-200 px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-600 hover:text-white transition-colors shadow-2xs"
+                >
+                  + Lô Sỉ Phòng Khám (2 mã × 1 Thùng)
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => applyComboPack('FLU')}
-                className="rounded-lg bg-white border border-teal-200 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors shadow-2xs"
-              >
-                + Liều Cảm cúm 3 ngày
-              </button>
-              <button
-                type="button"
-                onClick={() => applyComboPack('STOMACH')}
-                className="rounded-lg bg-white border border-teal-200 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors shadow-2xs"
-              >
-                + Đơn Dạ dày - Trào ngược
-              </button>
-              <button
-                type="button"
-                onClick={() => applyComboPack('IMMUNE')}
-                className="rounded-lg bg-white border border-teal-200 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors shadow-2xs"
-              >
-                + Combo Tăng đề kháng
-              </button>
+          ) : (
+            <div className="rounded-xl bg-teal-50/60 border border-teal-200/80 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-teal-900">
+                <Sparkles className="h-4 w-4 text-teal-600 shrink-0" />
+                <span>Combo Cắt Liều Nhanh:</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => applyComboPack('FLU')}
+                  className="rounded-lg bg-white border border-teal-200 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors shadow-2xs"
+                >
+                  + Liều Cảm cúm 3 ngày
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyComboPack('STOMACH')}
+                  className="rounded-lg bg-white border border-teal-200 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors shadow-2xs"
+                >
+                  + Đơn Dạ dày - Trào ngược
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyComboPack('IMMUNE')}
+                  className="rounded-lg bg-white border border-teal-200 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors shadow-2xs"
+                >
+                  + Combo Tăng đề kháng
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Thanh tìm kiếm & Lọc nhóm */}
           <div className="space-y-2.5">
@@ -508,9 +669,14 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
           {/* Lưới Thẻ Thuốc */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[540px] overflow-y-auto pr-1">
             {filteredProducts.map((p) => {
-              const isOutOfStock = p.Quantity <= 0;
-              const isBox = (p.Unit || '').toLowerCase() === 'hộp';
-              const blisterCount = isBox ? p.Quantity * 10 : p.Quantity;
+              const isOutOfStock = !hasSellableStock(p);
+              const packaging = getPackagingSpec(p);
+              const blisterCount = packaging.UnitsPerBlister
+                ? Math.floor(
+                    (p.Quantity * packaging.UnitsPerPackage + (packaging.LooseUnits || 0)) /
+                      packaging.UnitsPerBlister
+                  )
+                : p.Quantity;
               return (
                 <div
                   key={p.ProductID}
@@ -549,36 +715,84 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                     </div>
                     <div className="text-[11px] text-slate-500 truncate">{p.Description}</div>
                     <div className="mt-2 flex items-center justify-between gap-1">
-                      <span className="text-xs font-bold text-teal-700 tabular-nums">
-                        {formatVND(p.Price)}/{p.Unit}
-                      </span>
+                      <div>
+                        <span className="text-xs font-bold text-teal-700 tabular-nums block">
+                          {orderType === 'WHOLESALE'
+                            ? `Giá sỉ: ${formatVND(packaging.WholesalePrice)}/${p.Unit}`
+                            : `${formatVND(p.Price)}/${p.Unit}`}
+                        </span>
+                        {orderType === 'WHOLESALE' && (
+                          <span className="text-[10px] text-slate-400 line-through tabular-nums">
+                            Giá lẻ: {formatVND(p.Price)}
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={isOutOfStock}
-                          onClick={() => addToCart(p, 'BLISTER')}
-                          className={`inline-flex items-center h-7 rounded-lg border px-2 text-xs font-semibold ${
-                            isOutOfStock
-                              ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
-                              : 'border-slate-200 bg-white text-slate-700 hover:border-teal-600 hover:text-teal-700'
-                          }`}
-                          title={isOutOfStock ? 'Đã hết tồn kho' : `Còn ${blisterCount} Vỉ khả dụng`}
-                        >
-                          +Vỉ lẻ
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isOutOfStock}
-                          onClick={() => addToCart(p, 'BASE')}
-                          className={`inline-flex items-center h-7 rounded-lg px-2.5 text-xs font-semibold text-white ${
-                            isOutOfStock
-                              ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                              : 'bg-teal-600 hover:bg-teal-700'
-                          }`}
-                          title={isOutOfStock ? 'Đã hết tồn kho' : `Còn ${p.Quantity} ${p.Unit} khả dụng`}
-                        >
-                          +{p.Unit}
-                        </button>
+                        {orderType === 'WHOLESALE' ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={p.Quantity < (packaging.BoxesPerCarton || 20)}
+                              onClick={() =>
+                                addToCart(
+                                  p,
+                                  'CARTON',
+                                  `Xuất nguyên Thùng (${packaging.BoxesPerCarton} ${p.Unit})`
+                                )
+                              }
+                              className={`inline-flex items-center h-7 rounded-lg border px-2 text-xs font-semibold ${
+                                p.Quantity < (packaging.BoxesPerCarton || 20)
+                                  ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
+                                  : 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
+                              }`}
+                            >
+                              +1 Thùng
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isOutOfStock}
+                              onClick={() =>
+                                addToCart(p, 'BASE', 'Xuất sỉ đại lý nguyên hộp')
+                              }
+                              className={`inline-flex items-center h-7 rounded-lg px-2.5 text-xs font-semibold text-white ${
+                                isOutOfStock
+                                  ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                                  : 'bg-indigo-600 hover:bg-indigo-700'
+                              }`}
+                            >
+                              +{p.Unit} sỉ
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              disabled={isOutOfStock}
+                              onClick={() => addToCart(p, 'BLISTER')}
+                              className={`inline-flex items-center h-7 rounded-lg border px-2 text-xs font-semibold ${
+                                isOutOfStock
+                                  ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
+                                  : 'border-slate-200 bg-white text-slate-700 hover:border-teal-600 hover:text-teal-700'
+                              }`}
+                              title={isOutOfStock ? 'Đã hết tồn kho' : `Còn ${blisterCount} Vỉ khả dụng`}
+                            >
+                              +Vỉ lẻ
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isOutOfStock}
+                              onClick={() => addToCart(p, 'BASE')}
+                              className={`inline-flex items-center h-7 rounded-lg px-2.5 text-xs font-semibold text-white ${
+                                isOutOfStock
+                                  ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                                  : 'bg-teal-600 hover:bg-teal-700'
+                              }`}
+                              title={isOutOfStock ? 'Đã hết tồn kho' : `Còn ${p.Quantity} ${p.Unit} khả dụng`}
+                            >
+                              +{p.Unit}
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -596,9 +810,15 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
-              <ShoppingCart className="h-4 w-4 text-teal-600" />
+              {orderType === 'WHOLESALE' ? (
+                <Building2 className="h-4 w-4 text-indigo-600" />
+              ) : (
+                <ShoppingCart className="h-4 w-4 text-teal-600" />
+              )}
               <h2 className="text-sm font-bold text-slate-900">
-                Phiếu Xuất Thuốc GPP ({cart.length} mặt hàng)
+                {orderType === 'WHOLESALE'
+                  ? `Phiếu Xuất Bán Buôn GDP (${cart.length} mã)`
+                  : `Phiếu Xuất Thuốc GPP (${cart.length} mặt hàng)`}
               </h2>
             </div>
             {cart.length > 0 && (
@@ -612,12 +832,27 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
             )}
           </div>
 
-          {/* Chọn Hồ sơ Bệnh nhân (CRM) */}
-          <div className="rounded-xl bg-slate-50 p-3 border border-slate-200/80 space-y-2.5">
+          {/* Chọn Hồ sơ Bệnh nhân (CRM) hoặc Đại lý B2B */}
+          <div
+            className={`rounded-xl p-3 border space-y-2.5 ${
+              orderType === 'WHOLESALE'
+                ? 'bg-indigo-50/50 border-indigo-200/80'
+                : 'bg-slate-50 border-slate-200/80'
+            }`}
+          >
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <UserCheck className="h-3.5 w-3.5 text-teal-600" />
-                <span>Hồ sơ Bệnh nhân (Kiểm tra Dị ứng & Tích điểm)</span>
+                {orderType === 'WHOLESALE' ? (
+                  <>
+                    <Building2 className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Hồ sơ Đại lý / Phòng khám B2B (Hạn mức Công nợ & MST)</span>
+                  </>
+                ) : (
+                  <>
+                    <UserCheck className="h-3.5 w-3.5 text-teal-600" />
+                    <span>Hồ sơ Bệnh nhân (Kiểm tra Dị ứng & Tích điểm)</span>
+                  </>
+                )}
               </label>
             </div>
             <select
@@ -627,18 +862,51 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               }
               className="w-full h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
             >
-              <option value="">-- Khách vãng lai (Bán lẻ OTC không lưu hồ sơ) --</option>
-              {customers.map((c) => (
-                <option key={c.CustomerID} value={c.CustomerID}>
-                  [{c.CustomerCode}] {c.FullName} - {c.Phone}{' '}
-                  {c.Allergies && c.Allergies !== 'Không ghi nhận'
-                    ? `(Dị ứng: ${c.Allergies})`
-                    : ''}
-                </option>
-              ))}
+              <option value="">
+                {orderType === 'WHOLESALE'
+                  ? '-- Chọn Đại lý / Quầy thuốc / Phòng khám B2B --'
+                  : '-- Khách vãng lai (Bán lẻ OTC không lưu hồ sơ) --'}
+              </option>
+              {customers
+                .filter((c) =>
+                  orderType === 'WHOLESALE' ? c.CustomerType === 'WHOLESALE' : true
+                )
+                .map((c) => (
+                  <option key={c.CustomerID} value={c.CustomerID}>
+                    [{c.CustomerCode}] {c.CompanyName || c.FullName} - {c.Phone}{' '}
+                    {c.CustomerType === 'WHOLESALE'
+                      ? `(MST: ${c.TaxCode || 'N/A'} | Nợ: ${formatVND(c.DebtBalance || 0)})`
+                      : c.Allergies && c.Allergies !== 'Không ghi nhận'
+                      ? `(Dị ứng: ${c.Allergies})`
+                      : ''}
+                  </option>
+                ))}
             </select>
 
-            {selectedCustomer && (
+            {selectedCustomer && selectedCustomer.CustomerType === 'WHOLESALE' && (
+              <div className="rounded-lg bg-white p-2.5 border border-indigo-200/80 text-[11px] space-y-1 text-slate-700">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Đơn vị / MST:</span>
+                  <strong className="text-indigo-950">
+                    {selectedCustomer.CompanyName || selectedCustomer.FullName} ({selectedCustomer.TaxCode || 'Chưa cập nhật'})
+                  </strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Hạn mức công nợ B2B:</span>
+                  <strong className="text-emerald-700 tabular-nums">
+                    {formatVND(selectedCustomer.CreditLimit || 50000000)}
+                  </strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Dư nợ hiện tại:</span>
+                  <strong className="text-rose-600 tabular-nums">
+                    {formatVND(selectedCustomer.DebtBalance || 0)}
+                  </strong>
+                </div>
+              </div>
+            )}
+
+            {selectedCustomer && selectedCustomer.CustomerType !== 'WHOLESALE' && (
               <div className="text-[11px] flex flex-wrap items-center justify-between gap-2 pt-1 text-slate-600">
                 <span>
                   Tiền sử dị ứng:{' '}
@@ -703,20 +971,44 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
           <div className="space-y-3 max-h-72 overflow-y-auto pr-1 divide-y divide-slate-100">
             {cart.map((item) => {
               const mode = item.unitMode || 'BASE';
-              const unitPrice = getEffectivePrice(item.product, mode);
+              const unitPrice = getEffectivePrice(item.product, mode, item.quantity);
               const maxStock = getMaxStockForMode(item.product, mode);
               const spec = getPackagingSpec(item.product);
+              const cartonMax = getMaxStockForMode(item.product, 'CARTON');
 
-              const availableUnits: { id: RetailUnitMode; label: string }[] = [
-                { id: 'BASE', label: `${spec.PackageUnit || item.product.Unit} (${item.product.Quantity})` },
-              ];
-              if (spec.BlisterUnit && spec.BlistersPerPackage && spec.BlistersPerPackage > 1) {
-                const blisterMax = item.product.Quantity * spec.BlistersPerPackage;
+              const availableUnits: { id: RetailUnitMode; label: string }[] = [];
+              if (orderType === 'WHOLESALE' && cartonMax > 0) {
+                availableUnits.push({
+                  id: 'CARTON',
+                  label: `Thùng ${spec.BoxesPerCarton} ${item.product.Unit} (${cartonMax})`,
+                });
+              }
+              availableUnits.push({
+                id: 'BASE',
+                label: `${spec.PackageUnit || item.product.Unit} (${item.product.Quantity})`,
+              });
+              if (
+                orderType === 'RETAIL' &&
+                spec.BlisterUnit &&
+                spec.BlistersPerPackage &&
+                spec.BlistersPerPackage > 1
+              ) {
+                const blisterMax = getMaxStockForMode(item.product, 'BLISTER');
                 availableUnits.push({ id: 'BLISTER', label: `${spec.BlisterUnit} (${blisterMax})` });
               }
-              if (spec.AllowFractionalSale && spec.UnitsPerPackage > 1) {
+              if (
+                orderType === 'RETAIL' &&
+                spec.AllowFractionalSale &&
+                spec.UnitsPerPackage > 1
+              ) {
                 const pillMax = item.product.Quantity * spec.UnitsPerPackage + (spec.LooseUnits || 0);
                 availableUnits.push({ id: 'PILL', label: `${spec.SmallestUnit || 'Viên'} (${pillMax})` });
+              }
+              if (orderType === 'RETAIL' && cartonMax > 0) {
+                availableUnits.push({
+                  id: 'CARTON',
+                  label: `Thùng (${cartonMax})`,
+                });
               }
 
               return (
@@ -877,9 +1169,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               </div>
             )}
 
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-slate-600">Chiết khấu tiền mặt (VNĐ):</span>
+                <span className="text-slate-600">Chiết khấu tiền mặt / Bậc doanh số (VNĐ):</span>
                 <input
                   type="number"
                   min={0}
@@ -894,6 +1186,24 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                   }`}
                 />
               </div>
+              {orderType === 'WHOLESALE' && subTotal > 0 && (
+                <div className="flex items-center justify-end gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setDiscount(Math.round(subTotal * 0.02))}
+                    className="rounded bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                  >
+                    CK Đại lý 2% (-{formatVND(Math.round(subTotal * 0.02))})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiscount(Math.round(subTotal * 0.05))}
+                    className="rounded bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                  >
+                    CK VIP 5% (-{formatVND(Math.round(subTotal * 0.05))})
+                  </button>
+                </div>
+              )}
               {(discount < 0 || discount > maxAllowedCashDiscount) && (
                 <p className="text-[11px] text-rose-600 text-right font-medium">
                   {discount < 0
@@ -903,19 +1213,36 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               )}
             </div>
 
+            {/* Thuế GTGT Dược phẩm VAT 5% */}
+            <div className="flex items-center justify-between pt-1">
+              <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeVat}
+                  onChange={(e) => setIncludeVat(e.target.checked)}
+                  className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                />
+                <span>Xuất Hóa đơn GTGT Dược phẩm (VAT 5%)</span>
+              </label>
+              <span className="font-semibold text-slate-800 tabular-nums">
+                +{formatVND(vatAmount)}
+              </span>
+            </div>
+
             <div className="flex justify-between text-sm font-bold text-slate-900 pt-1.5 border-t border-slate-100">
-              <span>Khách cần thanh toán:</span>
+              <span>{orderType === 'WHOLESALE' ? 'Tổng giá trị Hợp đồng B2B:' : 'Khách cần thanh toán:'}</span>
               <span className="text-base text-teal-700 tabular-nums">{formatVND(finalTotal)}</span>
             </div>
           </div>
 
           {/* Phương thức thanh toán */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {(
               [
                 { id: 'VIETQR', label: 'Mã VietQR', icon: QrCode },
                 { id: 'CASH', label: 'Tiền mặt', icon: Banknote },
                 { id: 'CARD', label: 'Thẻ POS', icon: CreditCard },
+                { id: 'CREDIT', label: 'Ghi Công Nợ', icon: FileSpreadsheet },
               ] as const
             ).map((pm) => {
               const Icon = pm.icon;
@@ -927,7 +1254,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                   onClick={() => setPaymentMethod(pm.id)}
                   className={`flex items-center justify-center gap-1.5 h-9 rounded-lg border text-xs font-semibold transition-colors ${
                     active
-                      ? 'border-teal-600 bg-teal-600 text-white shadow-xs'
+                      ? pm.id === 'CREDIT'
+                        ? 'border-indigo-600 bg-indigo-600 text-white shadow-xs'
+                        : 'border-teal-600 bg-teal-600 text-white shadow-xs'
                       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                   }`}
                 >
@@ -937,6 +1266,33 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               );
             })}
           </div>
+
+          {paymentMethod === 'CREDIT' && (
+            <div className="grid grid-cols-2 gap-2 rounded-lg bg-indigo-50/70 p-2.5 border border-indigo-200 text-xs">
+              <div>
+                <span className="text-[11px] font-semibold text-indigo-800 block">
+                  Trả trước một phần (VNĐ):
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={finalTotal}
+                  step={10000}
+                  value={paidAmountInput}
+                  onChange={(e) => setPaidAmountInput(Number(e.target.value))}
+                  className="mt-0.5 w-full h-8 rounded-lg border border-indigo-300 bg-white px-2.5 text-xs font-bold text-indigo-900 tabular-nums"
+                />
+              </div>
+              <div>
+                <span className="text-[11px] font-semibold text-rose-700 block">
+                  Ghi vào Công nợ Đại lý:
+                </span>
+                <div className="mt-1.5 font-bold text-rose-600 tabular-nums text-sm">
+                  {formatVND(Math.max(0, finalTotal - paidAmountInput))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {paymentMethod === 'CASH' && (
             <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-2.5 border border-slate-200/70 text-xs">

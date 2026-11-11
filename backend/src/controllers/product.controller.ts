@@ -94,7 +94,7 @@ export const createProduct = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const created = await productService.create(parsed.data);
+    const created = await productService.create(parsed.data, req.body?.packaging);
     res.status(201).json({
       success: true,
       message: 'Thêm mới sản phẩm thuốc thành công',
@@ -131,7 +131,7 @@ export const updateProduct = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const updated = await productService.update(id, parsed.data);
+    const updated = await productService.update(id, parsed.data, req.body?.packaging);
     res.json({
       success: true,
       message: `Cập nhật thuốc #${id} thành công`,

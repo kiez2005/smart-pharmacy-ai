@@ -76,7 +76,9 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
   const totalImported = imports.reduce((sum, i) => sum + i.Quantity, 0);
   const totalExported = exports
     .filter((e) => e.invoice.Status === 'COMPLETED')
-    .reduce((sum, e) => sum + e.Quantity, 0);
+    .reduce((sum, e) => sum + (e.BaseQuantityDeducted ?? e.Quantity), 0);
+  const looseUnits = product.packaging?.LooseUnits ?? 0;
+  const smallestUnit = product.packaging?.SmallestUnit || 'Viên';
   const openingStock = Math.max(0, product.Quantity - totalImported + totalExported);
   const variance = actualCount - product.Quantity;
   const varianceValue = variance * product.Price;
@@ -248,7 +250,11 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
             )}
           </div>
           <div className="mt-1 text-[11px] font-medium text-teal-700 tabular-nums">
-            {product.Unit === 'Hộp' ? (
+            {looseUnits > 0 ? (
+              <span className="text-amber-800 font-bold">
+                + {looseUnits} {smallestUnit} lẻ (Hộp đang mở)
+              </span>
+            ) : product.Unit === 'Hộp' ? (
               <span>
                 Còn: <strong>{(product.Quantity * 10).toLocaleString('vi-VN')} Vỉ</strong> ·{' '}
                 <strong>{(product.Quantity * 100).toLocaleString('vi-VN')} Viên</strong>
@@ -502,8 +508,8 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  <th className="py-2.5 px-3">Mã HĐ / Bệnh nhân</th>
-                  <th className="py-2.5 px-3">Liều hướng dẫn</th>
+                  <th className="py-2.5 px-3">Mã HĐ / Khách hàng</th>
+                  <th className="py-2.5 px-3">Kênh / Quy đổi kho</th>
                   <th className="py-2.5 px-3 text-right">SL Xuất</th>
                   <th className="py-2.5 px-3 text-right">Đơn giá</th>
                 </tr>
@@ -516,32 +522,56 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  exports.map((exp) => (
-                    <tr key={exp.ItemID} className="hover:bg-slate-50">
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-slate-900">
-                            {exp.invoice.InvoiceCode}
-                          </span>
-                          {exp.invoice.Status === 'CANCELLED' && (
-                            <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 border border-rose-200">
-                              Đã hoàn
+                  exports.map((exp) => {
+                    const isWholesale = exp.invoice.OrderType === 'WHOLESALE';
+                    const isOnline = exp.invoice.Channel === 'ONLINE';
+                    return (
+                      <tr key={exp.ItemID} className="hover:bg-slate-50">
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono font-bold text-slate-900">
+                              {exp.invoice.InvoiceCode}
                             </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-slate-500">{exp.invoice.CustomerName}</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-600">
-                        {exp.DosageNote || 'Theo chỉ định'}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-rose-600 tabular-nums">
-                        -{exp.Quantity} {product.Unit}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-semibold text-slate-900 tabular-nums">
-                        {formatVND(exp.UnitPrice)}
-                      </td>
-                    </tr>
-                  ))
+                            {exp.invoice.Status === 'CANCELLED' && (
+                              <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 border border-rose-200">
+                                Đã hoàn
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-500">{exp.invoice.CustomerName}</div>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span
+                              className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-bold border ${
+                                isWholesale
+                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                  : isOnline
+                                  ? 'bg-sky-50 text-sky-700 border-sky-200'
+                                  : 'bg-teal-50 text-teal-700 border-teal-200'
+                              }`}
+                            >
+                              {isWholesale ? 'Bán buôn B2B' : isOnline ? 'Đơn Online' : 'Bán lẻ POS'}
+                            </span>
+                            {(exp.BaseQuantityDeducted ?? 0) > 0 && (
+                              <span className="text-[10px] text-slate-500">
+                                (-{exp.BaseQuantityDeducted} {product.Unit} gốc)
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-400 truncate max-w-[160px] mt-0.5">
+                            {exp.DosageNote || 'Theo chỉ định'}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-bold text-rose-600 tabular-nums">
+                          -{exp.Quantity} {exp.Unit || product.Unit}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-semibold text-slate-900 tabular-nums">
+                          {formatVND(exp.UnitPrice)}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
