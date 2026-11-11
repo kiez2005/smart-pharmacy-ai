@@ -2,7 +2,9 @@ import { apiClient as http } from './apiClient';
 import {
   ContactRecord,
   CreateInvoicePayload,
+  CreateOnlineOrderPayload,
   InvoiceRecord,
+  OnlineOrderRecord,
   UserProfile,
 } from '../types/forms';
 
@@ -49,21 +51,31 @@ export const formsApi = {
     return res.data.data;
   },
 
-  async createInvoice(payload: CreateInvoicePayload): Promise<InvoiceRecord> {
-    const res = await http.post<{ success: boolean; data: InvoiceRecord }>('/invoices', payload);
+  async createInvoice(payload: CreateInvoicePayload, idempotencyKey?: string): Promise<InvoiceRecord> {
+    const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
+    const res = await http.post<{ success: boolean; data: InvoiceRecord }>('/invoices', payload, {
+      headers,
+    });
     return res.data.data;
   },
 
-  async cancelInvoice(invoiceId: number): Promise<InvoiceRecord> {
+  async cancelInvoice(
+    invoiceId: number,
+    cancelReason?: string,
+    idempotencyKey?: string
+  ): Promise<InvoiceRecord> {
+    const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
     const res = await http.post<{ success: boolean; data: InvoiceRecord }>(
-      `/invoices/${invoiceId}/cancel`
+      `/invoices/${invoiceId}/cancel`,
+      { cancelReason },
+      { headers }
     );
     return res.data.data;
   },
 
   async updateFulfillmentStatus(
     invoiceId: number,
-    fulfillmentStatus: 'PENDING' | 'CONFIRMED' | 'SHIPPING' | 'COMPLETED'
+    fulfillmentStatus: string
   ): Promise<InvoiceRecord> {
     const res = await http.patch<{ success: boolean; data: InvoiceRecord }>(
       `/invoices/${invoiceId}/fulfillment`,
@@ -72,10 +84,99 @@ export const formsApi = {
     return res.data.data;
   },
 
-  async collectDebt(invoiceId: number, amount: number): Promise<InvoiceRecord> {
+  async collectDebt(
+    invoiceId: number,
+    amount: number,
+    paymentMethod: string = 'CASH',
+    idempotencyKey?: string
+  ): Promise<InvoiceRecord> {
+    const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
     const res = await http.post<{ success: boolean; data: InvoiceRecord }>(
       `/invoices/${invoiceId}/pay-debt`,
-      { amount }
+      { amount, paymentMethod },
+      { headers }
+    );
+    return res.data.data;
+  },
+
+  // ============================================================================
+  // CUSTOMER PUBLIC ONLINE ORDER (Issue 1, 2, 8)
+  // ============================================================================
+  async createOnlineOrder(
+    payload: CreateOnlineOrderPayload,
+    idempotencyKey?: string
+  ): Promise<OnlineOrderRecord> {
+    const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
+    const res = await http.post<{ success: boolean; data: OnlineOrderRecord }>(
+      '/online-orders',
+      payload,
+      { headers }
+    );
+    return res.data.data;
+  },
+
+  async trackOnlineOrder(orderCode: string, phoneOrToken: string): Promise<OnlineOrderRecord> {
+    const res = await http.get<{ success: boolean; data: OnlineOrderRecord }>(
+      '/online-orders/track',
+      {
+        params: { orderCode, phoneOrToken },
+      }
+    );
+    return res.data.data;
+  },
+
+  async customerCancelOnlineOrder(
+    orderId: number,
+    phoneOrToken: string,
+    reason?: string
+  ): Promise<OnlineOrderRecord> {
+    const res = await http.post<{ success: boolean; data: OnlineOrderRecord }>(
+      `/online-orders/${orderId}/customer-cancel`,
+      { phoneOrToken, reason }
+    );
+    return res.data.data;
+  },
+
+  // ============================================================================
+  // STAFF RBAC ONLINE ORDER FULFILLMENT & REVIEW (Issue 3, 4, 7, 10, 16)
+  // ============================================================================
+  async listStaffOnlineOrders(params?: {
+    status?: string;
+    channel?: string;
+  }): Promise<OnlineOrderRecord[]> {
+    const res = await http.get<{ success: boolean; data: OnlineOrderRecord[] }>('/online-orders', {
+      params,
+    });
+    return res.data.data;
+  },
+
+  async reviewOnlineOrder(
+    orderId: number,
+    payload: {
+      action: 'APPROVE' | 'REJECT';
+      clinicalReviewNote?: string;
+      rejectReason?: string;
+    },
+    idempotencyKey?: string
+  ): Promise<{ order: OnlineOrderRecord; invoice?: InvoiceRecord }> {
+    const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
+    const res = await http.post<{
+      success: boolean;
+      data: { order: OnlineOrderRecord; invoice?: InvoiceRecord };
+    }>(`/online-orders/${orderId}/review`, payload, { headers });
+    return res.data.data;
+  },
+
+  async updateOnlineOrderStage(
+    orderId: number,
+    payload: {
+      stage: 'PACKING' | 'SHIPPING' | 'DELIVERED';
+      courierTrackingCode?: string;
+    }
+  ): Promise<OnlineOrderRecord> {
+    const res = await http.patch<{ success: boolean; data: OnlineOrderRecord }>(
+      `/online-orders/${orderId}/status`,
+      payload
     );
     return res.data.data;
   },

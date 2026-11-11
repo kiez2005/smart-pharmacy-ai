@@ -2,6 +2,12 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { packagingService } from '../services/packaging.service';
+import {
+  checkIdempotency,
+  IdempotencyConflictError,
+  saveIdempotency,
+} from '../services/idempotency.service';
+import { evaluateClinicalSafetyServerSide } from '../services/clinical-safety.service';
 
 const invoiceItemSchema = z.object({
   ProductID: z.coerce.number().int().positive(),
@@ -24,15 +30,36 @@ const createInvoiceSchema = z.object({
   Discount: z.coerce.number().min(0, 'Số tiền chiết khấu không được âm').optional().default(0),
   UsedPoints: z.coerce.number().int().min(0, 'Số điểm tích lũy không được âm').optional().default(0),
   Note: z.string().trim().optional().default(''),
+  ClinicalOverrideNote: z.string().trim().optional().default(''),
   PaymentMethod: z.enum(['CASH', 'VIETQR', 'CARD', 'CREDIT', 'COD']).optional().default('VIETQR'),
+  idempotencyKey: z.string().trim().optional(),
   items: z.array(invoiceItemSchema).min(1, 'Hóa đơn phải có ít nhất 1 sản phẩm thuốc'),
 });
+
+/**
+ * Tính phí vận chuyển chuẩn từ phía Server (Không tin dữ liệu ShippingFee từ client — Issue 9)
+ */
+export function calculateServerShippingFee(params: {
+  channel: string;
+  orderType: string;
+  shippingMethod: string;
+  netMerchandiseAmount: number;
+}): number {
+  const { channel, orderType, shippingMethod, netMerchandiseAmount } = params;
+  if (channel === 'POS' || shippingMethod === 'PICKUP') return 0;
+  if (orderType === 'WHOLESALE' || shippingMethod.includes('GDP')) return 0;
+  if (netMerchandiseAmount >= 300000) return 0;
+  if (shippingMethod.includes('EXPRESS') || shippingMethod.includes('2H')) return 30000;
+  return 15000;
+}
 
 /**
  * LẤY DANH SÁCH HÓA ĐƠN ĐA KÊNH: POS, BÁN BUÔN B2B & ONLINE (GET /api/invoices)
  */
 export const getInvoices = async (_req: Request, res: Response): Promise<void> => {
   try {
+    await packagingService.releaseExpiredReservations();
+
     const rawInvoices = await prisma.invoice.findMany({
       include: {
         items: {
@@ -41,6 +68,9 @@ export const getInvoices = async (_req: Request, res: Response): Promise<void> =
           },
         },
         payment: true,
+        paymentTransactions: {
+          orderBy: { CreateDate: 'desc' },
+        },
         customer: true,
       },
       orderBy: { CreateDate: 'desc' },
@@ -49,7 +79,7 @@ export const getInvoices = async (_req: Request, res: Response): Promise<void> =
     const invoices = rawInvoices.map((inv) => ({
       ...inv,
       Status:
-        inv.Status === 'PAID'
+        inv.Status === 'PAID' || inv.Status === 'PARTIAL' || inv.Status === 'DEBT'
           ? 'COMPLETED'
           : inv.Status === 'REFUNDED'
           ? 'CANCELLED'
@@ -67,7 +97,7 @@ export const getInvoices = async (_req: Request, res: Response): Promise<void> =
 };
 
 /**
- * TẠO HÓA ĐƠN BÁN LẺ POS / BÁN BUÔN B2B / ĐẶT HÀNG ONLINE + TRỪ TỒN KHO QUY CÁCH (POST /api/invoices)
+ * TẠO HÓA ĐƠN BÁN LẺ POS / BÁN BUÔN B2B + TRỪ TỒN KHO NGUYÊN TỬ THEO LÔ FEFO (POST /api/invoices)
  */
 export const createInvoice = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -81,6 +111,21 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
+    const rawIdemKey =
+      (req.headers['idempotency-key'] as string | undefined) || parsed.data.idempotencyKey;
+    const actorKey = req.user ? `user:${req.user.UserID}` : 'pos-staff';
+
+    const idemCheck = await checkIdempotency(
+      rawIdemKey,
+      'CREATE_INVOICE',
+      actorKey,
+      parsed.data
+    );
+    if (idemCheck.hit && idemCheck.body) {
+      res.status(idemCheck.statusCode || 200).json(idemCheck.body);
+      return;
+    }
+
     const {
       CustomerName,
       CustomerPhone,
@@ -89,19 +134,39 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       Channel,
       ShippingAddress,
       ShippingMethod,
-      ShippingFee,
       VatRate,
       PaidAmount,
       Discount,
       UsedPoints,
       Note,
+      ClinicalOverrideNote,
       PaymentMethod,
       items,
     } = parsed.data;
 
+    // Kiểm tra an toàn dược lâm sàng (Dị ứng & Tương tác thuốc) phía Server (Issue 16)
+    const clinicalSafety = await evaluateClinicalSafetyServerSide({
+      productIds: items.map((i) => i.ProductID),
+      customerId: CustomerID,
+    });
+
+    if (clinicalSafety.hasCriticalAllergy && (!ClinicalOverrideNote || ClinicalOverrideNote.length < 5)) {
+      res.status(422).json({
+        success: false,
+        code: 'CLINICAL_SAFETY_BLOCK',
+        message:
+          clinicalSafety.warnings[0]?.detail ||
+          'Phát hiện xung đột dị ứng / trùng hoạt chất nghiêm trọng! Dược sĩ cần nhập ghi chú quyết định chuyên môn (ClinicalOverrideNote) hoặc đổi thuốc.',
+        clinicalSafety,
+      });
+      return;
+    }
+
     const createdInvoice = await prisma.$transaction(async (tx) => {
-      // 1. Kiểm tra điểm tích lũy của khách hàng nếu có yêu cầu dùng điểm
-      const pointDiscount = (UsedPoints || 0) * 1000; // 1 điểm = 1.000 VNĐ
+      await packagingService.releaseExpiredReservations(tx);
+
+      // 1. Kiểm tra hồ sơ khách hàng / đại lý B2B & điểm tích lũy
+      const pointDiscount = (UsedPoints || 0) * 1000;
       let customerRecord = null;
 
       if (CustomerID) {
@@ -122,8 +187,12 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
         throw new Error('Chỉ khách hàng có hồ sơ thành viên mới được sử dụng điểm tích lũy');
       }
 
-      // 2. Tính toán tiền hàng và trừ tồn kho theo quy cách (Bán lẻ GPP / Bán buôn GDP)
+      const isVerifiedWholesaleCustomer = customerRecord?.CustomerType === 'WHOLESALE';
+
+      // 2. Tính toán tiền hàng và trừ tồn kho nguyên tử kèm phân bổ lô FEFO (Issue 13, 15, 22)
       let subtotal = 0;
+      let anyWholesaleLine = isVerifiedWholesaleCustomer && OrderType === 'WHOLESALE';
+
       const preparedItems: Array<{
         ProductID: number;
         Quantity: number;
@@ -131,56 +200,49 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
         UnitPrice: number;
         BaseQuantityDeducted: number;
         LooseUnitsDeducted: number;
+        BatchNumber: string;
+        ExpiryDate: string;
+        LotID: number | null;
         DosageNote: string;
       }> = [];
 
       for (const item of items) {
-        const product = await tx.product.findUnique({
-          where: { ProductID: item.ProductID },
-        });
-
-        if (!product) {
-          throw new Error(`Không tìm thấy thuốc có mã #${item.ProductID}`);
-        }
-
-        // Tính toán quy đổi đơn vị bán, đơn giá chuẩn (Lẻ hoặc Sỉ B2B) và tồn kho cần trừ
-        const calc = await packagingService.calculateDeductionAndPrice(
-          product,
+        const deducted = await packagingService.deductStockAtomically(
+          item.ProductID,
           item.Unit,
           item.Quantity,
           tx,
-          OrderType
+          {
+            orderType: OrderType,
+            isVerifiedWholesaleCustomer,
+          }
         );
 
-        // Cập nhật tồn kho hộp nguyên trong bảng Product (nếu có mở hộp / xuất hộp / xuất thùng)
-        if (calc.packagesToOpen > 0) {
-          await tx.product.update({
-            where: { ProductID: product.ProductID },
-            data: { Quantity: product.Quantity - calc.packagesToOpen },
-          });
+        if (deducted.effectiveOrderType === 'WHOLESALE') {
+          anyWholesaleLine = true;
         }
 
-        // Cập nhật số thuốc lẻ dở dang trong bảng ProductPackaging
-        const spec = await packagingService.getOrCreatePackagingSpec(product, tx);
-        await tx.productPackaging.update({
-          where: { PackagingID: spec.PackagingID },
-          data: { LooseUnits: calc.newLooseUnits },
-        });
-
-        subtotal += calc.unitPrice * item.Quantity;
+        subtotal += deducted.unitPrice * item.Quantity;
 
         preparedItems.push({
-          ProductID: product.ProductID,
+          ProductID: item.ProductID,
           Quantity: item.Quantity,
-          Unit: calc.requestedUnit,
-          UnitPrice: calc.unitPrice,
-          BaseQuantityDeducted: calc.packagesToOpen,
-          LooseUnitsDeducted: calc.totalSmallestUnitsDeducted,
+          Unit: deducted.requestedUnit,
+          UnitPrice: deducted.unitPrice,
+          BaseQuantityDeducted: deducted.packagesToOpen,
+          LooseUnitsDeducted: deducted.totalSmallestUnitsDeducted,
+          BatchNumber: deducted.batchNumber,
+          ExpiryDate: deducted.expiryDate,
+          LotID: deducted.lotId,
           DosageNote: item.DosageNote,
         });
       }
 
-      // 3. RÀNG BUỘC CHIẾT KHẤU NGHIÊM NGẶT
+      const effectiveOrderType: 'RETAIL' | 'WHOLESALE' = anyWholesaleLine
+        ? 'WHOLESALE'
+        : 'RETAIL';
+
+      // 3. Ràng buộc chiết khấu và tính Thuế/Phí ship chuẩn từ Server (Issue 9)
       const totalDiscount = Discount + pointDiscount;
       if (totalDiscount > subtotal) {
         throw new Error(
@@ -189,9 +251,18 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       }
 
       const afterDiscount = Math.max(0, subtotal - totalDiscount);
-      const vatAmount = Math.round(afterDiscount * ((VatRate || 0) / 100));
-      const finalTotal = afterDiscount + vatAmount + (ShippingFee || 0);
-      const pointsEarned = OrderType === 'RETAIL' ? Math.floor(afterDiscount / 10000) : 0;
+      const serverVatRate = VatRate && VatRate > 0 ? 5 : 0;
+      const vatAmount = Math.round(afterDiscount * (serverVatRate / 100));
+      const serverShippingFee = calculateServerShippingFee({
+        channel: Channel,
+        orderType: effectiveOrderType,
+        shippingMethod: ShippingMethod,
+        netMerchandiseAmount: afterDiscount,
+      });
+
+      const finalTotal = afterDiscount + vatAmount + serverShippingFee;
+      const pointsEarned =
+        effectiveOrderType === 'RETAIL' ? Math.floor(afterDiscount / 10000) : 0;
 
       // Xác định số tiền thực thu và công nợ còn lại
       let actualPaid = finalTotal;
@@ -202,10 +273,15 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       }
       const debtAmount = Math.max(0, finalTotal - actualPaid);
 
-      // Kiểm tra hạn mức công nợ nếu là khách sỉ / đại lý mua nợ
+      if (PaymentMethod === 'CREDIT' && !CustomerID) {
+        throw new Error('Bắt buộc chọn hồ sơ Đại lý / Khách hàng khi ghi nhận công nợ!');
+      }
+
+      // Kiểm tra hạn mức công nợ và cập nhật dư nợ khách hàng (chỉ cộng vào DebtBalance nếu là mua nợ CREDIT)
+      const customerDebtIncrease = PaymentMethod === 'CREDIT' ? debtAmount : 0;
       if (CustomerID && customerRecord) {
-        if (debtAmount > 0 && OrderType === 'WHOLESALE') {
-          const nextDebt = (customerRecord.DebtBalance || 0) + debtAmount;
+        if (customerDebtIncrease > 0) {
+          const nextDebt = (customerRecord.DebtBalance || 0) + customerDebtIncrease;
           const limit = customerRecord.CreditLimit || 50000000;
           if (nextDebt > limit) {
             throw new Error(
@@ -219,32 +295,41 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           where: { CustomerID },
           data: {
             LoyaltyPoints: Math.max(0, updatedPoints),
-            DebtBalance: (customerRecord.DebtBalance || 0) + debtAmount,
+            DebtBalance: (customerRecord.DebtBalance || 0) + customerDebtIncrease,
           },
         });
       }
 
       const prefix =
-        Channel === 'ONLINE' ? 'ONL' : OrderType === 'WHOLESALE' ? 'BB' : 'HD';
+        Channel === 'ONLINE' ? 'ONL' : effectiveOrderType === 'WHOLESALE' ? 'BB' : 'HD';
       const invoiceCode = `${prefix}-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
       const txCode = `${PaymentMethod}-${String(Date.now()).slice(-6)}`;
 
-      const invoiceStatus =
-        debtAmount === 0 ? 'PAID' : actualPaid > 0 ? 'PARTIAL' : 'DEBT';
-      const fulfillmentStatus = Channel === 'ONLINE' ? 'PENDING' : 'COMPLETED';
+      const paymentStatus =
+        debtAmount === 0 ? 'PAID' : actualPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
+      const fulfillmentStatus = Channel === 'ONLINE' ? 'CONFIRMED' : 'COMPLETED';
+      const actorUserId = req.user?.UserID || null;
+      const actorName = req.user?.FullName || 'Dược sĩ Thu ngân';
 
-      return tx.invoice.create({
+      const inv = await tx.invoice.create({
         data: {
           InvoiceCode: invoiceCode,
-          OrderType,
+          OrderType: effectiveOrderType,
           Channel,
           FulfillmentStatus: fulfillmentStatus,
+          PaymentStatus: paymentStatus,
           CustomerName,
           CustomerPhone,
           ...(CustomerID ? { CustomerID } : {}),
+          ...(actorUserId ? { UserID: actorUserId } : {}),
+          CreatedByName: actorName,
+          ApprovedByUserID: actorUserId,
+          ApprovedByName: actorName,
+          ApprovedAt: new Date(),
+          ClinicalOverrideNote: ClinicalOverrideNote || null,
           ShippingAddress,
           ShippingMethod,
-          ShippingFee: ShippingFee || 0,
+          ShippingFee: serverShippingFee,
           VatAmount: vatAmount,
           PaidAmount: actualPaid,
           DebtAmount: debtAmount,
@@ -254,7 +339,7 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           PointsEarned: pointsEarned,
           Note,
           TotalAmount: finalTotal,
-          Status: invoiceStatus,
+          Status: 'COMPLETED',
           items: {
             create: preparedItems,
           },
@@ -263,48 +348,122 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
               PaymentMethod,
               TransactionCode: txCode,
               PaidAmount: actualPaid,
-              Status: debtAmount === 0 ? 'COMPLETED' : 'PENDING',
+              Status: debtAmount === 0 ? 'COMPLETED' : actualPaid > 0 ? 'PARTIAL' : 'UNPAID',
             },
           },
+          ...(actualPaid > 0
+            ? {
+                paymentTransactions: {
+                  create: [
+                    {
+                      EntryType: 'CAPTURE',
+                      PaymentMethod,
+                      Amount: actualPaid,
+                      ReferenceCode: txCode,
+                      ActorUserID: actorUserId,
+                      ActorName: actorName,
+                      Note: `Thu tiền khi lập hóa đơn ${invoiceCode}`,
+                      Status: 'COMPLETED',
+                    },
+                  ],
+                },
+              }
+            : {}),
         },
         include: {
           items: { include: { product: true } },
           payment: true,
+          paymentTransactions: true,
           customer: true,
         },
       });
+
+      // Ghi sổ cái biến động kho Append-only (StockMovement — Issue 14)
+      for (const createdItem of inv.items) {
+        await tx.stockMovement.create({
+          data: {
+            ProductID: createdItem.ProductID,
+            SourceType: 'INVOICE',
+            SourceID: inv.InvoiceID,
+            LineItemID: createdItem.ItemID,
+            MovementType: 'EXPORT',
+            Unit: createdItem.Unit || createdItem.product?.Unit || 'Hộp',
+            Quantity: createdItem.Quantity,
+            BaseQtyDelta: -(createdItem.BaseQuantityDeducted ?? 0),
+            LooseQtyDelta: -(createdItem.LooseUnitsDeducted ?? 0),
+            BatchNumber: createdItem.BatchNumber,
+            ExpiryDate: createdItem.ExpiryDate,
+            ActorUserID: actorUserId,
+            ActorName: actorName,
+            Note: `Xuất kho theo hóa đơn ${inv.InvoiceCode}`,
+          },
+        });
+      }
+
+      return inv;
     });
 
-    res.status(201).json({
+    const responseBody = {
       success: true,
       message: `Đã lập chứng từ ${createdInvoice.InvoiceCode} thành công`,
       data: {
         ...createdInvoice,
-        Status:
-          createdInvoice.Status === 'PAID'
-            ? 'COMPLETED'
-            : createdInvoice.Status,
+        Status: 'COMPLETED',
       },
-    });
-  } catch (error) {
-    res.status(400).json({
+    };
+
+    await saveIdempotency(
+      idemCheck.compositeKey,
+      'CREATE_INVOICE',
+      actorKey,
+      idemCheck.payloadHash,
+      201,
+      responseBody
+    );
+
+    res.status(201).json(responseBody);
+  } catch (error: any) {
+    if (error instanceof IdempotencyConflictError) {
+      res.status(409).json({ success: false, message: error.message });
+      return;
+    }
+    const statusCode = error?.statusCode || 400;
+    res.status(statusCode).json({
       success: false,
+      code: error?.code || 'INVOICE_CREATE_ERROR',
       message: error instanceof Error ? error.message : 'Lỗi khi lập hóa đơn',
     });
   }
 };
 
 /**
- * CẬP NHẬT TRẠNG THÁI XỬ LÝ & GIAO HÀNG ĐƠN ONLINE (PATCH /api/invoices/:id/fulfillment)
+ * CẬP NHẬT TRẠNG THÁI GIAO VẬN THEO STATE MACHINE — ĐỘC LẬP VỚI THU TIỀN (PATCH /api/invoices/:id/fulfillment)
+ * Giải quyết triệt để Issue 6 & Issue 7:
+ * - Không cho phép nhảy cóc trạng thái hoặc sửa đơn đã hoàn tất/hủy.
+ * - Giao hàng thành công (DELIVERED/COMPLETED) tuyệt đối KHÔNG tự ý xóa công nợ B2B hay tự ghi đã thu COD nếu chưa đối soát!
  */
+const ALLOWED_FULFILLMENT_TRANSITIONS: Record<string, string[]> = {
+  PENDING: ['CONFIRMED', 'REJECTED', 'CANCELLED'],
+  PENDING_REVIEW: ['CONFIRMED', 'REJECTED', 'CANCELLED'],
+  CONFIRMED: ['PACKING', 'SHIPPING', 'CANCELLED'],
+  PACKING: ['SHIPPING', 'CANCELLED'],
+  SHIPPING: ['DELIVERED', 'COMPLETED'],
+  DELIVERED: [],
+  COMPLETED: [],
+  CANCELLED: [],
+  REJECTED: [],
+};
+
 export const updateFulfillmentStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const invoiceId = Number(req.params.id);
-    const { fulfillmentStatus } = req.body as {
-      fulfillmentStatus: 'PENDING' | 'CONFIRMED' | 'SHIPPING' | 'COMPLETED';
+    const { fulfillmentStatus, courierTrackingCode, rejectReason } = req.body as {
+      fulfillmentStatus: string;
+      courierTrackingCode?: string;
+      rejectReason?: string;
     };
 
-    if (!['PENDING', 'CONFIRMED', 'SHIPPING', 'COMPLETED'].includes(fulfillmentStatus)) {
+    if (!ALLOWED_FULFILLMENT_TRANSITIONS[fulfillmentStatus]) {
       res.status(400).json({ success: false, message: 'Trạng thái giao vận không hợp lệ' });
       return;
     }
@@ -316,46 +475,54 @@ export const updateFulfillmentStatus = async (req: Request, res: Response): Prom
       });
 
       if (!invoice) {
-        throw new Error('Không tìm thấy đơn hàng');
+        throw new Error('Không tìm thấy chứng từ hóa đơn');
       }
 
-      // Nếu đơn giao thành công (COMPLETED) và là đơn COD -> tự động thu đủ tiền
-      const isCompletingDebt = fulfillmentStatus === 'COMPLETED' && invoice.DebtAmount > 0;
-
-      if (isCompletingDebt && invoice.CustomerID && invoice.customer) {
-        await tx.customer.update({
-          where: { CustomerID: invoice.CustomerID },
-          data: {
-            DebtBalance: Math.max(0, (invoice.customer.DebtBalance || 0) - invoice.DebtAmount),
-          },
-        });
+      if (invoice.Status === 'REFUNDED' || invoice.Status === 'CANCELLED') {
+        throw new Error('Chứng từ đã hoàn trả/hủy, không thể cập nhật trạng thái giao vận!');
       }
 
-      if (isCompletingDebt && invoice.payment) {
-        await tx.payment.update({
-          where: { PaymentID: invoice.payment.PaymentID },
-          data: {
-            PaidAmount: invoice.TotalAmount,
-            Status: 'COMPLETED',
-          },
-        });
+      const currentFStatus = invoice.FulfillmentStatus || 'PENDING';
+      const allowedNext = ALLOWED_FULFILLMENT_TRANSITIONS[currentFStatus] || [];
+
+      if (!allowedNext.includes(fulfillmentStatus)) {
+        throw new Error(
+          `Chuyển trạng thái không hợp lệ: Không thể chuyển từ "${currentFStatus}" sang "${fulfillmentStatus}". Các bước hợp lệ tiếp theo: [${allowedNext.join(', ') || 'Đã kết thúc'}]`
+        );
       }
 
-      return tx.invoice.update({
-        where: { InvoiceID: invoiceId },
+      if (
+        (fulfillmentStatus === 'REJECTED' || fulfillmentStatus === 'CANCELLED') &&
+        (!rejectReason || rejectReason.trim().length < 3)
+      ) {
+        throw new Error('Vui lòng nhập lý do từ chối / hủy vận đơn!');
+      }
+
+      // Cập nhật có điều kiện theo trạng thái cũ để chống 2 nhân viên ghi đè nhau (Issue 7)
+      const conditionalUpdate = await tx.invoice.updateMany({
+        where: {
+          InvoiceID: invoiceId,
+          FulfillmentStatus: currentFStatus,
+        },
         data: {
           FulfillmentStatus: fulfillmentStatus,
-          ...(isCompletingDebt
-            ? {
-                PaidAmount: invoice.TotalAmount,
-                DebtAmount: 0,
-                Status: 'PAID',
-              }
+          ...(rejectReason ? { CancelReason: rejectReason.trim() } : {}),
+          ...(courierTrackingCode
+            ? { Note: `${invoice.Note || ''} [Mã vận đơn: ${courierTrackingCode}]`.trim() }
             : {}),
         },
+      });
+
+      if (conditionalUpdate.count !== 1) {
+        throw new Error('Trạng thái đơn hàng vừa được nhân viên khác cập nhật. Vui lòng tải lại!');
+      }
+
+      return tx.invoice.findUniqueOrThrow({
+        where: { InvoiceID: invoiceId },
         include: {
           items: { include: { product: true } },
           payment: true,
+          paymentTransactions: true,
           customer: true,
         },
       });
@@ -363,10 +530,10 @@ export const updateFulfillmentStatus = async (req: Request, res: Response): Prom
 
     res.json({
       success: true,
-      message: `Đã cập nhật tiến độ đơn hàng ${updated.InvoiceCode} sang ${fulfillmentStatus}`,
+      message: `Đã chuyển trạng thái vận chuyển đơn ${updated.InvoiceCode} sang ${fulfillmentStatus} (Trạng thái thanh toán giữ nguyên: ${updated.PaymentStatus})`,
       data: {
         ...updated,
-        Status: updated.Status === 'PAID' ? 'COMPLETED' : updated.Status,
+        Status: updated.Status === 'REFUNDED' ? 'CANCELLED' : 'COMPLETED',
       },
     });
   } catch (error) {
@@ -378,40 +545,73 @@ export const updateFulfillmentStatus = async (req: Request, res: Response): Prom
 };
 
 /**
- * THU HỒI CÔNG NỢ HÓA ĐƠN BÁN BUÔN / KHÁCH SỈ (POST /api/invoices/:id/pay-debt)
+ * THU HỒI CÔNG NỢ B2B HOẶC ĐỐI SOÁT TIỀN COD THỰC THU (POST /api/invoices/:id/pay-debt)
+ * Giải quyết Issue 6, 18, 19, 21:
+ * - Ghi nhận từng lần thu tiền vào bảng PaymentTransaction (Append-only ledger).
+ * - Chỉ trừ Customer.DebtBalance nếu hóa đơn là đơn nợ CREDIT.
+ * - Hỗ trợ Idempotency-Key chống thu trùng 2 lần.
  */
 export const collectInvoiceDebt = async (req: Request, res: Response): Promise<void> => {
   try {
     const invoiceId = Number(req.params.id);
     const payAmount = Number(req.body?.amount || 0);
+    const method = (req.body?.paymentMethod as string) || 'VIETQR';
+    const referenceCode =
+      (req.body?.referenceCode as string) || `RCPT-${String(Date.now()).slice(-6)}`;
+    const note = (req.body?.note as string) || '';
 
     if (isNaN(invoiceId) || payAmount <= 0) {
       res.status(400).json({
         success: false,
-        message: 'Số tiền thu nợ phải lớn hơn 0',
+        message: 'Số tiền thực thu phải lớn hơn 0',
       });
+      return;
+    }
+
+    const rawIdemKey =
+      (req.headers['idempotency-key'] as string | undefined) || req.body?.idempotencyKey;
+    const actorKey = req.user ? `user:${req.user.UserID}` : 'staff';
+
+    const idemCheck = await checkIdempotency(rawIdemKey, `COLLECT_DEBT:${invoiceId}`, actorKey, {
+      invoiceId,
+      payAmount,
+      method,
+    });
+    if (idemCheck.hit && idemCheck.body) {
+      res.status(idemCheck.statusCode || 200).json(idemCheck.body);
       return;
     }
 
     const updated = await prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.findUnique({
         where: { InvoiceID: invoiceId },
-        include: { payment: true, customer: true },
+        include: { payment: true, customer: true, onlineOrder: true },
       });
 
       if (!invoice) {
-        throw new Error('Không tìm thấy hóa đơn cần thu nợ');
+        throw new Error('Không tìm thấy hóa đơn cần thu tiền / đối soát');
+      }
+      if (invoice.Status === 'REFUNDED' || invoice.Status === 'CANCELLED') {
+        throw new Error('Hóa đơn đã hủy/hoàn trả, không thể thu tiền');
       }
       if (invoice.DebtAmount <= 0) {
-        throw new Error('Hóa đơn này đã được thanh toán đủ, không còn công nợ');
+        throw new Error('Hóa đơn này đã được thanh toán đủ, không còn số dư cần thu');
       }
 
       const collected = Math.min(invoice.DebtAmount, payAmount);
       const nextPaid = invoice.PaidAmount + collected;
       const nextDebt = Math.max(0, invoice.DebtAmount - collected);
-      const nextStatus = nextDebt === 0 ? 'PAID' : 'PARTIAL';
+      const nextPaymentStatus = nextDebt === 0 ? 'PAID' : 'PARTIALLY_PAID';
 
-      if (invoice.CustomerID && invoice.customer) {
+      const isCodCollection = invoice.payment?.PaymentMethod === 'COD';
+      const entryType = isCodCollection ? 'COLLECT_COD' : 'DEBT_COLLECTION';
+
+      // Chỉ giảm DebtBalance của Customer nếu đây là khoản nợ CREDIT (không giảm nhầm nếu là đơn COD của khách có công nợ khác)
+      if (
+        invoice.CustomerID &&
+        invoice.customer &&
+        invoice.payment?.PaymentMethod === 'CREDIT'
+      ) {
         await tx.customer.update({
           where: { CustomerID: invoice.CustomerID },
           data: {
@@ -430,30 +630,74 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
         });
       }
 
+      await tx.paymentTransaction.create({
+        data: {
+          InvoiceID: invoice.InvoiceID,
+          EntryType: entryType,
+          PaymentMethod: method,
+          Amount: collected,
+          ReferenceCode: referenceCode,
+          ActorUserID: req.user?.UserID || null,
+          ActorName: req.user?.FullName || 'Kế toán Thu ngân',
+          Note:
+            note ||
+            (isCodCollection
+              ? `Đối soát tiền thu hộ COD cho đơn ${invoice.InvoiceCode}`
+              : `Thu công nợ B2B hóa đơn ${invoice.InvoiceCode}`),
+          Status: 'COMPLETED',
+        },
+      });
+
+      if (invoice.onlineOrder) {
+        await tx.onlineOrder.update({
+          where: { OrderID: invoice.onlineOrder.OrderID },
+          data: {
+            PaidAmount: nextPaid,
+            PaymentStatus: nextPaymentStatus,
+          },
+        });
+      }
+
       return tx.invoice.update({
         where: { InvoiceID: invoiceId },
         data: {
           PaidAmount: nextPaid,
           DebtAmount: nextDebt,
-          Status: nextStatus,
+          PaymentStatus: nextPaymentStatus,
         },
         include: {
           items: { include: { product: true } },
           payment: true,
+          paymentTransactions: { orderBy: { CreateDate: 'desc' } },
           customer: true,
         },
       });
     });
 
-    res.json({
+    const responseBody = {
       success: true,
-      message: `Đã thu công nợ hóa đơn ${updated.InvoiceCode} thành công`,
+      message: `Đã ghi nhận phiếu thu ${updated.InvoiceCode} thành công`,
       data: {
         ...updated,
-        Status: updated.Status === 'PAID' ? 'COMPLETED' : updated.Status,
+        Status: 'COMPLETED',
       },
-    });
+    };
+
+    await saveIdempotency(
+      idemCheck.compositeKey,
+      `COLLECT_DEBT:${invoiceId}`,
+      actorKey,
+      idemCheck.payloadHash,
+      200,
+      responseBody
+    );
+
+    res.json(responseBody);
   } catch (error) {
+    if (error instanceof IdempotencyConflictError) {
+      res.status(409).json({ success: false, message: error.message });
+      return;
+    }
     res.status(400).json({
       success: false,
       message: error instanceof Error ? error.message : 'Không thể thu hồi công nợ',
@@ -462,12 +706,19 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
 };
 
 /**
- * HỦY / HOÀN TRẢ HÓA ĐƠN & HOÀN LẠI KHO GỐC + ĐIỂM TÍCH LŨY + GIẢM CÔNG NỢ
+ * HỦY / HOÀN TRẢ HÓA ĐƠN & HOÀN KHO THEO LÔ + GHI BÚT TOÁN HOÀN TIỀN THỰC THU
  * POST /api/invoices/:id/cancel
+ * Giải quyết Issue 11, 14, 18, 19:
+ * - Chặn tự suy luận đối với hóa đơn legacy thiếu BaseQuantityDeducted/LooseUnitsDeducted.
+ * - Ghi StockMovement (RETURN) có unique constraint chống hoàn 2 lần.
+ * - Chỉ hoàn tiền tối đa bằng số tiền thực đã thu (PaidAmount) qua bút toán REFUND, và xóa phần công nợ qua bút toán VOID.
  */
 export const cancelInvoice = async (req: Request, res: Response): Promise<void> => {
   try {
     const invoiceId = Number(req.params.id);
+    const cancelReason =
+      (req.body?.reason as string) || 'Khách hàng hoàn trả thuốc tại quầy theo quy định GPP';
+
     if (isNaN(invoiceId)) {
       res.status(400).json({ success: false, message: 'Mã hóa đơn không hợp lệ' });
       return;
@@ -476,43 +727,88 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
     const updated = await prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.findUnique({
         where: { InvoiceID: invoiceId },
-        include: { items: { include: { product: true } }, payment: true, customer: true },
+        include: {
+          items: { include: { product: true } },
+          payment: true,
+          customer: true,
+          onlineOrder: true,
+        },
       });
 
       if (!invoice) {
         throw new Error('Không tìm thấy chứng từ hóa đơn');
       }
 
-      // Đảm bảo tính duy nhất (Idempotent) - Chống hoàn trả 2 lần
       if (invoice.Status === 'REFUNDED' || invoice.Status === 'CANCELLED') {
         throw new Error('Hóa đơn này đã được hoàn trả trước đó, không thể hủy lần thứ hai!');
       }
 
-      // 1. Hoàn trả lại tồn kho chính xác theo quy cách đóng gói
+      // Kiểm tra dữ liệu legacy: nếu dòng hóa đơn không lưu đủ BaseQuantityDeducted và LooseUnitsDeducted thì chặn tự suy luận (Issue 14)
+      for (const item of invoice.items) {
+        if (item.BaseQuantityDeducted === null && item.LooseUnitsDeducted === null) {
+          const err: any = new Error(
+            `Dòng thuốc #${item.ItemID} thuộc chứng từ cũ (legacy) chưa lưu định lượng quy đổi gốc. Hệ thống chuyển sang hàng chờ kiểm kê thủ công, không tự động suy luận số hộp hoàn kho!`
+          );
+          err.statusCode = 422;
+          throw err;
+        }
+      }
+
+      const actorUserId = req.user?.UserID || null;
+      const actorName = req.user?.FullName || 'Dược sĩ Quản lý';
+
+      // 1. Hoàn trả lại tồn kho chính xác theo quy cách & đúng Lô FEFO + ghi StockMovement (RETURN)
       for (const item of invoice.items) {
         if (!item.product) continue;
 
-        const packagesDeducted =
-          item.BaseQuantityDeducted !== null ? item.BaseQuantityDeducted : item.Quantity;
-        const smallestUnitsDeducted =
-          item.LooseUnitsDeducted !== null ? item.LooseUnitsDeducted : item.Quantity;
+        const packagesDeducted = item.BaseQuantityDeducted ?? 0;
+        const smallestUnitsDeducted = item.LooseUnitsDeducted ?? 0;
+
+        // Ghi StockMovement với khóa unique (SourceType, SourceID, LineItemID, MovementType='RETURN') để đảm bảo không bao giờ đảo kho 2 lần
+        await tx.stockMovement.create({
+          data: {
+            ProductID: item.ProductID,
+            SourceType: 'INVOICE',
+            SourceID: invoice.InvoiceID,
+            LineItemID: item.ItemID,
+            MovementType: 'RETURN',
+            Unit: item.Unit || item.product.Unit,
+            Quantity: item.Quantity,
+            BaseQtyDelta: packagesDeducted,
+            LooseQtyDelta: smallestUnitsDeducted,
+            BatchNumber: item.BatchNumber,
+            ExpiryDate: item.ExpiryDate,
+            ActorUserID: actorUserId,
+            ActorName: actorName,
+            Note: `Hoàn nhập kho từ hóa đơn hủy ${invoice.InvoiceCode}: ${cancelReason}`,
+          },
+        });
 
         await packagingService.restoreStockOnRefund(
           item.product,
           packagesDeducted,
           smallestUnitsDeducted,
-          tx
+          tx,
+          {
+            lotId: item.LotID,
+            batchNumber: item.BatchNumber,
+          }
         );
       }
 
-      // 2. Hoàn trả điểm tích lũy đã dùng, thu hồi điểm thưởng & xóa dư nợ đơn hàng
+      // 2. Xử lý tài chính: Hoàn tiền tối đa bằng đúng số tiền thực đã thu (PaidAmount) + Đảo công nợ riêng (Issue 11)
+      const actualCashRefund = Math.max(0, invoice.PaidAmount || 0);
+      const voidedDebtAmount = Math.max(0, invoice.DebtAmount || 0);
+
       if (invoice.CustomerID && invoice.customer) {
         const restoredPoints =
           invoice.customer.LoyaltyPoints + invoice.UsedPoints - invoice.PointsEarned;
-        const restoredDebt = Math.max(
-          0,
-          (invoice.customer.DebtBalance || 0) - (invoice.DebtAmount || 0)
-        );
+        const shouldReverseCustomerDebt =
+          voidedDebtAmount > 0 && invoice.payment?.PaymentMethod === 'CREDIT';
+        const restoredDebt = shouldReverseCustomerDebt
+          ? Math.max(0, (invoice.customer.DebtBalance || 0) - voidedDebtAmount)
+          : invoice.customer.DebtBalance || 0;
+
         await tx.customer.update({
           where: { CustomerID: invoice.CustomerID },
           data: {
@@ -522,24 +818,72 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
         });
       }
 
-      // 3. Cập nhật trạng thái Payment sang REFUNDED
-      if (invoice.payment) {
-        await tx.payment.update({
-          where: { PaymentID: invoice.payment.PaymentID },
-          data: { Status: 'REFUNDED' },
+      if (actualCashRefund > 0) {
+        await tx.paymentTransaction.create({
+          data: {
+            InvoiceID: invoice.InvoiceID,
+            EntryType: 'REFUND',
+            PaymentMethod: invoice.payment?.PaymentMethod || 'CASH',
+            Amount: actualCashRefund,
+            ReferenceCode: `REF-${invoice.InvoiceCode}`,
+            ActorUserID: actorUserId,
+            ActorName: actorName,
+            Note: `Chi hoàn tiền thực thu cho hóa đơn ${invoice.InvoiceCode} (${cancelReason})`,
+            Status: 'COMPLETED',
+          },
         });
       }
 
-      // 4. Cập nhật trạng thái Invoice sang REFUNDED & FulfillmentStatus sang CANCELLED
+      if (voidedDebtAmount > 0) {
+        await tx.paymentTransaction.create({
+          data: {
+            InvoiceID: invoice.InvoiceID,
+            EntryType: 'VOID',
+            PaymentMethod: invoice.payment?.PaymentMethod || 'CREDIT',
+            Amount: voidedDebtAmount,
+            ReferenceCode: `VOID-${invoice.InvoiceCode}`,
+            ActorUserID: actorUserId,
+            ActorName: actorName,
+            Note: `Hủy/Đảo khoản phải thu chưa thanh toán của hóa đơn ${invoice.InvoiceCode}`,
+            Status: 'COMPLETED',
+          },
+        });
+      }
+
+      const finalPaymentStatus = actualCashRefund > 0 ? 'REFUNDED' : 'VOID';
+
+      if (invoice.payment) {
+        await tx.payment.update({
+          where: { PaymentID: invoice.payment.PaymentID },
+          data: { Status: finalPaymentStatus },
+        });
+      }
+
+      if (invoice.onlineOrder) {
+        await tx.onlineOrder.update({
+          where: { OrderID: invoice.onlineOrder.OrderID },
+          data: {
+            Status: 'CANCELLED',
+            PaymentStatus: finalPaymentStatus,
+            RejectCancelReason: cancelReason,
+          },
+        });
+      }
+
       return tx.invoice.update({
         where: { InvoiceID: invoiceId },
         data: {
           Status: 'REFUNDED',
           FulfillmentStatus: 'CANCELLED',
+          PaymentStatus: finalPaymentStatus,
+          RefundedAmount: actualCashRefund,
+          DebtAmount: 0,
+          CancelReason: cancelReason,
         },
         include: {
           items: { include: { product: true } },
           payment: true,
+          paymentTransactions: { orderBy: { CreateDate: 'desc' } },
           customer: true,
         },
       });
@@ -547,14 +891,15 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
 
     res.json({
       success: true,
-      message: `Đã hoàn trả hóa đơn ${updated.InvoiceCode}, cộng trả thuốc vào kho và điều chỉnh công nợ/điểm thưởng thành công!`,
+      message: `Đã hoàn trả hóa đơn ${updated.InvoiceCode}: Hoàn tiền thực thu ${updated.RefundedAmount.toLocaleString('vi-VN')} đ và cộng trả thuốc về đúng lô kho!`,
       data: {
         ...updated,
         Status: 'CANCELLED',
       },
     });
-  } catch (error) {
-    res.status(400).json({
+  } catch (error: any) {
+    const statusCode = error?.statusCode || 400;
+    res.status(statusCode).json({
       success: false,
       message: error instanceof Error ? error.message : 'Không thể hoàn trả hóa đơn',
     });

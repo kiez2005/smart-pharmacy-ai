@@ -15,8 +15,10 @@ export interface UnitCalculationResult {
   unitPrice: number;
   packagesToOpen: number;
   newLooseUnits: number;
+  looseUnitsUsedFromOpenBox: number;
   totalSmallestUnitsDeducted: number;
   requestedUnit: string;
+  effectiveOrderType: 'RETAIL' | 'WHOLESALE';
 }
 
 /**
@@ -400,40 +402,71 @@ export class PackagingService {
 
   /**
    * Tính toán chính xác giá bán và lượng trừ tồn kho (hộp nguyên + viên lẻ dở dang + thùng bán buôn)
+   * Có tính đến lượng hàng đang được giữ tạm (ReservedBaseQty / ReservedLooseUnits) và kiểm tra điều kiện giá sỉ server-side
    */
   public async calculateDeductionAndPrice(
     product: Product,
     requestedUnit: string | undefined,
     requestedQty: number,
     tx: any = defaultPrisma,
-    orderType: 'RETAIL' | 'WHOLESALE' = 'RETAIL'
+    orderType: 'RETAIL' | 'WHOLESALE' = 'RETAIL',
+    options?: {
+      isVerifiedWholesaleCustomer?: boolean;
+      ignoreReservations?: boolean;
+    }
   ): Promise<UnitCalculationResult> {
     const spec = await this.getOrCreatePackagingSpec(product, tx);
-    const options = this.getAllowedUnits(product, spec, orderType);
     const cartonUnitName = spec.CartonUnit || 'Thùng';
     const boxesPerCarton = spec.BoxesPerCarton || 20;
+    const minWholesaleQty = spec.MinWholesaleQty || 10;
+
+    const isCartonRequested =
+      (requestedUnit || '').trim().toLowerCase() === cartonUnitName.toLowerCase();
+
+    // Server-side kiểm tra điều kiện áp dụng Bảng giá Bán Buôn B2B (Issue 22):
+    // Chỉ áp giá WHOLESALE nếu: (1) Khách thuộc nhóm WHOLESALE đã xác thực, hoặc (2) Mua theo Thùng, hoặc (3) Số lượng >= MinWholesaleQty
+    const qualifiesForWholesale =
+      orderType === 'WHOLESALE' &&
+      (Boolean(options?.isVerifiedWholesaleCustomer) ||
+        isCartonRequested ||
+        requestedQty >= minWholesaleQty);
+
+    const effectiveOrderType: 'RETAIL' | 'WHOLESALE' = qualifiesForWholesale
+      ? 'WHOLESALE'
+      : 'RETAIL';
+
+    const unitOptions = this.getAllowedUnits(product, spec, effectiveOrderType);
 
     // Xác định đơn vị được chọn
     const matchedOption =
-      options.find((opt) => opt.unit.toLowerCase() === (requestedUnit || '').toLowerCase()) ||
-      options[0]; // Mặc định là PackageUnit
+      unitOptions.find(
+        (opt) => opt.unit.toLowerCase() === (requestedUnit || '').toLowerCase()
+      ) || unitOptions[0]; // Mặc định là PackageUnit
 
-    // Nếu mua theo Thùng hoặc chế độ Bán Buôn (WHOLESALE) hoặc mua nguyên Hộp
+    const reservedBoxes = options?.ignoreReservations ? 0 : spec.ReservedBaseQty || 0;
+    const reservedLoose = options?.ignoreReservations ? 0 : spec.ReservedLooseUnits || 0;
+    const availableBoxes = Math.max(0, product.Quantity - reservedBoxes);
+    const availableLoose = Math.max(0, spec.LooseUnits - reservedLoose);
+
+    // Nếu mua theo Thùng hoặc mua nguyên Hộp
     const isCarton = matchedOption.unit.toLowerCase() === cartonUnitName.toLowerCase();
     if (isCarton || matchedOption.isPackageUnit) {
       const boxesNeeded = isCarton ? requestedQty * boxesPerCarton : requestedQty;
-      if (product.Quantity < boxesNeeded) {
-        throw new Error(
-          `Thuốc "${product.ProductName}" không đủ tồn kho nguyên hộp! Yêu cầu: ${requestedQty} ${matchedOption.unit} (${boxesNeeded} ${spec.PackageUnit}), nhưng kho chỉ còn ${product.Quantity} ${spec.PackageUnit}!`
+      if (availableBoxes < boxesNeeded) {
+        const err: any = new Error(
+          `Thuốc "${product.ProductName}" không đủ tồn kho khả dụng! Yêu cầu: ${requestedQty} ${matchedOption.unit} (${boxesNeeded} ${spec.PackageUnit}), khả dụng hiện tại: ${availableBoxes} ${spec.PackageUnit} (Tồn vật lý: ${product.Quantity}, Đang giữ tạm: ${reservedBoxes}).`
         );
+        err.code = 'OUT_OF_STOCK';
+        err.statusCode = 409;
+        throw err;
       }
 
       // Tự động áp dụng giá sỉ nếu mua từ MinWholesaleQty hộp trở lên ngay cả ở chế độ lẻ
       let finalUnitPrice = matchedOption.pricePerUnit;
       if (
         matchedOption.isPackageUnit &&
-        orderType === 'RETAIL' &&
-        requestedQty >= (spec.MinWholesaleQty || 10)
+        effectiveOrderType === 'RETAIL' &&
+        requestedQty >= minWholesaleQty
       ) {
         finalUnitPrice =
           spec.WholesalePrice ||
@@ -444,69 +477,561 @@ export class PackagingService {
         unitPrice: finalUnitPrice,
         packagesToOpen: boxesNeeded,
         newLooseUnits: spec.LooseUnits,
+        looseUnitsUsedFromOpenBox: 0,
         totalSmallestUnitsDeducted: boxesNeeded * spec.UnitsPerPackage,
         requestedUnit: matchedOption.unit,
+        effectiveOrderType:
+          isCarton || requestedQty >= minWholesaleQty ? 'WHOLESALE' : effectiveOrderType,
       };
     }
 
     const unitPrice = matchedOption.pricePerUnit;
     const totalSmallestUnitsNeeded = requestedQty * matchedOption.conversionToSmallest;
 
-    // Tổng số đơn vị nhỏ nhất hiện có trong kho = (Hộp nguyên * UnitsPerPackage) + Thuốc lẻ dở dang
+    // Tổng số đơn vị nhỏ nhất khả dụng = (Hộp khả dụng * UnitsPerPackage) + Thuốc lẻ khả dụng
     const totalSmallestUnitsAvailable =
-      product.Quantity * spec.UnitsPerPackage + spec.LooseUnits;
+      availableBoxes * spec.UnitsPerPackage + availableLoose;
 
     if (totalSmallestUnitsNeeded > totalSmallestUnitsAvailable) {
-      throw new Error(
-        `Thuốc "${product.ProductName}" không đủ tồn kho! Yêu cầu: ${requestedQty} ${matchedOption.unit} (tương đương ${totalSmallestUnitsNeeded} ${spec.SmallestUnit}), nhưng toàn kho chỉ còn tổng cộng ${totalSmallestUnitsAvailable} ${spec.SmallestUnit}!`
+      const err: any = new Error(
+        `Thuốc "${product.ProductName}" không đủ tồn kho khả dụng! Yêu cầu: ${requestedQty} ${matchedOption.unit} (tương đương ${totalSmallestUnitsNeeded} ${spec.SmallestUnit}), nhưng khả dụng chỉ còn ${totalSmallestUnitsAvailable} ${spec.SmallestUnit}!`
       );
+      err.code = 'OUT_OF_STOCK';
+      err.statusCode = 409;
+      throw err;
     }
 
     let packagesToOpen = 0;
+    let looseUnitsUsedFromOpenBox = 0;
     let newLooseUnits = spec.LooseUnits;
 
-    // Nếu thuốc lẻ dở dang đủ dùng -> trừ trực tiếp từ thuốc lẻ, không mở hộp mới
-    if (newLooseUnits >= totalSmallestUnitsNeeded) {
-      newLooseUnits -= totalSmallestUnitsNeeded;
+    // Nếu thuốc lẻ khả dụng đủ dùng -> trừ trực tiếp từ thuốc lẻ, không mở hộp mới
+    if (availableLoose >= totalSmallestUnitsNeeded) {
+      looseUnitsUsedFromOpenBox = totalSmallestUnitsNeeded;
+      newLooseUnits = spec.LooseUnits - totalSmallestUnitsNeeded;
       packagesToOpen = 0;
     } else {
-      // Thiếu thuốc lẻ -> cần mở thêm hộp nguyên
-      const deficit = totalSmallestUnitsNeeded - newLooseUnits;
+      // Thiếu thuốc lẻ -> dùng hết phần lẻ khả dụng và mở thêm hộp nguyên
+      looseUnitsUsedFromOpenBox = availableLoose;
+      const deficit = totalSmallestUnitsNeeded - availableLoose;
       packagesToOpen = Math.ceil(deficit / spec.UnitsPerPackage);
 
-      if (product.Quantity < packagesToOpen) {
-        throw new Error(
-          `Thuốc "${product.ProductName}" không đủ hộp nguyên để mở bán lẻ!`
+      if (availableBoxes < packagesToOpen) {
+        const err: any = new Error(
+          `Thuốc "${product.ProductName}" không đủ hộp nguyên khả dụng để mở bán lẻ!`
         );
+        err.code = 'OUT_OF_STOCK';
+        err.statusCode = 409;
+        throw err;
       }
 
       const producedFromBoxes = packagesToOpen * spec.UnitsPerPackage;
-      newLooseUnits = newLooseUnits + producedFromBoxes - totalSmallestUnitsNeeded;
+      newLooseUnits = spec.LooseUnits - availableLoose + (producedFromBoxes - deficit);
     }
 
     return {
       unitPrice,
       packagesToOpen,
       newLooseUnits,
+      looseUnitsUsedFromOpenBox,
       totalSmallestUnitsDeducted: totalSmallestUnitsNeeded,
       requestedUnit: matchedOption.unit,
+      effectiveOrderType: 'RETAIL',
     };
   }
 
   /**
-   * Hoàn trả tồn kho chính xác khi hủy hóa đơn (Repack hộp dở dang nếu đủ quy cách)
+   * Phân bổ lô tồn kho theo chuẩn FEFO (First Expired, First Out) — chặn lô hết hạn / thu hồi
+   */
+  public async allocateFefoLot(
+    productId: number,
+    packagesNeeded: number,
+    tx: any = defaultPrisma
+  ): Promise<{ batchNumber: string; expiryDate: string; lotId: number | null }> {
+    const todayIso = new Date().toISOString().slice(0, 10);
+
+    // Tìm các lô đang ACTIVE, chưa hết hạn và còn tồn > 0, sắp xếp HSD gần nhất trước (FEFO)
+    const activeLots = await tx.stockLot.findMany({
+      where: {
+        ProductID: productId,
+        Status: 'ACTIVE',
+        RemainingQuantity: { gt: 0 },
+        ExpiryDate: { gte: todayIso },
+      },
+      orderBy: [{ ExpiryDate: 'asc' }, { LotID: 'asc' }],
+    });
+
+    if (activeLots.length === 0) {
+      // Nếu sản phẩm chưa có bản ghi trong StockLot nhưng có PurchaseOrderItem -> tự động đồng bộ lô chuẩn từ PO hoặc tạo lô gốc
+      const product = await tx.product.findUnique({ where: { ProductID: productId } });
+      const latestPoItem = await tx.purchaseOrderItem.findFirst({
+        where: { ProductID: productId },
+        orderBy: { OrderItemID: 'desc' },
+      });
+      const defaultBatch = latestPoItem?.BatchNumber || `LOT-26${String(productId).padStart(3, '0')}`;
+      const defaultExpiry =
+        latestPoItem?.ExpiryDate && latestPoItem.ExpiryDate >= todayIso
+          ? latestPoItem.ExpiryDate
+          : '2028-12-31';
+      const initialQty = Math.max(product?.Quantity || 0, packagesNeeded);
+
+      const createdLot = await tx.stockLot.create({
+        data: {
+          ProductID: productId,
+          BatchNumber: defaultBatch,
+          ExpiryDate: defaultExpiry,
+          InitialQuantity: initialQty,
+          RemainingQuantity: Math.max(0, initialQty - packagesNeeded),
+          ImportPrice: latestPoItem?.ImportPrice || Math.round((product?.Price || 10000) * 0.7),
+          Status: 'ACTIVE',
+        },
+      });
+      return {
+        batchNumber: createdLot.BatchNumber,
+        expiryDate: createdLot.ExpiryDate,
+        lotId: createdLot.LotID,
+      };
+    }
+
+    let remainingToAllocate = packagesNeeded;
+    const primaryLot = activeLots[0];
+
+    for (const lot of activeLots) {
+      if (remainingToAllocate <= 0) break;
+      const take = Math.min(lot.RemainingQuantity, remainingToAllocate);
+      if (take > 0) {
+        const nextRemaining = lot.RemainingQuantity - take;
+        await tx.stockLot.update({
+          where: { LotID: lot.LotID },
+          data: {
+            RemainingQuantity: nextRemaining,
+            Status: nextRemaining === 0 ? 'DEPLETED' : 'ACTIVE',
+          },
+        });
+        remainingToAllocate -= take;
+      }
+    }
+
+    return {
+      batchNumber: primaryLot.BatchNumber,
+      expiryDate: primaryLot.ExpiryDate,
+      lotId: primaryLot.LotID,
+    };
+  }
+
+  /**
+   * Trừ kho nguyên tử (Atomic Conditional Update + Optimistic Concurrency Version)
+   * Đảm bảo nếu 2 giao dịch cùng tranh hộp cuối, chỉ 1 giao dịch thành công, giao dịch còn lại nhận lỗi 409 OUT_OF_STOCK
+   */
+  public async deductStockAtomically(
+    productId: number,
+    requestedUnit: string | undefined,
+    requestedQty: number,
+    tx: any,
+    options?: {
+      orderType?: 'RETAIL' | 'WHOLESALE';
+      isVerifiedWholesaleCustomer?: boolean;
+    }
+  ): Promise<
+    UnitCalculationResult & {
+      batchNumber: string;
+      expiryDate: string;
+      lotId: number | null;
+    }
+  > {
+    const freshProduct = await tx.product.findUnique({
+      where: { ProductID: productId },
+    });
+    if (!freshProduct) {
+      throw new Error(`Không tìm thấy dược phẩm có mã #${productId}`);
+    }
+
+    const spec = await this.getOrCreatePackagingSpec(freshProduct, tx);
+    const calc = await this.calculateDeductionAndPrice(
+      freshProduct,
+      requestedUnit,
+      requestedQty,
+      tx,
+      options?.orderType || 'RETAIL',
+      { isVerifiedWholesaleCustomer: options?.isVerifiedWholesaleCustomer }
+    );
+
+    // 1. Atomic check-and-update trên ProductPackaging với khóa Version
+    const pkgUpdated = await tx.productPackaging.updateMany({
+      where: {
+        PackagingID: spec.PackagingID,
+        Version: spec.Version,
+      },
+      data: {
+        LooseUnits: calc.newLooseUnits,
+        Version: { increment: 1 },
+      },
+    });
+
+    if (pkgUpdated.count !== 1) {
+      const err: any = new Error(
+        `Xung đột cập nhật tồn kho đồng thời cho "${freshProduct.ProductName}". Vui lòng thử lại!`
+      );
+      err.code = 'CONCURRENCY_CONFLICT';
+      err.statusCode = 409;
+      throw err;
+    }
+
+    // 2. Atomic check-and-decrement trên Product.Quantity (đảm bảo sau khi trừ vẫn >= ReservedBaseQty)
+    if (calc.packagesToOpen > 0) {
+      const minRequiredPhysical = calc.packagesToOpen + (spec.ReservedBaseQty || 0);
+      const prodUpdated = await tx.product.updateMany({
+        where: {
+          ProductID: freshProduct.ProductID,
+          Quantity: { gte: minRequiredPhysical },
+        },
+        data: {
+          Quantity: { decrement: calc.packagesToOpen },
+        },
+      });
+
+      if (prodUpdated.count !== 1) {
+        const err: any = new Error(
+          `Thuốc "${freshProduct.ProductName}" vừa hết tồn kho khả dụng do có đơn khác chốt trước!`
+        );
+        err.code = 'OUT_OF_STOCK';
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+
+    const lotAlloc = await this.allocateFefoLot(
+      freshProduct.ProductID,
+      calc.packagesToOpen,
+      tx
+    );
+
+    return {
+      ...calc,
+      ...lotAlloc,
+    };
+  }
+
+  /**
+   * Giữ kho tạm có thời hạn (Inventory Reservation) cho đơn Online đang chờ Dược sĩ duyệt
+   * Nếu không đủ tồn khả dụng hoặc thua cuộc khi tranh hộp cuối -> ném lỗi 409 OUT_OF_STOCK để rollback toàn bộ đơn
+   */
+  public async reserveStockAtomically(
+    productId: number,
+    requestedUnit: string | undefined,
+    requestedQty: number,
+    tx: any,
+    options?: {
+      orderType?: 'RETAIL' | 'WHOLESALE';
+      isVerifiedWholesaleCustomer?: boolean;
+    }
+  ): Promise<
+    UnitCalculationResult & {
+      baseQtyToReserve: number;
+      looseQtyToReserve: number;
+    }
+  > {
+    const freshProduct = await tx.product.findUnique({
+      where: { ProductID: productId },
+    });
+    if (!freshProduct) {
+      throw new Error(`Không tìm thấy dược phẩm #${productId}`);
+    }
+
+    const spec = await this.getOrCreatePackagingSpec(freshProduct, tx);
+    const calc = await this.calculateDeductionAndPrice(
+      freshProduct,
+      requestedUnit,
+      requestedQty,
+      tx,
+      options?.orderType || 'RETAIL',
+      { isVerifiedWholesaleCustomer: options?.isVerifiedWholesaleCustomer }
+    );
+
+    const baseQtyToReserve = calc.packagesToOpen;
+    const looseQtyToReserve = calc.looseUnitsUsedFromOpenBox;
+
+    // Kiểm tra lại tồn vật lý >= tồn đã giữ + tồn cần giữ mới, cập nhật nguyên tử với Version
+    const pkgUpdated = await tx.productPackaging.updateMany({
+      where: {
+        PackagingID: spec.PackagingID,
+        Version: spec.Version,
+        ReservedBaseQty: spec.ReservedBaseQty,
+        ReservedLooseUnits: spec.ReservedLooseUnits,
+      },
+      data: {
+        ReservedBaseQty: { increment: baseQtyToReserve },
+        ReservedLooseUnits: { increment: looseQtyToReserve },
+        Version: { increment: 1 },
+      },
+    });
+
+    if (
+      pkgUpdated.count !== 1 ||
+      freshProduct.Quantity < (spec.ReservedBaseQty || 0) + baseQtyToReserve
+    ) {
+      const err: any = new Error(
+        `Thuốc "${freshProduct.ProductName}" vừa được khách hàng khác giữ hộp cuối cùng! Vui lòng giảm số lượng hoặc đăng ký chờ hàng.`
+      );
+      err.code = 'OUT_OF_STOCK';
+      err.statusCode = 409;
+      throw err;
+    }
+
+    return {
+      ...calc,
+      baseQtyToReserve,
+      looseQtyToReserve,
+    };
+  }
+
+  /**
+   * Giải phóng giữ kho đúng 1 lần duy nhất (khi đơn bị Từ chối / Hủy / Hết hạn)
+   */
+  public async releaseReservationOnce(
+    reservationId: number,
+    targetStatus: 'RELEASED' | 'EXPIRED',
+    tx: any = defaultPrisma,
+    actor?: { userId?: number | null; userName?: string }
+  ): Promise<boolean> {
+    const reservation = await tx.inventoryReservation.findUnique({
+      where: { ReservationID: reservationId },
+    });
+    if (!reservation || reservation.Status !== 'ACTIVE') {
+      return false;
+    }
+
+    // Chuyển trạng thái nguyên tử từ ACTIVE -> targetStatus
+    const updated = await tx.inventoryReservation.updateMany({
+      where: {
+        ReservationID: reservationId,
+        Status: 'ACTIVE',
+      },
+      data: {
+        Status: targetStatus,
+        ReleasedAt: new Date(),
+      },
+    });
+
+    if (updated.count !== 1) {
+      return false;
+    }
+
+    const spec = await tx.productPackaging.findUnique({
+      where: { ProductID: reservation.ProductID },
+    });
+    if (spec) {
+      await tx.productPackaging.update({
+        where: { PackagingID: spec.PackagingID },
+        data: {
+          ReservedBaseQty: Math.max(0, (spec.ReservedBaseQty || 0) - reservation.BaseQtyReserved),
+          ReservedLooseUnits: Math.max(
+            0,
+            (spec.ReservedLooseUnits || 0) - reservation.LooseQtyReserved
+          ),
+          Version: { increment: 1 },
+        },
+      });
+    }
+
+    await tx.stockMovement.upsert({
+      where: {
+        SourceType_SourceID_LineItemID_MovementType: {
+          SourceType: 'ONLINE_ORDER',
+          SourceID: reservation.OrderID,
+          LineItemID: reservation.OrderItemID,
+          MovementType: 'RELEASE',
+        },
+      },
+      update: {},
+      create: {
+        ProductID: reservation.ProductID,
+        SourceType: 'ONLINE_ORDER',
+        SourceID: reservation.OrderID,
+        LineItemID: reservation.OrderItemID,
+        MovementType: 'RELEASE',
+        Unit: reservation.Unit,
+        Quantity: reservation.Quantity,
+        BaseQtyDelta: reservation.BaseQtyReserved,
+        LooseQtyDelta: reservation.LooseQtyReserved,
+        ActorUserID: actor?.userId || null,
+        ActorName: actor?.userName || 'SYSTEM_TTL',
+        Note: `Giải phóng giữ kho (${targetStatus})`,
+      },
+    });
+
+    return true;
+  }
+
+  /**
+   * Tự động quét và giải phóng các giữ kho đã quá hạn (TTL Expired)
+   */
+  public async releaseExpiredReservations(tx: any = defaultPrisma): Promise<number> {
+    const now = new Date();
+    const expiredList = await tx.inventoryReservation.findMany({
+      where: {
+        Status: 'ACTIVE',
+        ExpiresAt: { lte: now },
+      },
+    });
+
+    if (expiredList.length === 0) return 0;
+
+    let releasedCount = 0;
+    const affectedOrderIds = new Set<number>();
+
+    for (const resv of expiredList) {
+      const ok = await this.releaseReservationOnce(resv.ReservationID, 'EXPIRED', tx);
+      if (ok) {
+        releasedCount++;
+        affectedOrderIds.add(resv.OrderID);
+      }
+    }
+
+    for (const orderId of affectedOrderIds) {
+      await tx.onlineOrder.updateMany({
+        where: {
+          OrderID: orderId,
+          Status: 'PENDING_REVIEW',
+        },
+        data: {
+          Status: 'EXPIRED',
+          RejectCancelReason: 'Hết thời hạn giữ kho tạm (nhân viên chưa xác nhận kịp trong thời gian quy định)',
+        },
+      });
+    }
+
+    return releasedCount;
+  }
+
+  /**
+   * Chuyển giữ kho (ACTIVE Reservation) thành Xuất kho thực tế khi Dược sĩ duyệt đơn Online (CONFIRMED)
+   */
+  public async consumeReservationAtomically(
+    reservationId: number,
+    tx: any,
+    actor?: { userId?: number | null; userName?: string }
+  ): Promise<{
+    baseQuantityDeducted: number;
+    looseUnitsDeducted: number;
+    batchNumber: string;
+    expiryDate: string;
+    lotId: number | null;
+  }> {
+    const reservation = await tx.inventoryReservation.findUnique({
+      where: { ReservationID: reservationId },
+    });
+    if (!reservation || reservation.Status !== 'ACTIVE') {
+      const err: any = new Error(
+        `Giữ kho #${reservationId} không còn hiệu lực (Trạng thái: ${reservation?.Status || 'N/A'})!`
+      );
+      err.code = 'RESERVATION_EXPIRED';
+      err.statusCode = 409;
+      throw err;
+    }
+
+    if (reservation.ExpiresAt <= new Date()) {
+      await this.releaseReservationOnce(reservationId, 'EXPIRED', tx, actor);
+      const err: any = new Error('Thời hạn giữ kho của đơn hàng đã hết hạn!');
+      err.code = 'RESERVATION_EXPIRED';
+      err.statusCode = 409;
+      throw err;
+    }
+
+    const updatedResv = await tx.inventoryReservation.updateMany({
+      where: {
+        ReservationID: reservationId,
+        Status: 'ACTIVE',
+      },
+      data: {
+        Status: 'CONSUMED',
+        ReleasedAt: new Date(),
+      },
+    });
+
+    if (updatedResv.count !== 1) {
+      throw new Error('Không thể chuyển trạng thái giữ kho (đã được xử lý bởi tiến trình khác).');
+    }
+
+    const product = await tx.product.findUnique({
+      where: { ProductID: reservation.ProductID },
+    });
+    if (!product) {
+      throw new Error(`Không tìm thấy thuốc #${reservation.ProductID}`);
+    }
+    const spec = await this.getOrCreatePackagingSpec(product, tx);
+
+    // Giải phóng bộ đếm Reserved trước rồi trừ tồn thực tế
+    await tx.productPackaging.update({
+      where: { PackagingID: spec.PackagingID },
+      data: {
+        ReservedBaseQty: Math.max(0, (spec.ReservedBaseQty || 0) - reservation.BaseQtyReserved),
+        ReservedLooseUnits: Math.max(
+          0,
+          (spec.ReservedLooseUnits || 0) - reservation.LooseQtyReserved
+        ),
+      },
+    });
+
+    // Tính lại số viên lẻ mới khi mở hộp / trừ lẻ
+    const refreshedProduct = await tx.product.findUnique({
+      where: { ProductID: reservation.ProductID },
+    });
+    const calc = await this.calculateDeductionAndPrice(
+      refreshedProduct,
+      reservation.Unit,
+      reservation.Quantity,
+      tx,
+      'RETAIL',
+      { ignoreReservations: true }
+    );
+
+    await tx.product.update({
+      where: { ProductID: product.ProductID },
+      data: {
+        Quantity: { decrement: calc.packagesToOpen },
+      },
+    });
+
+    await tx.productPackaging.update({
+      where: { PackagingID: spec.PackagingID },
+      data: {
+        LooseUnits: calc.newLooseUnits,
+        Version: { increment: 1 },
+      },
+    });
+
+    const lotAlloc = await this.allocateFefoLot(
+      product.ProductID,
+      calc.packagesToOpen,
+      tx
+    );
+
+    return {
+      baseQuantityDeducted: calc.packagesToOpen,
+      looseUnitsDeducted: calc.totalSmallestUnitsDeducted,
+      ...lotAlloc,
+    };
+  }
+
+  /**
+   * Hoàn trả tồn kho chính xác khi hủy hóa đơn (Repack hộp dở dang nếu đủ quy cách + trả lại đúng Lô FEFO)
    */
   public async restoreStockOnRefund(
-    product: Product,
+    productOrInput: Product,
     packagesDeducted: number,
     totalSmallestUnitsDeducted: number,
-    tx: any = defaultPrisma
+    tx: any = defaultPrisma,
+    lotOptions?: { lotId?: number | null; batchNumber?: string | null }
   ): Promise<{ restoredPackages: number; newLooseUnits: number }> {
-    const spec = await this.getOrCreatePackagingSpec(product, tx);
+    const freshProduct =
+      (await tx.product.findUnique({ where: { ProductID: productOrInput.ProductID } })) ||
+      productOrInput;
+    const spec = await this.getOrCreatePackagingSpec(freshProduct, tx);
 
     // Cộng trả lại thuốc lẻ
     let currentLoose = spec.LooseUnits + totalSmallestUnitsDeducted;
-    let currentPackages = product.Quantity;
+    let currentPackages = freshProduct.Quantity;
 
     if (spec.UnitsPerPackage <= 1) {
       currentPackages += packagesDeducted;
@@ -518,19 +1043,49 @@ export class PackagingService {
       currentLoose = currentLoose % spec.UnitsPerPackage;
     }
 
-    // Cập nhật Product và ProductPackaging
+    const restoredPackages = Math.max(0, currentPackages - freshProduct.Quantity);
+
+    // Cập nhật Product và ProductPackaging kèm tăng Version
     await tx.product.update({
-      where: { ProductID: product.ProductID },
+      where: { ProductID: freshProduct.ProductID },
       data: { Quantity: currentPackages },
     });
 
     await tx.productPackaging.update({
       where: { PackagingID: spec.PackagingID },
-      data: { LooseUnits: currentLoose },
+      data: {
+        LooseUnits: currentLoose,
+        Version: { increment: 1 },
+      },
     });
 
+    // Hoàn trả số lượng hộp nguyên về đúng Lô (StockLot) đã xuất
+    if (restoredPackages > 0) {
+      let targetLot = null;
+      if (lotOptions?.lotId) {
+        targetLot = await tx.stockLot.findUnique({ where: { LotID: lotOptions.lotId } });
+      }
+      if (!targetLot && lotOptions?.batchNumber) {
+        targetLot = await tx.stockLot.findFirst({
+          where: {
+            ProductID: freshProduct.ProductID,
+            BatchNumber: lotOptions.batchNumber,
+          },
+        });
+      }
+      if (targetLot) {
+        await tx.stockLot.update({
+          where: { LotID: targetLot.LotID },
+          data: {
+            RemainingQuantity: { increment: restoredPackages },
+            Status: 'ACTIVE',
+          },
+        });
+      }
+    }
+
     return {
-      restoredPackages: currentPackages - product.Quantity,
+      restoredPackages,
       newLooseUnits: currentLoose,
     };
   }

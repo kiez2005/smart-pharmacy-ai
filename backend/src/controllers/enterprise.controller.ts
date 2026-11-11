@@ -126,7 +126,16 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
     const productId = Number(req.params.id);
     const product = await prisma.product.findUnique({
       where: { ProductID: productId },
-      include: { packaging: true },
+      include: {
+        packaging: true,
+        stockLots: {
+          orderBy: [{ ExpiryDate: 'asc' }, { LotID: 'asc' }],
+        },
+        stockMovements: {
+          orderBy: { CreateDate: 'desc' },
+          take: 50,
+        },
+      },
     });
 
     if (!product) {
@@ -170,6 +179,8 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
       Unit: exp.Unit || product.Unit,
       BaseQuantityDeducted: exp.BaseQuantityDeducted ?? exp.Quantity,
       LooseUnitsDeducted: exp.LooseUnitsDeducted ?? 0,
+      BatchNumber: exp.BatchNumber || 'LOT-FEFO-STD',
+      ExpiryDate: exp.ExpiryDate || '2028-12-31',
       UnitPrice: exp.UnitPrice,
       DosageNote: exp.DosageNote,
       invoice: {
@@ -178,6 +189,8 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
         Channel: exp.invoice.Channel || 'POS',
         CustomerName: exp.invoice.CustomerName,
         Status: exp.invoice.Status === 'PAID' ? 'COMPLETED' : exp.invoice.Status,
+        PaymentStatus: exp.invoice.PaymentStatus || 'PAID',
+        FulfillmentStatus: exp.invoice.FulfillmentStatus || 'COMPLETED',
         CreateDate: exp.invoice.CreateDate,
       },
     }));
@@ -186,6 +199,8 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
       success: true,
       data: {
         product,
+        stockLots: product.stockLots,
+        stockMovements: product.stockMovements,
         imports,
         exports,
       },
@@ -326,24 +341,19 @@ export const createPurchaseOrder = async (req: Request, res: Response): Promise<
     }
 
     const { SupplierID, Note, CreatedBy, items } = parsed.data;
+    const actorName = req.user?.FullName || CreatedBy || 'Dược sĩ kho';
+    const actorUserId = req.user?.UserID || null;
 
     const createdOrder = await prisma.$transaction(async (tx) => {
       let totalCost = 0;
 
       for (const item of items) {
         totalCost += item.Quantity * item.ImportPrice;
-
-        await tx.product.update({
-          where: { ProductID: item.ProductID },
-          data: {
-            Quantity: { increment: item.Quantity },
-          },
-        });
       }
 
       const orderCode = `PNK-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
 
-      return tx.purchaseOrder.create({
+      const po = await tx.purchaseOrder.create({
         data: {
           OrderCode: orderCode,
           SupplierID,
@@ -359,11 +369,54 @@ export const createPurchaseOrder = async (req: Request, res: Response): Promise<
           items: { include: { product: true } },
         },
       });
+
+      // Tạo lô tồn kho (StockLot FEFO) & bút toán nhập kho (StockMovement IMPORT)
+      for (const poItem of po.items) {
+        const updatedProduct = await tx.product.update({
+          where: { ProductID: poItem.ProductID },
+          data: {
+            Quantity: { increment: poItem.Quantity },
+          },
+        });
+
+        await tx.stockLot.create({
+          data: {
+            ProductID: poItem.ProductID,
+            BatchNumber: poItem.BatchNumber,
+            ExpiryDate: poItem.ExpiryDate,
+            ImportPrice: poItem.ImportPrice,
+            InitialQuantity: poItem.Quantity,
+            RemainingQuantity: poItem.Quantity,
+            Status: 'ACTIVE',
+          },
+        });
+
+        await tx.stockMovement.create({
+          data: {
+            ProductID: poItem.ProductID,
+            MovementType: 'IMPORT',
+            SourceType: 'PURCHASE_ORDER',
+            SourceID: po.PurchaseOrderID,
+            LineItemID: poItem.OrderItemID,
+            Unit: poItem.product?.Unit || 'Hộp',
+            Quantity: poItem.Quantity,
+            BaseQtyDelta: poItem.Quantity,
+            LooseQtyDelta: 0,
+            BatchNumber: poItem.BatchNumber,
+            ExpiryDate: poItem.ExpiryDate,
+            ActorUserID: actorUserId,
+            ActorName: actorName,
+            Note: `Nhập kho theo phiếu ${po.OrderCode} (${poItem.BatchNumber})`,
+          },
+        });
+      }
+
+      return po;
     });
 
     res.status(201).json({
       success: true,
-      message: `Đã lập phiếu nhập kho ${createdOrder.OrderCode} và cộng tồn kho thành công`,
+      message: `Đã lập phiếu nhập kho ${createdOrder.OrderCode}, tạo lô FEFO và cộng tồn kho thành công`,
       data: {
         POID: createdOrder.PurchaseOrderID,
         POCode: createdOrder.OrderCode,
@@ -371,7 +424,7 @@ export const createPurchaseOrder = async (req: Request, res: Response): Promise<
         TotalCost: createdOrder.TotalCost,
         Status: createdOrder.Status,
         Note: createdOrder.Note,
-        CreatedBy,
+        CreatedBy: actorName,
         CreateDate: createdOrder.CreateDate,
         supplier: createdOrder.supplier,
         items: createdOrder.items.map((i) => ({
@@ -490,21 +543,31 @@ export const updateCustomer = async (req: Request, res: Response): Promise<void>
 // ============================================================================
 export const getPaymentsLedger = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const rawPayments = await prisma.payment.findMany({
-      include: {
-        invoice: true,
-      },
-      orderBy: { PaymentDate: 'desc' },
-    });
+    const [rawPayments, rawLedgerTx] = await Promise.all([
+      prisma.payment.findMany({
+        include: {
+          invoice: true,
+        },
+        orderBy: { PaymentDate: 'desc' },
+      }),
+      prisma.paymentTransaction.findMany({
+        include: {
+          invoice: true,
+        },
+        orderBy: { CreateDate: 'desc' },
+      }),
+    ]);
 
     const payments = rawPayments.map((p) => ({
       ...p,
       Status: p.Status === 'COMPLETED' ? 'PAID' : p.Status,
+      transactions: rawLedgerTx.filter((t) => t.InvoiceID === p.InvoiceID),
     }));
 
     res.json({
       success: true,
       data: payments,
+      transactions: rawLedgerTx,
     });
   } catch {
     res.status(500).json({

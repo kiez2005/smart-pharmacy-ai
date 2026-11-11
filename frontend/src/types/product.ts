@@ -10,9 +10,23 @@ export interface ProductPackaging {
   UnitsPerPackage: number;
   UnitsPerBlister?: number | null;
   LooseUnits: number;
+  ReservedBaseQty?: number;
+  ReservedLooseUnits?: number;
+  Version?: number;
   AllowFractionalSale: boolean;
   WholesalePrice?: number | null;
   MinWholesaleQty?: number;
+}
+
+export interface StockLotSummary {
+  LotID: number;
+  ProductID: number;
+  BatchNumber: string;
+  ExpiryDate: string;
+  InitialQuantity: number;
+  RemainingQuantity: number;
+  ImportPrice: number;
+  Status: string;
 }
 
 // Kiểu dữ liệu chuẩn 10 trường bắt buộc của bảng Product theo Sheet "Yêu cầu bài tập lớn"
@@ -28,6 +42,7 @@ export interface Product {
   CreateDate: string;
   UpdateDate: string;
   packaging?: ProductPackaging | null;
+  stockLots?: StockLotSummary[];
 }
 
 export interface ProductFormValues {

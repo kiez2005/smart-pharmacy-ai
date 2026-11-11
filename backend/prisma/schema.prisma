@@ -29,6 +29,10 @@ model Product {
   invoiceItems       InvoiceItem[]
   purchaseOrderItems PurchaseOrderItem[]
   packaging          ProductPackaging?
+  stockLots          StockLot[]
+  stockMovements     StockMovement[]
+  onlineOrderItems   OnlineOrderItem[]
+  reservations       InventoryReservation[]
 }
 
 // ============================================================================
@@ -46,11 +50,58 @@ model ProductPackaging {
   UnitsPerPackage     Int      @default(1) // Tổng số đơn vị nhỏ nhất trong 1 hộp (VD: 100 viên, 30 gói)
   UnitsPerBlister     Int?     // Số viên trong 1 vỉ (VD: 4 viên/vỉ)
   LooseUnits          Int      @default(0) // Số đơn vị nhỏ nhất lẻ dở dang đang mở trong kho
+  ReservedBaseQty     Int      @default(0) // Số hộp nguyên đang được giữ tạm (Reservation) cho đơn chờ duyệt
+  ReservedLooseUnits  Int      @default(0) // Số viên lẻ đang được giữ tạm (Reservation)
+  Version             Int      @default(1) // Khóa Optimistic Concurrency chống race condition khi tranh hộp cuối
   AllowFractionalSale Boolean  @default(true) // Cho phép bán lẻ vỉ/viên
   WholesalePrice      Float?   // Giá bán buôn (B2B) trên 1 PackageUnit (Hộp)
   MinWholesaleQty     Int      @default(10) // Số lượng hộp tối thiểu áp dụng giá sỉ
 
   product             Product  @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
+}
+
+// ============================================================================
+// 1c. BẢNG TỒN KHO THEO LÔ & HẠN DÙNG CHUẨN FEFO (STOCK_LOT)
+// ============================================================================
+model StockLot {
+  LotID             Int      @id @default(autoincrement())
+  ProductID         Int
+  BatchNumber       String
+  ExpiryDate        String   // YYYY-MM-DD
+  InitialQuantity   Int      @default(0)
+  RemainingQuantity Int      @default(0)
+  ImportPrice       Float    @default(0)
+  BranchCode        String   @default("CS1-GPP")
+  Status            String   @default("ACTIVE") // ACTIVE | EXPIRED | RECALLED | DEPLETED
+  CreateDate        DateTime @default(now())
+
+  product           Product  @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
+}
+
+// ============================================================================
+// 1d. BẢNG SỔ CÁI BIẾN ĐỘNG TỒN KHO APPEND-ONLY (STOCK_MOVEMENT)
+// ============================================================================
+model StockMovement {
+  MovementID    Int      @id @default(autoincrement())
+  ProductID     Int
+  SourceType    String   // INVOICE | ONLINE_ORDER | PURCHASE_ORDER | STOCKTAKE
+  SourceID      Int
+  LineItemID    Int      @default(0)
+  MovementType  String   // RESERVE | RELEASE | EXPORT | RETURN | IMPORT
+  Unit          String
+  Quantity      Int
+  BaseQtyDelta  Int      @default(0)
+  LooseQtyDelta Int      @default(0)
+  BatchNumber   String?
+  ExpiryDate    String?
+  ActorUserID   Int?
+  ActorName     String?
+  Note          String?
+  CreateDate    DateTime @default(now())
+
+  product       Product  @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
+
+  @@unique([SourceType, SourceID, LineItemID, MovementType])
 }
 
 // ============================================================================
@@ -94,6 +145,7 @@ model Customer {
   CreateDate    DateTime  @default(now())
 
   invoices      Invoice[]
+  onlineOrders  OnlineOrder[]
 }
 
 // ============================================================================
@@ -148,35 +200,45 @@ model PurchaseOrderItem {
 // 6. BẢNG HÓA ĐƠN BÁN HÀNG ĐA KÊNH: BÁN LẺ POS, BÁN BUÔN B2B & ONLINE
 // ============================================================================
 model Invoice {
-  InvoiceID         Int           @id @default(autoincrement())
-  InvoiceCode       String        @unique
-  OrderType         String        @default("RETAIL")    // RETAIL (Bán lẻ GPP) | WHOLESALE (Bán buôn B2B GDP)
-  Channel           String        @default("POS")       // POS (Tại quầy) | ONLINE (Web nhà thuốc trực tuyến)
-  FulfillmentStatus String        @default("COMPLETED") // PENDING | CONFIRMED | SHIPPING | COMPLETED | CANCELLED
-  CustomerName      String
-  CustomerPhone     String?
-  CustomerID        Int?
-  ShippingAddress   String?       // Địa chỉ giao hàng (cho đơn Online / Bán buôn giao tận nơi)
-  ShippingMethod    String?       // EXPRESS_2H | STANDARD | PICKUP
-  ShippingFee       Float         @default(0)
-  VatAmount         Float         @default(0)           // Thuế GTGT dược phẩm (5%)
-  PaidAmount        Float         @default(0)           // Số tiền khách đã thanh toán
-  DebtAmount        Float         @default(0)           // Số tiền ghi công nợ phải thu
-  Note              String?
-  Discount          Float         @default(0)
-  UsedPoints        Int           @default(0)
-  PointsDiscount    Float         @default(0)
-  PointsEarned      Int           @default(0)
-  TotalAmount       Float         @default(0)
-  Status            String        @default("PAID")      // PAID | PARTIAL | DEBT | REFUNDED
-  CreateDate        DateTime      @default(now())
-  UpdateDate        DateTime      @updatedAt
+  InvoiceID            Int                  @id @default(autoincrement())
+  InvoiceCode          String               @unique
+  OrderType            String               @default("RETAIL")    // RETAIL (Bán lẻ GPP) | WHOLESALE (Bán buôn B2B GDP)
+  Channel              String               @default("POS")       // POS (Tại quầy) | ONLINE (Web nhà thuốc trực tuyến)
+  FulfillmentStatus    String               @default("COMPLETED") // PENDING_REVIEW | CONFIRMED | PACKING | SHIPPING | DELIVERED | COMPLETED | CANCELLED | REJECTED
+  PaymentStatus        String               @default("PAID")      // UNPAID | PARTIALLY_PAID | PAID | REFUNDED | VOID
+  CustomerName         String
+  CustomerPhone        String?
+  CustomerID           Int?
+  ShippingAddress      String?              // Địa chỉ giao hàng (snapshot độc lập)
+  ShippingMethod       String?              // EXPRESS_2H | STANDARD | GDP_TRUCK | PICKUP
+  ShippingFee          Float                @default(0)
+  VatAmount            Float                @default(0)           // Thuế GTGT dược phẩm (5%)
+  PaidAmount           Float                @default(0)           // Số tiền thực tế đã thu
+  DebtAmount           Float                @default(0)           // Số tiền ghi công nợ phải thu
+  RefundedAmount       Float                @default(0)           // Số tiền thực tế đã chi hoàn
+  Note                 String?
+  CancelReason         String?
+  ClinicalOverrideNote String?
+  CreatedByName        String?
+  ApprovedByUserID     Int?
+  ApprovedByName       String?
+  ApprovedAt           DateTime?
+  Discount             Float                @default(0)
+  UsedPoints           Int                  @default(0)
+  PointsDiscount       Float                @default(0)
+  PointsEarned         Int                  @default(0)
+  TotalAmount          Float                @default(0)
+  Status               String               @default("COMPLETED") // COMPLETED | CANCELLED
+  CreateDate           DateTime             @default(now())
+  UpdateDate           DateTime             @updatedAt
 
-  UserID            Int?
-  user              User?         @relation(fields: [UserID], references: [UserID])
-  customer          Customer?     @relation(fields: [CustomerID], references: [CustomerID])
-  items             InvoiceItem[]
-  payment           Payment?
+  UserID               Int?
+  user                 User?                @relation(fields: [UserID], references: [UserID])
+  customer             Customer?            @relation(fields: [CustomerID], references: [CustomerID])
+  items                InvoiceItem[]
+  payment              Payment?
+  paymentTransactions  PaymentTransaction[]
+  onlineOrder          OnlineOrder?
 }
 
 model InvoiceItem {
@@ -188,6 +250,9 @@ model InvoiceItem {
   UnitPrice            Float   @default(0)
   BaseQuantityDeducted Int?
   LooseUnitsDeducted   Int?
+  BatchNumber          String?
+  ExpiryDate           String?
+  LotID                Int?
   DosageNote           String?
 
   invoice     Invoice @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
@@ -195,18 +260,126 @@ model InvoiceItem {
 }
 
 // ============================================================================
-// 7. BẢNG SỔ QUỸ & GIAO DỊCH THANH TOÁN (PAYMENT)
+// 6b. BẢNG ĐƠN ĐẶT HÀNG ONLINE & GIỮ KHO TẠM CÓ HẠN (ONLINE_ORDER & RESERVATION)
+// ============================================================================
+model OnlineOrder {
+  OrderID              Int                    @id @default(autoincrement())
+  OrderCode            String                 @unique
+  TrackingToken        String                 @unique
+  OrderType            String                 @default("RETAIL") // RETAIL | WHOLESALE
+  Status               String                 @default("PENDING_REVIEW") // PENDING_REVIEW | CONFIRMED | PACKING | SHIPPING | DELIVERED | REJECTED | CANCELLED | EXPIRED
+  PaymentStatus        String                 @default("UNPAID") // UNPAID | PARTIALLY_PAID | PAID | REFUNDED | VOID
+  PaymentMethod        String                 @default("COD")    // COD | VIETQR | CREDIT
+  CustomerID           Int?
+  CustomerName         String
+  CustomerPhone        String
+  ShippingAddress      String
+  ShippingMethod       String                 @default("EXPRESS_2H") // EXPRESS_2H | STANDARD | GDP_TRUCK
+  SubTotal             Float                  @default(0)
+  ShippingFee          Float                  @default(0)
+  VatAmount            Float                  @default(0)
+  Discount             Float                  @default(0)
+  TotalAmount          Float                  @default(0)
+  PaidAmount           Float                  @default(0)
+  Note                 String?
+  ReservedUntil        DateTime?
+  ClinicalSafetyStatus String                 @default("PENDING") // SAFE | WARNING_REQUIRES_REVIEW | APPROVED_WITH_OVERRIDE | REJECTED
+  ClinicalWarningsJson String?
+  ClinicalReviewNote   String?
+  ReviewedByUserID     Int?
+  ReviewedByName       String?
+  ReviewedAt           DateTime?
+  RejectCancelReason   String?
+  CourierTrackingCode  String?
+  InvoiceID            Int?                   @unique
+  CreateDate           DateTime               @default(now())
+  UpdateDate           DateTime               @updatedAt
+
+  customer             Customer?              @relation(fields: [CustomerID], references: [CustomerID])
+  invoice              Invoice?               @relation(fields: [InvoiceID], references: [InvoiceID])
+  items                OnlineOrderItem[]
+  reservations         InventoryReservation[]
+}
+
+model OnlineOrderItem {
+  OrderItemID      Int                   @id @default(autoincrement())
+  OrderID          Int
+  ProductID        Int
+  Quantity         Int                   @default(1)
+  Unit             String
+  UnitPrice        Float                 @default(0)
+  BaseQtyReserved  Int                   @default(0)
+  LooseQtyReserved Int                   @default(0)
+  BatchNumber      String?
+  ExpiryDate       String?
+  DosageNote       String?
+
+  order            OnlineOrder           @relation(fields: [OrderID], references: [OrderID], onDelete: Cascade)
+  product          Product               @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)
+  reservation      InventoryReservation?
+}
+
+model InventoryReservation {
+  ReservationID    Int             @id @default(autoincrement())
+  OrderID          Int
+  OrderItemID      Int             @unique
+  ProductID        Int
+  Unit             String
+  Quantity         Int
+  BaseQtyReserved  Int             @default(0)
+  LooseQtyReserved Int             @default(0)
+  Status           String          @default("ACTIVE") // ACTIVE | CONSUMED | RELEASED | EXPIRED
+  ExpiresAt        DateTime
+  ReleasedAt       DateTime?
+  CreateDate       DateTime        @default(now())
+
+  order            OnlineOrder     @relation(fields: [OrderID], references: [OrderID], onDelete: Cascade)
+  orderItem        OnlineOrderItem @relation(fields: [OrderItemID], references: [OrderItemID], onDelete: Cascade)
+  product          Product         @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
+}
+
+// ============================================================================
+// 7. BẢNG SỔ QUỸ & GIAO DỊCH THANH TOÁN APPEND-ONLY (PAYMENT & PAYMENT_TRANSACTION)
 // ============================================================================
 model Payment {
   PaymentID       Int      @id @default(autoincrement())
   InvoiceID       Int      @unique
-  PaymentMethod   String   @default("CASH") // CASH | VIETQR | CARD
+  PaymentMethod   String   @default("CASH") // CASH | VIETQR | CARD | COD | CREDIT
   TransactionCode String?
   PaidAmount      Float    @default(0)
-  Status          String   @default("COMPLETED") // COMPLETED | REFUNDED
+  Status          String   @default("COMPLETED") // COMPLETED | PARTIAL | UNPAID | REFUNDED | VOID
   PaymentDate     DateTime @default(now())
 
   invoice         Invoice  @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
+}
+
+model PaymentTransaction {
+  TransactionID Int      @id @default(autoincrement())
+  InvoiceID     Int
+  EntryType     String   // CAPTURE | COLLECT_COD | DEBT_COLLECTION | REFUND | VOID
+  PaymentMethod String   // CASH | VIETQR | CARD | COD | CREDIT
+  Amount        Float    @default(0)
+  ReferenceCode String?
+  ActorUserID   Int?
+  ActorName     String?
+  Note          String?
+  Status        String   @default("COMPLETED")
+  CreateDate    DateTime @default(now())
+
+  invoice       Invoice  @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
+}
+
+// ============================================================================
+// 7b. BẢNG KHÓA CHỐNG LẶP REQUEST (IDEMPOTENCY_RECORD)
+// ============================================================================
+model IdempotencyRecord {
+  IdempotencyKey String   @id
+  Scope          String
+  ActorKey       String
+  PayloadHash    String
+  StatusCode     Int
+  ResponseJson   String
+  CreateDate     DateTime @default(now())
 }
 
 // ============================================================================

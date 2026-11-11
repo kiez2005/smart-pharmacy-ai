@@ -55,7 +55,13 @@ class ProductService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { [sortBy]: sortOrder },
-        include: { packaging: true },
+        include: {
+          packaging: true,
+          stockLots: {
+            where: { RemainingQuantity: { gt: 0 }, Status: 'ACTIVE' },
+            orderBy: [{ ExpiryDate: 'asc' }, { LotID: 'asc' }],
+          },
+        },
       }),
       prisma.product.findMany({ select: { ProductType: true }, distinct: ['ProductType'] }),
       prisma.product.findMany({ select: { Unit: true }, distinct: ['Unit'] }),
@@ -99,7 +105,13 @@ class ProductService {
   public async getById(id: number): Promise<Product | null> {
     return prisma.product.findUnique({
       where: { ProductID: id },
-      include: { packaging: true },
+      include: {
+        packaging: true,
+        stockLots: {
+          where: { RemainingQuantity: { gt: 0 }, Status: 'ACTIVE' },
+          orderBy: [{ ExpiryDate: 'asc' }, { LotID: 'asc' }],
+        },
+      },
     });
   }
 

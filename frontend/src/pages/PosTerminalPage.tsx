@@ -54,26 +54,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
 
   // Giỏ hàng POS hỗ trợ Đa đơn vị quy đổi (Hộp / Vỉ / Viên lẻ)
-  const [cart, setCart] = useState<PosCartItem[]>([
-    {
-      product: {
-        ProductID: 1,
-        ProductName: 'Panadol Extra 500mg/65mg',
-        PathImage:
-          'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400&auto=format&fit=crop&q=80',
-        ProductType: 'Giảm đau - Hạ sốt',
-        Quantity: 250,
-        Unit: 'Hộp',
-        Price: 185000,
-        Description: 'Paracetamol 500mg, Caffeine 65mg',
-        CreateDate: new Date().toISOString(),
-        UpdateDate: new Date().toISOString(),
-      },
-      quantity: 1,
-      dosageNote: 'Uống 1 viên khi đau hoặc sốt sau ăn (Tối đa 4 viên/ngày)',
-      unitMode: 'BASE',
-    },
-  ]);
+  const [cart, setCart] = useState<PosCartItem[]>([]);
 
   // Chế độ Bán hàng: Bán Lẻ POS (GPP) hoặc Xuất Bán Buôn Đại Lý B2B (GDP)
   const [orderType, setOrderType] = useState<'RETAIL' | 'WHOLESALE'>('RETAIL');
@@ -89,6 +70,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   const [cashTendered, setCashTendered] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<'VIETQR' | 'CASH' | 'CARD' | 'CREDIT'>('VIETQR');
   const [note, setNote] = useState<string>('Tư vấn uống đúng liều, tránh rượu bia');
+  const [clinicalOverrideNote, setClinicalOverrideNote] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
 
   // Cảnh báo Dị ứng & Tương tác thuốc tự động
@@ -192,6 +174,8 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       UnitsPerPackage: pkg?.UnitsPerPackage || (isBox ? 100 : 1),
       UnitsPerBlister: pkg?.UnitsPerBlister ?? (isBox ? 10 : null),
       LooseUnits: pkg?.LooseUnits || 0,
+      ReservedBaseQty: pkg?.ReservedBaseQty || 0,
+      ReservedLooseUnits: pkg?.ReservedLooseUnits || 0,
       AllowFractionalSale: pkg?.AllowFractionalSale ?? isBox,
       WholesalePrice: pkg?.WholesalePrice ?? Math.round((product.Price * 0.88) / 500) * 500,
       MinWholesaleQty: pkg?.MinWholesaleQty ?? 10,
@@ -243,17 +227,19 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
 
   const getMaxStockForMode = (product: Product, mode: RetailUnitMode = 'BASE') => {
     const spec = getPackagingSpec(product);
+    const availBase = Math.max(0, product.Quantity - (spec.ReservedBaseQty || 0));
+    const availLoose = Math.max(0, (spec.LooseUnits || 0) - (spec.ReservedLooseUnits || 0));
     if (mode === 'CARTON') {
-      return Math.floor(product.Quantity / (spec.BoxesPerCarton || 20));
+      return Math.floor(availBase / (spec.BoxesPerCarton || 20));
     }
-    const totalSmallestUnits = product.Quantity * spec.UnitsPerPackage + (spec.LooseUnits || 0);
+    const totalSmallestUnits = availBase * spec.UnitsPerPackage + availLoose;
     if (mode === 'BLISTER' && spec.UnitsPerBlister && spec.UnitsPerBlister > 0) {
       return Math.floor(totalSmallestUnits / spec.UnitsPerBlister);
     }
     if (mode === 'PILL' && spec.UnitsPerPackage) {
       return totalSmallestUnits;
     }
-    return product.Quantity;
+    return availBase;
   };
 
   const hasSellableStock = (product: Product) =>
@@ -448,6 +434,20 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       toast.error('Vui lòng chọn Hồ sơ Đại lý / Khách hàng để ghi nhận công nợ!');
       return;
     }
+
+    const hasCriticalWarnings = Boolean(
+      interactionCheck?.warnings &&
+        interactionCheck.warnings.some(
+          (w) => w.severity === 'HIGH' || (w.severity as string) === 'CRITICAL'
+        )
+    );
+    if (hasCriticalWarnings && !clinicalOverrideNote.trim()) {
+      toast.error(
+        'Đơn thuốc có cảnh báo tương tác / dị ứng mức độ CAO. Dược sĩ bắt buộc phải nhập ghi chú thẩm định chuyên môn trước khi xuất bán!'
+      );
+      return;
+    }
+
     // Ràng buộc kiểm tra nghiêm ngặt: Tuyệt đối không cho thanh toán nếu có mặt hàng vượt tồn kho hoặc bằng 0
     for (const item of cart) {
       if (!hasSellableStock(item.product)) {
@@ -465,30 +465,39 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     try {
       const paidAmt =
         paymentMethod === 'CREDIT' ? Math.max(0, Math.min(finalTotal, paidAmountInput)) : finalTotal;
-      const created = await formsApi.createInvoice({
-        CustomerID: selectedCustomerId,
-        CustomerName: customerName,
-        CustomerPhone: customerPhone,
-        OrderType: orderType,
-        Channel: 'POS',
-        Discount: discount,
-        UsedPoints: usedPoints,
-        VatRate: includeVat ? 5 : 0,
-        PaidAmount: paidAmt,
-        Note: note,
-        PaymentMethod: paymentMethod,
-        items: cart.map((i) => ({
-          ProductID: i.product.ProductID,
-          Quantity: i.quantity,
-          Unit: getUnitName(i.product, i.unitMode),
-          DosageNote: `[ĐVT: ${getUnitName(i.product, i.unitMode)}] ${i.dosageNote}`,
-        })),
-      });
+      const finalNote = clinicalOverrideNote.trim()
+        ? `[Dược sĩ thẩm định: ${clinicalOverrideNote.trim()}] ${note}`
+        : note;
+      const idempotencyKey = `pos-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+      const created = await formsApi.createInvoice(
+        {
+          CustomerID: selectedCustomerId,
+          CustomerName: customerName,
+          CustomerPhone: customerPhone,
+          OrderType: orderType,
+          Channel: 'POS',
+          Discount: discount,
+          UsedPoints: usedPoints,
+          VatRate: includeVat ? 5 : 0,
+          PaidAmount: paidAmt,
+          Note: finalNote,
+          PaymentMethod: paymentMethod,
+          items: cart.map((i) => ({
+            ProductID: i.product.ProductID,
+            Quantity: i.quantity,
+            Unit: getUnitName(i.product, i.unitMode),
+            DosageNote: `[ĐVT: ${getUnitName(i.product, i.unitMode)}] ${i.dosageNote}`,
+          })),
+        },
+        idempotencyKey
+      );
       setCompletedInvoice(created);
       setCart([]);
       setDiscount(0);
       setUsedPoints(0);
       setPaidAmountInput(0);
+      setClinicalOverrideNote('');
       toast.success(
         orderType === 'WHOLESALE'
           ? `Đã xuất Hóa đơn Bán buôn B2B ${created.InvoiceCode} và trừ kho theo Thùng/Hộp!`
@@ -959,6 +968,18 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                   • <strong>{w.title}:</strong> {w.detail}
                 </div>
               ))}
+              <div className="pt-2 border-t border-rose-200 mt-2">
+                <label className="block text-[11px] font-semibold text-rose-900 mb-1">
+                  Thẩm định chuyên môn của Dược sĩ (Bắt buộc nếu tiếp tục xuất thuốc):
+                </label>
+                <input
+                  type="text"
+                  value={clinicalOverrideNote}
+                  onChange={(e) => setClinicalOverrideNote(e.target.value)}
+                  placeholder="VD: Đã tư vấn uống cách 2 giờ, bệnh nhân chấp thuận theo chỉ định BS..."
+                  className="w-full h-8 rounded-lg border border-rose-300 bg-white px-2.5 text-xs text-rose-900 placeholder:text-rose-400 focus:border-rose-600 focus:outline-none"
+                />
+              </div>
             </div>
           ) : cart.length > 0 ? (
             <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 px-3 py-2 flex items-center gap-2 text-xs font-medium text-emerald-800">
@@ -1024,7 +1045,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                         </span>
                         <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600">
                           <CalendarClock className="h-2.5 w-2.5 text-teal-600" />
-                          FEFO: LOT-250{item.product.ProductID} · HSD 12/2027
+                          {item.product.stockLots && item.product.stockLots.length > 0
+                            ? `FEFO: ${item.product.stockLots[0].BatchNumber} · HSD ${item.product.stockLots[0].ExpiryDate}`
+                            : `FEFO: LOT-GPP-${item.product.ProductID} · HSD 12/2027`}
                         </span>
                       </div>
                       <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1">

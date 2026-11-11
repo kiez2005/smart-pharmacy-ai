@@ -28,6 +28,7 @@ import { ProductStockCardPage } from './pages/ProductStockCardPage';
 import { SuppliersAndPurchaseOrdersPage } from './pages/SuppliersAndPurchaseOrdersPage';
 import { PosTerminalPage, PosCartItem } from './pages/PosTerminalPage';
 import { OnlineStorePage } from './pages/OnlineStorePage';
+import { StaffOnlineOrdersPage } from './pages/StaffOnlineOrdersPage';
 import { InvoicesManagementPage } from './pages/InvoicesManagementPage';
 import { PaymentsLedgerPage } from './pages/PaymentsLedgerPage';
 import { CustomersPage } from './pages/CustomersPage';
@@ -45,6 +46,7 @@ export type ActiveTab =
   | 'IMPORTS'
   | 'POS'
   | 'ONLINE_STORE'
+  | 'STAFF_ORDERS'
   | 'INVOICES'
   | 'PAYMENTS'
   | 'CUSTOMERS'
@@ -85,12 +87,7 @@ export const App: React.FC = () => {
         return null;
       }
     }
-    return {
-      UserID: 1,
-      FullName: 'DS. Nguyễn Văn Trung',
-      Email: 'trung.nguyen@pharmacore.vn',
-      Role: 'ADMIN',
-    };
+    return null;
   });
 
   // Lắng nghe sự kiện hết hạn token 401 từ Axios Interceptor
@@ -147,7 +144,8 @@ export const App: React.FC = () => {
       groupLabel: 'Phân khu 2: Bán lẻ, Bán buôn & Online',
       items: [
         { id: 'POS', label: 'Bán lẻ POS & Bán buôn B2B', icon: ShoppingCart, badge: 'POS/B2B' },
-        { id: 'ONLINE_STORE', label: 'Nhà thuốc Online & Giao vận', icon: Globe, badge: 'ONLINE' },
+        { id: 'ONLINE_STORE', label: 'Cổng Khách Hàng Online', icon: Globe, badge: 'PUBLIC' },
+        { id: 'STAFF_ORDERS', label: 'Duyệt & Xử lý đơn Online', icon: Truck, badge: 'STAFF' },
         { id: 'INVOICES', label: 'Hóa đơn, Công nợ & Hoàn trả', icon: Receipt },
         { id: 'PAYMENTS', label: 'Sổ quỹ Thu - Chi & VietQR', icon: Wallet },
         { id: 'CUSTOMERS', label: 'Bệnh nhân & Đại lý B2B', icon: Users },
@@ -298,23 +296,17 @@ export const App: React.FC = () => {
                 </button>
               </div>
 
-              {/* Mobile Branch Selector */}
-              <div className="p-3 border-b border-slate-100 bg-teal-50/40">
-                <div className="text-[10px] font-bold text-teal-800 uppercase tracking-wider mb-1">
-                  Cơ sở đang trực
+              {/* Mobile Single Verified Branch Badge (Issue 17) */}
+              <div className="p-3 border-b border-slate-100 bg-teal-50/60 flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-teal-600 shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold text-teal-800 uppercase tracking-wider">
+                    Cơ sở vận hành
+                  </div>
+                  <div className="text-xs font-bold text-slate-800 truncate">
+                    CS1 - Nhà thuốc Trung Tâm (GPP)
+                  </div>
                 </div>
-                <select
-                  value={selectedBranch}
-                  onChange={(e) => {
-                    setSelectedBranch(e.target.value);
-                    toast.info(`Đã chuyển sang: ${e.target.value}`);
-                  }}
-                  className="w-full h-8 rounded-lg border border-teal-200 bg-white px-2 text-xs font-semibold text-slate-800 focus:outline-none"
-                >
-                  <option value="CS1 - Nhà thuốc Trung Tâm (GPP)">CS1 - Nhà thuốc Trung Tâm (GPP)</option>
-                  <option value="CS2 - Nhà thuốc Đa Khoa Quận 1">CS2 - Nhà thuốc Đa Khoa Quận 1</option>
-                  <option value="Kho Tổng Dược Phẩm GDP">Kho Tổng Dược Phẩm GDP</option>
-                </select>
               </div>
 
               {/* Mobile Navigation Links */}
@@ -416,25 +408,10 @@ export const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-            {/* Chọn Cơ sở / Chi nhánh nhà thuốc */}
-            <div className="hidden xl:flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 h-9 text-xs text-slate-700 shadow-2xs">
+            {/* Cơ sở Nhà thuốc Trung Tâm xác thực GPP (Issue 17) */}
+            <div className="hidden xl:flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50/80 px-3 h-9 text-xs font-semibold text-teal-900 shadow-2xs">
               <MapPin className="h-3.5 w-3.5 text-teal-600" />
-              <select
-                value={selectedBranch}
-                onChange={(e) => {
-                  setSelectedBranch(e.target.value);
-                  toast.info(`Đã chuyển sang dữ liệu: ${e.target.value}`);
-                }}
-                className="bg-transparent font-medium text-slate-800 focus:outline-none cursor-pointer"
-              >
-                <option value="CS1 - Nhà thuốc Trung Tâm (GPP)">
-                  CS1 - Nhà thuốc Trung Tâm (GPP)
-                </option>
-                <option value="CS2 - Nhà thuốc Đa Khoa Quận 1">
-                  CS2 - Nhà thuốc Đa Khoa Quận 1
-                </option>
-                <option value="Kho Tổng Dược Phẩm GDP">Kho Tổng Dược Phẩm GDP</option>
-              </select>
+              <span>CS1 - Nhà thuốc Trung Tâm (GPP)</span>
             </div>
 
             {/* Trạng thái Liên thông Dược Quốc Gia */}
@@ -510,6 +487,7 @@ export const App: React.FC = () => {
             />
           )}
           {activeTab === 'ONLINE_STORE' && <OnlineStorePage />}
+          {activeTab === 'STAFF_ORDERS' && <StaffOnlineOrdersPage />}
           {activeTab === 'INVOICES' && <InvoicesManagementPage />}
           {activeTab === 'PAYMENTS' && <PaymentsLedgerPage />}
           {activeTab === 'CUSTOMERS' && <CustomersPage />}

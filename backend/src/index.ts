@@ -7,6 +7,7 @@ import invoiceRoutes from './routes/invoice.routes';
 import contactRoutes from './routes/contact.routes';
 import aiRoutes from './routes/ai.routes';
 import enterpriseRoutes from './routes/enterprise.routes';
+import onlineOrderRoutes from './routes/online-order.routes';
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use('/api/invoices', invoiceRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/enterprise', enterpriseRoutes);
+app.use('/api/online-orders', onlineOrderRoutes);
 
 app.listen(PORT, () => {
   console.log(`[PharmaCore ERP Backend] Listening on http://localhost:${PORT}`);
