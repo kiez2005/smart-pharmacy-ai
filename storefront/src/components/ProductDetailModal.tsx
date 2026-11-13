@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   X,
   ShieldCheck,
-  CalendarClock,
   AlertTriangle,
   Plus,
   Minus,
@@ -16,13 +15,13 @@ import {
   getEffectivePrice,
   getMaxStockForMode,
   getPackagingSpec,
+  getStockStatusBadgeInfo,
   getUnitLabel,
   getUnitName,
 } from '../utils/packaging';
 
 interface ProductDetailModalProps {
   product: Product;
-  buyerMode: 'RETAIL' | 'WHOLESALE';
   onClose: () => void;
   onAddToCart: (product: Product, mode: UnitMode, quantity: number) => void;
   onOpenPrescriptionModal: () => void;
@@ -30,38 +29,29 @@ interface ProductDetailModalProps {
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   product,
-  buyerMode,
   onClose,
   onAddToCart,
   onOpenPrescriptionModal,
 }) => {
   const spec = getPackagingSpec(product);
-  const [unitMode, setUnitMode] = useState<UnitMode>(
-    buyerMode === 'WHOLESALE' && getMaxStockForMode(product, 'CARTON') > 0 ? 'CARTON' : 'BASE'
-  );
+  const [unitMode, setUnitMode] = useState<UnitMode>('BASE');
   const [quantity, setQuantity] = useState(1);
 
-  const unitOptions: Array<{ mode: UnitMode; label: string; max: number }> = [];
-  if (buyerMode === 'WHOLESALE' && getMaxStockForMode(product, 'CARTON') > 0) {
-    unitOptions.push({
-      mode: 'CARTON',
-      label: `Thùng (${spec.BoxesPerCarton} ${product.Unit})`,
-      max: getMaxStockForMode(product, 'CARTON'),
-    });
-  }
-  unitOptions.push({
-    mode: 'BASE',
-    label: spec.PackageUnit,
-    max: getMaxStockForMode(product, 'BASE'),
-  });
-  if (buyerMode === 'RETAIL' && spec.BlisterUnit && spec.BlistersPerPackage && spec.BlistersPerPackage > 1) {
+  const unitOptions: Array<{ mode: UnitMode; label: string; max: number }> = [
+    {
+      mode: 'BASE',
+      label: spec.PackageUnit,
+      max: getMaxStockForMode(product, 'BASE'),
+    },
+  ];
+  if (spec.BlisterUnit && spec.BlistersPerPackage && spec.BlistersPerPackage > 1) {
     unitOptions.push({
       mode: 'BLISTER',
       label: spec.BlisterUnit,
       max: getMaxStockForMode(product, 'BLISTER'),
     });
   }
-  if (buyerMode === 'RETAIL' && spec.AllowFractionalSale && spec.UnitsPerPackage > 1) {
+  if (spec.AllowFractionalSale && spec.UnitsPerPackage > 1) {
     unitOptions.push({
       mode: 'PILL',
       label: `${spec.SmallestUnit} lẻ`,
@@ -70,14 +60,14 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   }
 
   const maxStock = getMaxStockForMode(product, unitMode);
-  const currentPrice = getEffectivePrice(product, unitMode, quantity, buyerMode);
-  const earliestLot = product.stockLots?.[0];
+  const currentPrice = getEffectivePrice(product, unitMode);
+  const stockBadge = getStockStatusBadgeInfo(product);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
       <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl overflow-hidden border border-slate-200 max-h-[92vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-200 bg-slate-50/70">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-[11px] font-bold text-teal-800">
               {product.ProductType}
             </span>
@@ -90,11 +80,14 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 Thuốc Không Kê Đơn (OTC)
               </span>
             )}
+            <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${stockBadge.className}`}>
+              {stockBadge.label}
+            </span>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/70 text-slate-600"
+            className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-200/70"
           >
             <X className="h-5 w-5" />
           </button>
@@ -121,13 +114,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 {spec.BlistersPerPackage ? `${spec.BlistersPerPackage} ${spec.BlisterUnit} = ` : ''}
                 {spec.UnitsPerPackage} {spec.SmallestUnit}
               </div>
-              <div className="text-slate-600 flex items-center gap-1 pt-1 border-t border-slate-200/70">
-                <CalendarClock className="h-3.5 w-3.5 text-teal-600 shrink-0" />
-                <span>
-                  {earliestLot
-                    ? `Lô FEFO: ${earliestLot.BatchNumber} · HSD ${earliestLot.ExpiryDate}`
-                    : 'Lô tiêu chuẩn GPP · Hạn dùng mới nhất'}
-                </span>
+              <div className="text-slate-600 pt-1 border-t border-slate-200/70">
+                Xuất kho kiểm duyệt FEFO chuẩn GPP — kiểm tra hạn dùng khi nhận hàng.
               </div>
             </div>
           </div>
@@ -159,12 +147,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   / {getUnitLabel(product, unitMode)}
                 </span>
               </div>
-              {buyerMode === 'RETAIL' && spec.WholesalePrice && (
-                <div className="text-[11px] text-indigo-700 font-semibold mt-1">
-                  Mua từ {spec.MinWholesaleQty} {spec.PackageUnit} trở lên được áp dụng giá sỉ:{' '}
-                  {formatVND(spec.WholesalePrice)}/{spec.PackageUnit}
-                </div>
-              )}
             </div>
 
             {/* Chọn đơn vị tính */}
@@ -188,7 +170,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                         : 'border-slate-300 bg-white text-slate-700 hover:border-teal-400'
                     }`}
                   >
-                    {opt.label} ({opt.max})
+                    {opt.label}
                   </button>
                 ))}
               </div>
@@ -217,7 +199,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 </div>
               </div>
               <div className="text-[11px] text-slate-500">
-                Khả dụng: <strong className="text-teal-700">{maxStock}</strong>{' '}
+                Đặt tối đa/đơn: <strong className="text-teal-700">{maxStock}</strong>{' '}
                 {getUnitName(product, unitMode)}
               </div>
             </div>

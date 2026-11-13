@@ -19,3 +19,13 @@ export const JWT_SECRET: string = rawJwtSecret.trim();
 export const PORT: number = Number(process.env.PORT) || 5000;
 export const DATABASE_URL: string = process.env.DATABASE_URL || 'file:./pharmacy.db';
 export const AI_SERVICE_URL: string = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+export const CORS_ORIGINS: string[] = (
+  process.env.CORS_ORIGINS ||
+  'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174'
+)
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+export const JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || '12h';
+export const RESERVATION_TTL_MINUTES: number = Math.max(5, Number(process.env.RESERVATION_TTL_MINUTES || 15));
+export const TRACKING_TOKEN_TTL_DAYS: number = Math.max(1, Number(process.env.TRACKING_TOKEN_TTL_DAYS || 30));

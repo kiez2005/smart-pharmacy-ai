@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   FileText,
   RotateCcw,
@@ -43,11 +44,12 @@ export const InvoicesManagementPage: React.FC = () => {
   const [cancellingId, setCancellingId] = useState<number | null>(null);
   const [activeKpiModal, setActiveKpiModal] = useState<'REVENUE' | 'COMPLETED' | 'REFUNDED' | 'SYNC' | null>(null);
 
-  // 11 Chức năng Data Grid
+  // 11 Chức năng Data Grid + Virtualizer
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({});
+  const invoiceTableRef = useRef<HTMLDivElement | null>(null);
 
   const loadInvoices = async () => {
     setLoading(true);
@@ -193,6 +195,19 @@ export const InvoicesManagementPage: React.FC = () => {
     () => filtered.slice((page - 1) * pageSize, page * pageSize),
     [filtered, page, pageSize]
   );
+
+  const invoiceVirtualizer = useVirtualizer({
+    count: pagedInvoices.length,
+    getScrollElement: () => invoiceTableRef.current,
+    estimateSize: () => 56,
+    overscan: 8,
+  });
+  const virtualInvoiceRows = invoiceVirtualizer.getVirtualItems();
+  const invoicePaddingTop = virtualInvoiceRows.length > 0 ? virtualInvoiceRows[0].start : 0;
+  const invoicePaddingBottom =
+    virtualInvoiceRows.length > 0
+      ? invoiceVirtualizer.getTotalSize() - virtualInvoiceRows[virtualInvoiceRows.length - 1].end
+      : 0;
 
   const completedInvoices = useMemo(
     () => invoices.filter((i) => i.Status === 'COMPLETED'),
@@ -387,11 +402,11 @@ export const InvoicesManagementPage: React.FC = () => {
         </button>
       </div>
 
-      {/* BẢNG HÓA ĐƠN FULL-WIDTH 100% */}
+      {/* BẢNG HÓA ĐƠN FULL-WIDTH 100% (Virtualized) */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
-        <div className="overflow-x-auto">
+        <div ref={invoiceTableRef} className="overflow-auto max-h-[540px]">
           <table className="w-full text-left border-collapse">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-slate-50 shadow-[0_1px_0_0_rgba(226,232,240,0.9)]">
               <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 <th className="py-3 px-4 w-9">
                   <input
@@ -445,14 +460,21 @@ export const InvoicesManagementPage: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                pagedInvoices.map((inv) => {
-                  const isRx = inv.items.length >= 2 || inv.TotalAmount >= 200000;
-                  return (
-                    <tr
-                      key={inv.InvoiceID}
-                      onClick={() => setSelectedInvoice(inv)}
-                      className="cursor-pointer transition-colors hover:bg-slate-50/80"
-                    >
+                <>
+                  {invoicePaddingTop > 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ height: `${invoicePaddingTop}px`, padding: 0 }} />
+                    </tr>
+                  )}
+                  {virtualInvoiceRows.map((vRow) => {
+                    const inv = pagedInvoices[vRow.index];
+                    const isRx = inv.items.length >= 2 || inv.TotalAmount >= 200000;
+                    return (
+                      <tr
+                        key={inv.InvoiceID}
+                        onClick={() => setSelectedInvoice(inv)}
+                        className="cursor-pointer transition-colors hover:bg-slate-50/80"
+                      >
                       <td
                         className="py-3 px-4"
                         onClick={(e) => e.stopPropagation()}
@@ -577,7 +599,13 @@ export const InvoicesManagementPage: React.FC = () => {
                       </td>
                     </tr>
                   );
-                })
+                })}
+                {invoicePaddingBottom > 0 && (
+                  <tr>
+                    <td colSpan={8} style={{ height: `${invoicePaddingBottom}px`, padding: 0 }} />
+                  </tr>
+                )}
+                </>
               )}
             </tbody>
           </table>

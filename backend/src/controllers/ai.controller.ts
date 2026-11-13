@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { aiGatewayService } from '../services/ai.service';
+import { CLINICAL_ADVISORY_DISCLAIMER, CLINICAL_RULE_VERSION } from '../services/clinical-safety.service';
 
 const diagnoseSchema = z.object({
   message: z.string().trim().min(2, 'Vui lòng mô tả triệu chứng hoặc câu hỏi tư vấn'),
@@ -29,8 +30,13 @@ export const ocrPrescription = async (req: Request, res: Response): Promise<void
 
     res.json({
       success: true,
-      message: 'Trích xuất đơn thuốc bằng AI OCR & đối chiếu tồn kho thành công',
-      data: result,
+      message: 'Trích xuất đơn thuốc bằng AI OCR — cần Dược sĩ kiểm tra đối chiếu lại trước khi cấp phát',
+      data: {
+        ...result,
+        isAdvisoryOnly: true,
+        disclaimer: CLINICAL_ADVISORY_DISCLAIMER,
+        ruleVersion: CLINICAL_RULE_VERSION,
+      },
     });
   } catch (error) {
     res.status(400).json({

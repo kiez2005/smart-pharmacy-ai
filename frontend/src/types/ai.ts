@@ -11,6 +11,8 @@ export interface MatchedPrescriptionItem {
 
 export interface OcrPrescriptionResponse {
   engine: 'python-opencv-ocr' | 'node-fallback-ocr';
+  isAdvisoryOnly?: boolean;
+  disclaimer?: string;
   opencvPreprocessing: {
     processedBase64: string | null;
     dimensions: string;
@@ -29,11 +31,14 @@ export interface RecommendedDrugItem {
   Unit: string;
   Quantity: number;
   Description: string;
-  similarityScore: number;
+  similarityScore?: number;
+  matchNote?: string;
 }
 
 export interface DiagnoseChatResponse {
   engine: 'python-sklearn-tfidf-rag' | 'node-clinical-rag-fallback';
+  isAdvisoryOnly?: boolean;
+  disclaimer?: string;
   preliminaryDiagnosis: string;
   clinicalAdvice: string;
   contraindicationWarning: string;

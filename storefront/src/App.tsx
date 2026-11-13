@@ -17,46 +17,61 @@ import { CartDrawer } from './components/CartDrawer';
 
 export const App: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [search, setSearch] = useState<string>('');
-  const [buyerMode, setBuyerMode] = useState<'RETAIL' | 'WHOLESALE'>('RETAIL');
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [page, setPage] = useState<number>(1);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
   const [cart, setCart] = useState<CartItem[]>([]);
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
-  const [isRxModalOpen, setIsRxModalOpen] = useState<boolean>(false);
+  const [consultModal, setConsultModal] = useState<{
+    open: boolean;
+    mode: 'RX' | 'B2B_QUOTE';
+  }>({ open: false, mode: 'RX' });
   const [trackingState, setTrackingState] = useState<{
     open: boolean;
     orderCode: string;
-    phoneOrToken: string;
-  }>({ open: false, orderCode: '', phoneOrToken: '' });
+    trackingToken: string;
+  }>({ open: false, orderCode: '', trackingToken: '' });
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await storeApi.getProducts();
+      const res = await storeApi.getProducts({
+        page,
+        limit: 12,
+        search: debouncedSearch || undefined,
+        type: selectedCategory !== 'ALL' ? selectedCategory : undefined,
+      });
       setProducts(res.items);
+      setTotal(res.total);
+      setTotalPages(res.totalPages);
+      if (res.categories.length > 0) {
+        setCategories(res.categories);
+      }
     } catch {
       toast.error('Không thể tải danh mục thuốc từ máy chủ. Vui lòng thử lại.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, debouncedSearch, selectedCategory]);
 
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
-
-  // Đồng bộ đơn giá trong giỏ khi khách chuyển chế độ Mua Lẻ <-> Giá Sỉ B2B
-  const handleBuyerModeChange = (nextMode: 'RETAIL' | 'WHOLESALE') => {
-    setBuyerMode(nextMode);
-    setCart((prev) =>
-      prev.map((item) => ({
-        ...item,
-        unitPrice: getEffectivePrice(item.product, item.unitMode, item.quantity, nextMode),
-      }))
-    );
-  };
 
   const handleAddToCart = (product: Product, mode: UnitMode, quantity: number) => {
     const maxAvail = getMaxStockForMode(product, mode);
@@ -73,7 +88,7 @@ export const App: React.FC = () => {
     if (existing) {
       const nextQty = existing.quantity + quantity;
       if (nextQty > maxAvail) {
-        toast.warning(`Tồn kho khả dụng chỉ còn ${maxAvail} ${unitName}.`);
+        toast.warning(`Tồn kho khả dụng tối đa ${maxAvail} ${unitName}/đơn.`);
         return;
       }
       setCart((prev) =>
@@ -82,7 +97,7 @@ export const App: React.FC = () => {
             ? {
                 ...item,
                 quantity: nextQty,
-                unitPrice: getEffectivePrice(product, mode, nextQty, buyerMode),
+                unitPrice: getEffectivePrice(product, mode),
               }
             : item
         )
@@ -99,7 +114,7 @@ export const App: React.FC = () => {
         quantity: clampedQty,
         unit: unitName,
         unitMode: mode,
-        unitPrice: getEffectivePrice(product, mode, clampedQty, buyerMode),
+        unitPrice: getEffectivePrice(product, mode),
         dosageNote: product.IsRx
           ? 'Thuốc kê đơn Rx — Dược sĩ kiểm tra toa & tư vấn trước khi giao'
           : 'Sử dụng theo hướng dẫn trên bao bì hoặc tư vấn của Dược sĩ',
@@ -117,13 +132,13 @@ export const App: React.FC = () => {
           if (nextQty <= 0) return null;
           const maxAvail = getMaxStockForMode(item.product, unitMode);
           if (nextQty > maxAvail) {
-            toast.warning(`Tồn kho khả dụng chỉ còn ${maxAvail} ${item.unit}.`);
+            toast.warning(`Số lượng tối đa/đơn là ${maxAvail} ${item.unit}.`);
             return item;
           }
           return {
             ...item,
             quantity: nextQty,
-            unitPrice: getEffectivePrice(item.product, unitMode, nextQty, buyerMode),
+            unitPrice: getEffectivePrice(item.product, unitMode),
           };
         })
         .filter((x): x is CartItem => Boolean(x))
@@ -151,27 +166,36 @@ export const App: React.FC = () => {
         onSearchChange={setSearch}
         cartCount={cartCount}
         cartTotal={cartTotal}
-        buyerMode={buyerMode}
-        onBuyerModeChange={handleBuyerModeChange}
         onOpenCart={() => setIsCartOpen(true)}
-        onOpenPrescriptionModal={() => setIsRxModalOpen(true)}
+        onOpenPrescriptionModal={() => setConsultModal({ open: true, mode: 'RX' })}
+        onOpenB2BQuoteModal={() => setConsultModal({ open: true, mode: 'B2B_QUOTE' })}
         onOpenTrackingModal={() =>
-          setTrackingState({ open: true, orderCode: '', phoneOrToken: '' })
+          setTrackingState({ open: true, orderCode: '', trackingToken: '' })
         }
       />
 
       <div className="flex-1">
         <HomePage
           products={products}
+          categories={categories}
+          selectedCategory={selectedCategory}
+          onSelectCategory={(cat) => {
+            setSelectedCategory(cat);
+            setPage(1);
+          }}
+          page={page}
+          total={total}
+          totalPages={totalPages}
+          onPageChange={setPage}
           loading={loading}
           search={search}
-          buyerMode={buyerMode}
           onRefresh={() => void loadProducts()}
           onSelectProduct={(p) => setSelectedProduct(p)}
           onQuickAdd={(p) => handleAddToCart(p, 'BASE', 1)}
-          onOpenPrescriptionModal={() => setIsRxModalOpen(true)}
+          onOpenPrescriptionModal={() => setConsultModal({ open: true, mode: 'RX' })}
+          onOpenB2BQuoteModal={() => setConsultModal({ open: true, mode: 'B2B_QUOTE' })}
           onOpenTrackingModal={() =>
-            setTrackingState({ open: true, orderCode: '', phoneOrToken: '' })
+            setTrackingState({ open: true, orderCode: '', trackingToken: '' })
           }
         />
       </div>
@@ -181,23 +205,27 @@ export const App: React.FC = () => {
       {selectedProduct && (
         <ProductDetailModal
           product={selectedProduct}
-          buyerMode={buyerMode}
           onClose={() => setSelectedProduct(null)}
           onAddToCart={handleAddToCart}
           onOpenPrescriptionModal={() => {
             setSelectedProduct(null);
-            setIsRxModalOpen(true);
+            setConsultModal({ open: true, mode: 'RX' });
           }}
         />
       )}
 
-      {isRxModalOpen && <PrescriptionUploadModal onClose={() => setIsRxModalOpen(false)} />}
+      {consultModal.open && (
+        <PrescriptionUploadModal
+          initialMode={consultModal.mode}
+          onClose={() => setConsultModal({ open: false, mode: 'RX' })}
+        />
+      )}
 
       {trackingState.open && (
         <OrderTrackingModal
           initialOrderCode={trackingState.orderCode}
-          initialPhoneOrToken={trackingState.phoneOrToken}
-          onClose={() => setTrackingState({ open: false, orderCode: '', phoneOrToken: '' })}
+          initialTrackingToken={trackingState.trackingToken}
+          onClose={() => setTrackingState({ open: false, orderCode: '', trackingToken: '' })}
           onOrderCancelled={() => void loadProducts()}
         />
       )}
@@ -206,14 +234,14 @@ export const App: React.FC = () => {
         isOpen={isCartOpen}
         onClose={() => setIsCartOpen(false)}
         cart={cart}
-        buyerMode={buyerMode}
         onUpdateQty={handleUpdateQty}
         onRemoveItem={handleRemoveItem}
         onClearCart={() => setCart([])}
         onOrderSuccess={() => void loadProducts()}
-        onTrackOrder={(orderCode, phoneOrToken) => {
+        onOpenB2BQuoteModal={() => setConsultModal({ open: true, mode: 'B2B_QUOTE' })}
+        onTrackOrder={(orderCode, trackingToken) => {
           setIsCartOpen(false);
-          setTrackingState({ open: true, orderCode, phoneOrToken });
+          setTrackingState({ open: true, orderCode, trackingToken });
         }}
       />
     </div>

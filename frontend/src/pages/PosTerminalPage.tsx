@@ -18,10 +18,11 @@ import {
   Building2,
   PackageCheck,
   FileSpreadsheet,
+  Lock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { productApi } from '../services/product.api';
-import { formsApi } from '../services/forms.api';
+import { CLINICAL_OVERRIDE_REASONS, formsApi } from '../services/forms.api';
 import { enterpriseApi } from '../services/enterprise.api';
 import { Product } from '../types/product';
 import { CustomerRecord, DrugInteractionResult } from '../types/enterprise';
@@ -70,8 +71,21 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   const [cashTendered, setCashTendered] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<'VIETQR' | 'CASH' | 'CARD' | 'CREDIT'>('VIETQR');
   const [note, setNote] = useState<string>('Tư vấn uống đúng liều, tránh rượu bia');
+  const [clinicalOverrideCode, setClinicalOverrideCode] = useState<string>('');
   const [clinicalOverrideNote, setClinicalOverrideNote] = useState<string>('');
+  const [walkInAllergies, setWalkInAllergies] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
+
+  const canOverrideClinical = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('pharmacore_user');
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as { Role?: string };
+      return parsed.Role === 'ADMIN' || parsed.Role === 'PHARMACIST';
+    } catch {
+      return false;
+    }
+  }, []);
 
   // Cảnh báo Dị ứng & Tương tác thuốc tự động
   const [interactionCheck, setInteractionCheck] = useState<DrugInteractionResult | null>(null);
@@ -119,7 +133,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       try {
         const res = await enterpriseApi.checkDrugInteractions({
           productIds: cart.map((c) => c.product.ProductID),
-          patientAllergies: selectedCustomer?.Allergies || '',
+          patientAllergies: selectedCustomer?.Allergies || walkInAllergies.trim() || '',
         });
         setInteractionCheck(res);
       } catch {
@@ -127,7 +141,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       }
     };
     void checkSafety();
-  }, [cart, selectedCustomer]);
+  }, [cart, selectedCustomer, walkInAllergies]);
 
   const handleSelectCustomer = (cid: number | null) => {
     setSelectedCustomerId(cid);
@@ -438,12 +452,18 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     const hasCriticalWarnings = Boolean(
       interactionCheck?.warnings &&
         interactionCheck.warnings.some(
-          (w) => w.severity === 'HIGH' || (w.severity as string) === 'CRITICAL'
+          (w) => w.severity === 'HIGH' || w.severity === 'CRITICAL'
         )
     );
-    if (hasCriticalWarnings && !clinicalOverrideNote.trim()) {
+    if (hasCriticalWarnings && !canOverrideClinical) {
       toast.error(
-        'Đơn thuốc có cảnh báo tương tác / dị ứng mức độ CAO. Dược sĩ bắt buộc phải nhập ghi chú thẩm định chuyên môn trước khi xuất bán!'
+        'Đơn thuốc có cảnh báo tương tác / dị ứng nghiêm trọng. Tài khoản Thu ngân (CASHIER) không được phép vượt quyền — vui lòng mời Dược sĩ hoặc Admin thẩm định!'
+      );
+      return;
+    }
+    if (hasCriticalWarnings && (!clinicalOverrideCode || clinicalOverrideNote.trim().length < 10)) {
+      toast.error(
+        'Dược sĩ bắt buộc phải chọn mã lý do thẩm định và ghi chú chuyên môn tối thiểu 10 ký tự khi xuất đơn có cảnh báo!'
       );
       return;
     }
@@ -483,6 +503,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
           PaidAmount: paidAmt,
           Note: finalNote,
           PaymentMethod: paymentMethod,
+          PatientAllergies: (selectedCustomer?.Allergies || walkInAllergies.trim() || undefined),
+          ClinicalOverrideCode: clinicalOverrideCode || undefined,
+          ClinicalOverrideNote: clinicalOverrideNote.trim() || undefined,
           items: cart.map((i) => ({
             ProductID: i.product.ProductID,
             Quantity: i.quantity,
@@ -497,7 +520,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       setDiscount(0);
       setUsedPoints(0);
       setPaidAmountInput(0);
+      setClinicalOverrideCode('');
       setClinicalOverrideNote('');
+      setWalkInAllergies('');
       toast.success(
         orderType === 'WHOLESALE'
           ? `Đã xuất Hóa đơn Bán buôn B2B ${created.InvoiceCode} và trừ kho theo Thùng/Hộp!`
@@ -937,20 +962,29 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
             )}
 
             {!selectedCustomerId && (
-              <div className="grid grid-cols-2 gap-2 pt-1">
+              <div className="space-y-1.5 pt-1">
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder="Tên khách hàng"
+                    className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    placeholder="Số điện thoại"
+                    className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  />
+                </div>
                 <input
                   type="text"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Tên khách hàng"
-                  className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
-                />
-                <input
-                  type="text"
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="Số điện thoại"
-                  className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  value={walkInAllergies}
+                  onChange={(e) => setWalkInAllergies(e.target.value)}
+                  placeholder="Tiền sử dị ứng thuốc (nếu có, VD: Penicillin, Aspirin)"
+                  className="w-full h-8 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                 />
               </div>
             )}
@@ -965,21 +999,60 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               </div>
               {interactionCheck.warnings.map((w, idx) => (
                 <div key={idx} className="text-[11px] text-rose-700 leading-relaxed pl-5">
-                  • <strong>{w.title}:</strong> {w.detail}
+                  • <strong>[{w.severity}] {w.title}:</strong> {w.detail}
+                  {w.ruleId && (
+                    <span className="ml-1.5 text-[10px] text-rose-500 font-mono">
+                      ({w.ruleId}{w.source ? ` · ${w.source}` : ''})
+                    </span>
+                  )}
                 </div>
               ))}
-              <div className="pt-2 border-t border-rose-200 mt-2">
-                <label className="block text-[11px] font-semibold text-rose-900 mb-1">
-                  Thẩm định chuyên môn của Dược sĩ (Bắt buộc nếu tiếp tục xuất thuốc):
-                </label>
-                <input
-                  type="text"
-                  value={clinicalOverrideNote}
-                  onChange={(e) => setClinicalOverrideNote(e.target.value)}
-                  placeholder="VD: Đã tư vấn uống cách 2 giờ, bệnh nhân chấp thuận theo chỉ định BS..."
-                  className="w-full h-8 rounded-lg border border-rose-300 bg-white px-2.5 text-xs text-rose-900 placeholder:text-rose-400 focus:border-rose-600 focus:outline-none"
-                />
-              </div>
+              {interactionCheck.disclaimer && (
+                <div className="text-[10px] italic text-rose-700/80 pl-5">
+                  {interactionCheck.disclaimer}
+                </div>
+              )}
+
+              {canOverrideClinical ? (
+                <div className="pt-2 border-t border-rose-200 mt-2 space-y-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-rose-900 mb-1">
+                      Mã lý do thẩm định của Dược sĩ / Admin (Bắt buộc nếu tiếp tục xuất):
+                    </label>
+                    <select
+                      value={clinicalOverrideCode}
+                      onChange={(e) => setClinicalOverrideCode(e.target.value)}
+                      className="w-full h-8 rounded-lg border border-rose-300 bg-white px-2 text-xs text-rose-900 focus:border-rose-600 focus:outline-none"
+                    >
+                      <option value="">-- Chọn mã lý do lâm sàng --</option>
+                      {CLINICAL_OVERRIDE_REASONS.map((r) => (
+                        <option key={r.code} value={r.code}>
+                          {r.code} - {r.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-rose-900 mb-1">
+                      Ghi chú thẩm định chuyên môn (tối thiểu 10 ký tự):
+                    </label>
+                    <input
+                      type="text"
+                      value={clinicalOverrideNote}
+                      onChange={(e) => setClinicalOverrideNote(e.target.value)}
+                      placeholder="VD: Đã liên hệ BS kê đơn xác nhận liều và tư vấn bệnh nhân..."
+                      className="w-full h-8 rounded-lg border border-rose-300 bg-white px-2.5 text-xs text-rose-900 placeholder:text-rose-400 focus:border-rose-600 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="pt-2 border-t border-rose-200 mt-2 flex items-start gap-2 rounded-lg bg-rose-100/80 p-2 text-[11px] font-semibold text-rose-900">
+                  <Lock className="h-4 w-4 text-rose-700 shrink-0 mt-0.5" />
+                  <span>
+                    Yêu cầu Dược sĩ/Admin thẩm định: Tài khoản Thu ngân (CASHIER) không có quyền vượt qua cảnh báo lâm sàng.
+                  </span>
+                </div>
+              )}
             </div>
           ) : cart.length > 0 ? (
             <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 px-3 py-2 flex items-center gap-2 text-xs font-medium text-emerald-800">

@@ -11,6 +11,8 @@ export interface MatchedPrescriptionItem {
   status?: 'IN_STOCK' | 'OUT_OF_STOCK' | 'NOT_FOUND';
 }
 
+import { CLINICAL_ADVISORY_DISCLAIMER, CLINICAL_RULE_VERSION } from './clinical-safety.service';
+
 export interface OcrPrescriptionResult {
   engine: 'python-opencv-ocr' | 'node-fallback-ocr';
   opencvPreprocessing: {
@@ -28,6 +30,9 @@ export interface DiagnoseChatResult {
   preliminaryDiagnosis: string;
   clinicalAdvice: string;
   contraindicationWarning: string;
+  isAdvisoryOnly: true;
+  disclaimer: string;
+  ruleVersion: string;
   recommendedProducts: Array<{
     ProductID: number;
     ProductName: string;
@@ -36,7 +41,7 @@ export interface DiagnoseChatResult {
     Unit: string;
     Quantity: number;
     Description: string;
-    similarityScore: number;
+    matchNote: string;
   }>;
 }
 
@@ -317,7 +322,19 @@ class AiGatewayService {
           preliminaryDiagnosis: pyRes.preliminary_diagnosis,
           clinicalAdvice: pyRes.clinical_advice,
           contraindicationWarning: pyRes.contraindication_warning,
-          recommendedProducts: pyRes.recommended_products,
+          isAdvisoryOnly: true,
+          disclaimer: CLINICAL_ADVISORY_DISCLAIMER,
+          ruleVersion: CLINICAL_RULE_VERSION,
+          recommendedProducts: (pyRes.recommended_products || []).map((item) => ({
+            ProductID: item.ProductID,
+            ProductName: item.ProductName,
+            ProductType: item.ProductType,
+            Price: item.Price,
+            Unit: item.Unit,
+            Quantity: item.Quantity,
+            Description: item.Description,
+            matchNote: 'Gợi ý tham khảo theo triệu chứng — cần Dược sĩ thẩm định trước khi cấp phát.',
+          })),
         };
       }
     } catch {
@@ -370,7 +387,10 @@ class AiGatewayService {
       preliminaryDiagnosis: diagnosis,
       clinicalAdvice: advice,
       contraindicationWarning: warning,
-      recommendedProducts: hits.map((h, idx) => ({
+      isAdvisoryOnly: true,
+      disclaimer: CLINICAL_ADVISORY_DISCLAIMER,
+      ruleVersion: CLINICAL_RULE_VERSION,
+      recommendedProducts: hits.map((h) => ({
         ProductID: h.item.ProductID,
         ProductName: h.item.ProductName,
         ProductType: h.item.ProductType,
@@ -378,7 +398,7 @@ class AiGatewayService {
         Unit: h.item.Unit,
         Quantity: h.item.Quantity,
         Description: h.item.Description,
-        similarityScore: Number((0.95 - idx * 0.06).toFixed(2)),
+        matchNote: 'Gợi ý tham khảo từ khóa triệu chứng — không thay thế tư vấn Dược sĩ.',
       })),
     };
   }

@@ -1,7 +1,6 @@
-import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-
-const prisma = new PrismaClient();
+import { prisma } from '../src/config/prisma';
+import { derivePackagingSpec } from '../src/services/packaging.service';
 
 const sampleProducts = [
   {
@@ -373,7 +372,53 @@ async function main() {
 
   // 2. Nạp 35 sản phẩm thuốc chuẩn 10 trường
   for (const item of sampleProducts) {
-    await prisma.product.create({ data: item });
+    const existing = await prisma.product.findFirst({ where: { ProductName: item.ProductName } });
+    const prod = existing
+      ? existing
+      : await prisma.product.create({
+          data: {
+            ...item,
+          },
+        });
+    const spec = derivePackagingSpec(prod);
+    await prisma.productPackaging.upsert({
+      where: { ProductID: prod.ProductID },
+      create: {
+        ProductID: prod.ProductID,
+        PackageUnit: spec.PackageUnit,
+        BlisterUnit: spec.BlisterUnit,
+        BlistersPerPackage: spec.BlistersPerPackage,
+        SmallestUnit: spec.SmallestUnit,
+        UnitsPerPackage: spec.UnitsPerPackage,
+        UnitsPerBlister: spec.UnitsPerBlister,
+        AllowFractionalSale: spec.AllowFractionalSale,
+        LooseUnits: 0,
+        WholesalePrice: Math.round(prod.Price * 0.85),
+        MinWholesaleQty: 10,
+        IsPublished: true,
+        IsTestOnly: false,
+      },
+      update: { IsPublished: true, IsTestOnly: false },
+    });
+    const lotAgg = await prisma.stockLot.aggregate({
+      where: { ProductID: prod.ProductID, Status: 'ACTIVE' },
+      _sum: { RemainingQuantity: true },
+    });
+    const currentLotQty = lotAgg._sum.RemainingQuantity ?? 0;
+    if (prod.Quantity > currentLotQty) {
+      await prisma.stockLot.create({
+        data: {
+          ProductID: prod.ProductID,
+          BatchNumber: `LOT-SEED-${String(prod.ProductID).padStart(3, '0')}`,
+          ExpiryDate: '2028-12-31',
+          InitialQuantity: prod.Quantity - currentLotQty,
+          RemainingQuantity: prod.Quantity - currentLotQty,
+          ImportPrice: Math.round(prod.Price * 0.72),
+          BranchCode: 'CS1-GPP',
+          Status: 'ACTIVE',
+        },
+      });
+    }
   }
   const allProducts = await prisma.product.findMany({ orderBy: { ProductID: 'asc' } });
 

@@ -7,7 +7,6 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
 }
 
 // ============================================================================
@@ -33,6 +32,9 @@ model Product {
   stockMovements     StockMovement[]
   onlineOrderItems   OnlineOrderItem[]
   reservations       InventoryReservation[]
+
+  @@index([ProductType, CreateDate])
+  @@index([ProductName])
 }
 
 // ============================================================================
@@ -56,8 +58,12 @@ model ProductPackaging {
   AllowFractionalSale Boolean  @default(true) // Cho phép bán lẻ vỉ/viên
   WholesalePrice      Float?   // Giá bán buôn (B2B) trên 1 PackageUnit (Hộp)
   MinWholesaleQty     Int      @default(10) // Số lượng hộp tối thiểu áp dụng giá sỉ
+  IsPublished         Boolean  @default(true)
+  IsTestOnly          Boolean  @default(false)
 
   product             Product  @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
+
+  @@index([IsPublished, IsTestOnly])
 }
 
 // ============================================================================
@@ -75,7 +81,11 @@ model StockLot {
   Status            String   @default("ACTIVE") // ACTIVE | EXPIRED | RECALLED | DEPLETED
   CreateDate        DateTime @default(now())
 
-  product           Product  @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
+  product                   Product              @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
+  invoiceLotAllocations     InvoiceItemLot[]
+  onlineOrderLotAllocations OnlineOrderItemLot[]
+
+  @@index([ProductID, Status, ExpiryDate])
 }
 
 // ============================================================================
@@ -113,13 +123,15 @@ model User {
   Email      String    @unique
   Password   String
   Phone      String?
-  Role       String    @default("PHARMACIST") // ADMIN | PHARMACIST | CASHIER
-  Status     String    @default("ACTIVE")     // ACTIVE | INACTIVE
-  CreateDate DateTime  @default(now())
+  Role         String    @default("PHARMACIST") // ADMIN | PHARMACIST | CASHIER
+  Status       String    @default("ACTIVE")     // ACTIVE | INACTIVE
+  TokenVersion Int       @default(1)
+  CreateDate   DateTime  @default(now())
 
-  invoices       Invoice[]
-  purchaseOrders PurchaseOrder[]
-  contacts       Contact[]
+  invoices          Invoice[]
+  purchaseOrders    PurchaseOrder[]
+  contacts          Contact[]
+  clinicalAuditLogs ClinicalAuditLog[]
 }
 
 // ============================================================================
@@ -218,6 +230,7 @@ model Invoice {
   RefundedAmount       Float                @default(0)           // Số tiền thực tế đã chi hoàn
   Note                 String?
   CancelReason         String?
+  ClinicalOverrideCode String?
   ClinicalOverrideNote String?
   CreatedByName        String?
   ApprovedByUserID     Int?
@@ -239,6 +252,9 @@ model Invoice {
   payment              Payment?
   paymentTransactions  PaymentTransaction[]
   onlineOrder          OnlineOrder?
+
+  @@index([Status, CreateDate])
+  @@index([CustomerID])
 }
 
 model InvoiceItem {
@@ -255,8 +271,9 @@ model InvoiceItem {
   LotID                Int?
   DosageNote           String?
 
-  invoice     Invoice @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
-  product     Product @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)
+  invoice        Invoice          @relation(fields: [InvoiceID], references: [InvoiceID], onDelete: Cascade)
+  product        Product          @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)
+  lotAllocations InvoiceItemLot[]
 }
 
 // ============================================================================
@@ -265,7 +282,9 @@ model InvoiceItem {
 model OnlineOrder {
   OrderID              Int                    @id @default(autoincrement())
   OrderCode            String                 @unique
-  TrackingToken        String                 @unique
+  TrackingToken        String?
+  TrackingTokenHash    String?                @unique
+  TrackingExpiresAt    DateTime?
   OrderType            String                 @default("RETAIL") // RETAIL | WHOLESALE
   Status               String                 @default("PENDING_REVIEW") // PENDING_REVIEW | CONFIRMED | PACKING | SHIPPING | DELIVERED | REJECTED | CANCELLED | EXPIRED
   PaymentStatus        String                 @default("UNPAID") // UNPAID | PARTIALLY_PAID | PAID | REFUNDED | VOID
@@ -282,6 +301,9 @@ model OnlineOrder {
   TotalAmount          Float                  @default(0)
   PaidAmount           Float                  @default(0)
   Note                 String?
+  PatientAllergies     String?
+  PrescriptionFileKey  String?
+  PrescriptionFileMime String?
   ReservedUntil        DateTime?
   ClinicalSafetyStatus String                 @default("PENDING") // SAFE | WARNING_REQUIRES_REVIEW | APPROVED_WITH_OVERRIDE | REJECTED
   ClinicalWarningsJson String?
@@ -299,6 +321,10 @@ model OnlineOrder {
   invoice              Invoice?               @relation(fields: [InvoiceID], references: [InvoiceID])
   items                OnlineOrderItem[]
   reservations         InventoryReservation[]
+
+  @@index([Status, CreateDate])
+  @@index([CustomerPhone])
+  @@index([TrackingExpiresAt])
 }
 
 model OnlineOrderItem {
@@ -317,6 +343,7 @@ model OnlineOrderItem {
   order            OnlineOrder           @relation(fields: [OrderID], references: [OrderID], onDelete: Cascade)
   product          Product               @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)
   reservation      InventoryReservation?
+  lotAllocations   OnlineOrderItemLot[]
 }
 
 model InventoryReservation {
@@ -336,6 +363,8 @@ model InventoryReservation {
   order            OnlineOrder     @relation(fields: [OrderID], references: [OrderID], onDelete: Cascade)
   orderItem        OnlineOrderItem @relation(fields: [OrderItemID], references: [OrderItemID], onDelete: Cascade)
   product          Product         @relation(fields: [ProductID], references: [ProductID], onDelete: Cascade)
+
+  @@index([Status, ExpiresAt])
 }
 
 // ============================================================================
@@ -373,13 +402,18 @@ model PaymentTransaction {
 // 7b. BẢNG KHÓA CHỐNG LẶP REQUEST (IDEMPOTENCY_RECORD)
 // ============================================================================
 model IdempotencyRecord {
-  IdempotencyKey String   @id
+  Id             Int      @id @default(autoincrement())
+  IdempotencyKey String
   Scope          String
   ActorKey       String
   PayloadHash    String
-  StatusCode     Int
-  ResponseJson   String
+  Status         String   @default("COMPLETED") // IN_PROGRESS | COMPLETED
+  StatusCode     Int      @default(200)
+  ResponseJson   String   @default("")
   CreateDate     DateTime @default(now())
+
+  @@unique([Scope, ActorKey, IdempotencyKey])
+  @@index([CreateDate])
 }
 
 // ============================================================================
@@ -399,4 +433,66 @@ model Contact {
 
   UserID      Int?
   user        User?    @relation(fields: [UserID], references: [UserID])
+
+  @@index([Status, CreateDate])
+}
+
+// ============================================================================
+// 9. BẢNG PHÂN BỔ LÔ CHÍNH XÁC CHO HÓA ĐƠN & ĐƠN ONLINE (D1 - FEFO MULTI-LOT)
+// ============================================================================
+model InvoiceItemLot {
+  AllocationID Int         @id @default(autoincrement())
+  ItemID       Int
+  LotID        Int
+  BatchNumber  String
+  ExpiryDate   String
+  Quantity     Int
+
+  invoiceItem  InvoiceItem @relation(fields: [ItemID], references: [ItemID], onDelete: Cascade)
+  stockLot     StockLot    @relation(fields: [LotID], references: [LotID])
+
+  @@index([ItemID])
+  @@index([LotID])
+}
+
+model OnlineOrderItemLot {
+  AllocationID Int             @id @default(autoincrement())
+  OrderItemID  Int
+  LotID        Int
+  BatchNumber  String
+  ExpiryDate   String
+  Quantity     Int
+
+  onlineOrderItem OnlineOrderItem @relation(fields: [OrderItemID], references: [OrderItemID], onDelete: Cascade)
+  stockLot        StockLot        @relation(fields: [LotID], references: [LotID])
+
+  @@index([OrderItemID])
+  @@index([LotID])
+}
+
+// ============================================================================
+// 10. NHẬT KÝ THẨM ĐỊNH DƯỢC LÂM SÀNG & OVERRIDE (S1/S2/S3 CLINICAL AUDIT LOG)
+// ============================================================================
+model ClinicalAuditLog {
+  AuditID        Int       @id @default(autoincrement())
+  ActorUserID    Int
+  ActorName      String
+  ActorRole      String
+  ContextType    String    // POS_INVOICE | ONLINE_ORDER_REVIEW
+  InvoiceID      Int?
+  OnlineOrderID  Int?
+  CustomerID     Int?
+  PatientAllergies String?
+  Action         String    // OVERRIDE_ALLERGY | OVERRIDE_INTERACTION | APPROVE_RX | REJECT_RX
+  ReasonCode     String
+  ReasonNote     String
+  WarningsJson   String
+  RuleVersion    String
+  CreateDate     DateTime  @default(now())
+
+  actor          User      @relation(fields: [ActorUserID], references: [UserID])
+
+  @@index([ContextType, CreateDate])
+  @@index([InvoiceID])
+  @@index([OnlineOrderID])
 }

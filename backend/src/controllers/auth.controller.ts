@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
-import { JWT_SECRET } from '../config/env';
+import { JWT_EXPIRES_IN, JWT_SECRET } from '../config/env';
 
 // Schema đăng ký tài khoản công khai: Bỏ hoàn toàn trường Role để chống leo thang đặc quyền
 const registerSchema = z.object({
@@ -131,9 +131,10 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
         Email: user.Email,
         Role: user.Role,
         FullName: user.FullName,
+        TokenVersion: user.TokenVersion,
       },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] }
     );
 
     res.json({
@@ -194,6 +195,34 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
       success: false,
       message: 'Lỗi khi lấy thông tin người dùng',
       error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * ĐĂNG XUẤT HỆ THỐNG & THU HỒI JWT (POST /api/auth/logout)
+ * Tăng TokenVersion trong DB để vô hiệu hóa toàn bộ token cũ ngay lập tức (A3)
+ */
+export const logoutUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.user?.UserID) {
+      res.status(401).json({ success: false, message: 'Chưa đăng nhập' });
+      return;
+    }
+
+    await prisma.user.update({
+      where: { UserID: req.user.UserID },
+      data: { TokenVersion: { increment: 1 } },
+    });
+
+    res.json({
+      success: true,
+      message: 'Đã đăng xuất và thu hồi phiên đăng nhập thành công.',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ khi đăng xuất',
     });
   }
 };

@@ -381,8 +381,8 @@ export const AiPharmacyStudioPage: React.FC = () => {
                                   <span className="font-medium text-zinc-900 text-xs line-clamp-1">
                                     {prod.ProductName}
                                   </span>
-                                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] font-medium text-zinc-700 shrink-0 tabular-nums">
-                                    {Math.round(prod.similarityScore * 100)}%
+                                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 shrink-0">
+                                    {prod.matchNote || 'Tham khảo'}
                                   </span>
                                 </div>
                                 <div className="text-[11px] text-zinc-500 mt-0.5 line-clamp-1">

@@ -1,7 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../src/config/prisma';
 import { derivePackagingSpec } from '../src/services/packaging.service';
-
-const prisma = new PrismaClient();
 
 async function main() {
   console.log('>>> Khởi tạo bản ghi quy cách đóng gói (ProductPackaging) cho danh mục sản phẩm...');

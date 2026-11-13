@@ -7,10 +7,8 @@ import {
   Truck,
   FileText,
   RefreshCw,
-  ShieldCheck,
   CalendarClock,
   DollarSign,
-  CheckCircle2,
   ChevronRight,
   X,
   Search,
@@ -105,7 +103,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [data, setData] = useState<DashboardAnalytics | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeAlertTab, setActiveAlertTab] = useState<'fefo' | 'lowstock'>('fefo');
-  const [syncingPortal, setSyncingPortal] = useState<boolean>(false);
   const [selectedKpiModal, setSelectedKpiModal] = useState<
     'revenue' | 'profit' | 'inventory' | 'fefo' | null
   >(null);
@@ -137,16 +134,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   const formatVND = (val: number) =>
     new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
-
-  const handleSyncNationalPortal = () => {
-    setSyncingPortal(true);
-    setTimeout(() => {
-      setSyncingPortal(false);
-      toast.success(
-        'Đã đồng bộ 100% dữ liệu Hóa đơn & Phiếu nhập kho lên Cổng Dược Quốc Gia (Bộ Y tế)'
-      );
-    }, 600);
-  };
 
   if (loading || !data) {
     return (
@@ -200,40 +187,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             <ArrowUpRight className="h-3.5 w-3.5" />
           </button>
         </div>
-      </div>
-
-      {/* National Pharmacy Portal Sync Banner */}
-      <div className="rounded-xl border border-teal-200/80 bg-gradient-to-r from-teal-50/90 via-white to-emerald-50/60 p-3.5 shadow-2xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-600 text-white shadow-xs">
-            <ShieldCheck className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-900">
-                Liên thông Hệ thống Cơ sở Dữ liệu Dược Quốc Gia (duocquocgia.com.vn)
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
-                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                Đã kết nối API
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-600 mt-0.5">
-              Mã cơ sở GPP: <strong className="font-mono text-slate-800">GPP-HN-08912</strong> · Đã đồng bộ{' '}
-              <strong className="text-teal-700">{data.completedInvoicesCount} hóa đơn xuất bán</strong> &{' '}
-              <strong className="text-teal-700">{data.totalProducts} danh mục thuốc</strong> chuẩn quy định Bộ Y tế.
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          disabled={syncingPortal}
-          onClick={handleSyncNationalPortal}
-          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-teal-300 bg-white px-3.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 shadow-sm transition-colors"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${syncingPortal ? 'animate-spin' : ''}`} />
-          <span>{syncingPortal ? 'Đang đẩy dữ liệu...' : 'Đồng bộ Cổng Dược QG'}</span>
-        </button>
       </div>
 
       {/* 4 Enterprise KPI Cards */}

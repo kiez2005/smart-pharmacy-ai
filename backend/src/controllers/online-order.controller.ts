@@ -4,12 +4,93 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { packagingService } from '../services/packaging.service';
 import {
-  checkIdempotency,
   IdempotencyConflictError,
-  saveIdempotency,
+  runWithIdempotencyTx,
 } from '../services/idempotency.service';
-import { evaluateClinicalSafetyServerSide } from '../services/clinical-safety.service';
+import {
+  canRoleOverrideClinicalSafety,
+  evaluateClinicalSafetyServerSide,
+  isValidOverrideReasonCode,
+  mergePatientAllergies,
+  recordClinicalAuditLogTx,
+} from '../services/clinical-safety.service';
+import {
+  resolveSafePrescriptionFilePath,
+  saveValidatedPrescriptionFile,
+} from '../services/prescription-storage.service';
+import { TRACKING_TOKEN_TTL_DAYS } from '../config/env';
 import { calculateServerShippingFee } from './invoice.controller';
+
+export function hashTrackingToken(rawToken: string): string {
+  return crypto.createHash('sha256').update(rawToken.trim()).digest('hex');
+}
+
+function timingSafeTokenMatch(rawToken: string, storedHash?: string | null): boolean {
+  if (!rawToken || !storedHash) return false;
+  const candidate = hashTrackingToken(rawToken);
+  const bufA = Buffer.from(candidate, 'hex');
+  const bufB = Buffer.from(storedHash, 'hex');
+  if (bufA.length === 0 || bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * 0a. UPLOAD ẢNH ĐƠN THUỐC RIÊNG TƯ (POST /api/online-orders/prescriptions) - A5
+ */
+export const uploadPrescriptionImage = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      res.status(400).json({
+        success: false,
+        code: 'MISSING_FILE',
+        message: 'Vui lòng chọn ảnh đơn thuốc hợp lệ (PNG, JPG hoặc WEBP <= 3MB).',
+      });
+      return;
+    }
+
+    const saved = saveValidatedPrescriptionFile(req.file.buffer);
+    res.status(201).json({
+      success: true,
+      data: saved,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'INVALID_PRESCRIPTION_IMAGE') {
+      res.status(400).json({
+        success: false,
+        code: 'INVALID_FILE_TYPE',
+        message: 'Tệp không phải ảnh hợp lệ (chỉ chấp nhận JPEG, PNG, WEBP tối đa 3MB).',
+      });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      code: 'UPLOAD_FAILED',
+      message: 'Không thể lưu ảnh đơn thuốc.',
+    });
+  }
+};
+
+/**
+ * 0b. DƯỢC SĨ / ADMIN TẢI ẢNH ĐƠN THUỐC PRIVATE (GET /api/online-orders/prescriptions/:fileKey) - A5
+ */
+export const downloadPrescriptionImage = async (req: Request, res: Response): Promise<void> => {
+  const fileKey = String(req.params.fileKey || '').trim();
+  const safePath = resolveSafePrescriptionFilePath(fileKey);
+  if (!safePath) {
+    res.status(404).json({
+      success: false,
+      code: 'PRESCRIPTION_NOT_FOUND',
+      message: 'Không tìm thấy tệp đơn thuốc hợp lệ.',
+    });
+    return;
+  }
+
+  const ext = fileKey.split('.').pop()?.toLowerCase();
+  const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Disposition', `inline; filename="${fileKey}"`);
+  res.sendFile(safePath);
+};
 
 const onlineOrderItemSchema = z.object({
   ProductID: z.coerce.number().int().positive(),
@@ -34,23 +115,25 @@ const createOnlineOrderSchema = z.object({
     .min(10, 'Vui lòng nhập địa chỉ nhận thuốc chi tiết (Số nhà, Đường, Phường/Xã, Quận/Huyện)'),
   OrderType: z.enum(['RETAIL', 'WHOLESALE']).optional().default('RETAIL'),
   ShippingMethod: z
-    .enum(['EXPRESS_2H', 'STANDARD', 'GDP_TRUCK'])
+    .enum(['EXPRESS_2H', 'STANDARD', 'PICKUP', 'GDP_TRUCK'])
     .optional()
     .default('EXPRESS_2H'),
   PaymentMethod: z.enum(['COD', 'VIETQR', 'CREDIT']).optional().default('COD'),
   IncludeVat: z.boolean().optional().default(false),
-  PatientAllergies: z.string().trim().optional().default(''),
+  PatientAllergies: z.string().trim().max(500).optional().default(''),
+  PrescriptionFileKey: z.string().trim().optional(),
   PrescriptionImage: z.string().trim().optional(),
-  Note: z.string().trim().optional().default(''),
+  Note: z.string().trim().max(1000).optional().default(''),
   idempotencyKey: z.string().trim().optional(),
   items: z.array(onlineOrderItemSchema).min(1, 'Giỏ đặt hàng phải có ít nhất 1 sản phẩm'),
 });
 
 /**
  * 1. PUBLIC API CHO KHÁCH HÀNG ĐẶT ĐƠN ONLINE + GIỮ KHO NGUYÊN TỬ CÓ THỜI HẠN (POST /api/online-orders)
- * - Không yêu cầu JWT nhân viên (Khách vãng lai hoặc khách có tài khoản đều gửi được).
- * - Không tạo Hóa đơn và không trừ tồn bán thật; chỉ tạo InventoryReservation có thời hạn (ReservedUntil).
- * - Nếu 2 khách tranh hộp cuối cùng: đơn nào commit reservation thành công trước được ưu tiên; đơn sau nhận 409 OUT_OF_STOCK.
+ * - Chặn gán CustomerID nội bộ, WHOLESALE hoặc CREDIT qua endpoint công khai (A1).
+ * - Khóa idempotency atomically bên trong Prisma transaction (A2).
+ * - Lưu dị ứng khai báo vào cột có cấu trúc `PatientAllergies` + ảnh toa thuốc qua multipart file key private (S2/A5).
+ * - Sinh mã OrderCode entropy cao + hash TrackingToken (chỉ trả token thô 1 lần lúc tạo đơn - A5).
  */
 export const createCustomerOnlineOrder = async (
   req: Request,
@@ -61,6 +144,7 @@ export const createCustomerOnlineOrder = async (
     if (!parsed.success) {
       res.status(400).json({
         success: false,
+        code: 'INVALID_ONLINE_ORDER',
         message: 'Thông tin đặt hàng trực tuyến chưa hợp lệ',
         errors: parsed.error.flatten().fieldErrors,
       });
@@ -77,231 +161,265 @@ export const createCustomerOnlineOrder = async (
       PaymentMethod,
       IncludeVat,
       PatientAllergies,
+      PrescriptionFileKey,
+      PrescriptionImage,
       Note,
       items,
     } = parsed.data;
 
+    // A1 FIX: Cấm tuyệt đối giả mạo CustomerID nội bộ, đơn bán buôn WHOLESALE hoặc ghi nợ CREDIT qua cổng public
+    if (CustomerID !== undefined && CustomerID !== null) {
+      res.status(403).json({
+        success: false,
+        code: 'PUBLIC_CUSTOMER_ID_FORBIDDEN',
+        message: 'Không được phép truyền CustomerID nội bộ qua cổng đặt hàng công khai.',
+      });
+      return;
+    }
+    if (OrderType === 'WHOLESALE' || PaymentMethod === 'CREDIT' || ShippingMethod === 'GDP_TRUCK') {
+      res.status(403).json({
+        success: false,
+        code: 'PUBLIC_WHOLESALE_CREDIT_FORBIDDEN',
+        message:
+          'Đơn giá sỉ B2B hoặc ghi công nợ CREDIT yêu cầu đại lý xác thực qua quầy / hệ thống ERP nội bộ.',
+      });
+      return;
+    }
+
+    // A5 FIX: Cấm nhúng ảnh Base64 vào JSON/Note; chỉ chấp nhận fileKey đã upload qua multipart endpoint
+    if (
+      (PrescriptionImage && /^data:image\//i.test(PrescriptionImage)) ||
+      /data:image\//i.test(Note)
+    ) {
+      res.status(400).json({
+        success: false,
+        code: 'BASE64_INLINE_FORBIDDEN',
+        message: 'Không nhúng ảnh Base64 trực tiếp vào đơn hàng. Vui lòng tải ảnh qua API tải đơn thuốc.',
+      });
+      return;
+    }
+
+    let validatedFileKey: string | null = null;
+    let validatedFileMime: string | null = null;
+    if (PrescriptionFileKey) {
+      const resolvedPath = resolveSafePrescriptionFilePath(PrescriptionFileKey);
+      if (!resolvedPath) {
+        res.status(400).json({
+          success: false,
+          code: 'INVALID_PRESCRIPTION_FILE_KEY',
+          message: 'Mã tệp ảnh đơn thuốc không tồn tại hoặc không hợp lệ.',
+        });
+        return;
+      }
+      validatedFileKey = PrescriptionFileKey;
+      const ext = PrescriptionFileKey.split('.').pop()?.toLowerCase();
+      validatedFileMime =
+        ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    }
+
+    const structuredAllergies = mergePatientAllergies(PatientAllergies);
     const rawIdemKey =
       (req.headers['idempotency-key'] as string | undefined) || parsed.data.idempotencyKey;
     const actorKey = `guest:${CustomerPhone}`;
-
-    const idemCheck = await checkIdempotency(
-      rawIdemKey,
-      'CREATE_ONLINE_ORDER',
-      actorKey,
-      parsed.data
-    );
-    if (idemCheck.hit && idemCheck.body) {
-      res.status(idemCheck.statusCode || 201).json(idemCheck.body);
-      return;
-    }
 
     const reservationTtlMinutes = Math.max(
       1,
       Number(process.env.RESERVATION_TTL_MINUTES || 15)
     );
 
-    const createdOrder = await prisma.$transaction(async (tx) => {
-      // Giải phóng các reservation đã quá hạn trước khi kiểm tra tồn khả dụng
-      await packagingService.releaseExpiredReservations(tx);
+    const idemResult = await runWithIdempotencyTx(
+      {
+        rawKey: rawIdemKey,
+        scope: 'CREATE_ONLINE_ORDER',
+        actorKey,
+        payload: parsed.data,
+      },
+      async (tx) => {
+        // Giải phóng các reservation đã quá hạn trước khi kiểm tra tồn khả dụng
+        await packagingService.releaseExpiredReservations(tx);
 
-      let customerRecord = null;
-      if (CustomerID) {
-        customerRecord = await tx.customer.findUnique({
-          where: { CustomerID },
-        });
-      }
-
-      const isVerifiedWholesaleCustomer = customerRecord?.CustomerType === 'WHOLESALE';
-      if (PaymentMethod === 'CREDIT' && !isVerifiedWholesaleCustomer) {
-        throw new Error(
-          'Phương thức ghi công nợ (CREDIT) chỉ áp dụng cho Đại lý / Phòng khám B2B đã xác thực!'
-        );
-      }
-
-      // Đánh giá an toàn dược lâm sàng (Dị ứng & Tương tác thuốc) ngay khi tiếp nhận yêu cầu
-      const clinicalSafety = await evaluateClinicalSafetyServerSide(
-        {
-          productIds: items.map((i) => i.ProductID),
-          customerId: CustomerID,
-          patientAllergiesOverride: PatientAllergies,
-        },
-        tx
-      );
-
-      let subTotal = 0;
-      let anyWholesaleLine = isVerifiedWholesaleCustomer && OrderType === 'WHOLESALE';
-
-      const reservedLines: Array<{
-        ProductID: number;
-        Quantity: number;
-        Unit: string;
-        UnitPrice: number;
-        BaseQtyReserved: number;
-        LooseQtyReserved: number;
-        DosageNote: string;
-      }> = [];
-
-      // Giữ kho nguyên tử cho toàn bộ các dòng hàng (Nếu 1 dòng thất bại -> rollback cả đơn)
-      for (const item of items) {
-        const resvCalc = await packagingService.reserveStockAtomically(
-          item.ProductID,
-          item.Unit,
-          item.Quantity,
+        // Đánh giá an toàn dược lâm sàng (S2) dựa trên danh sách thuốc + dị ứng khách hàng khai báo
+        const clinicalSafety = await evaluateClinicalSafetyServerSide({
           tx,
-          {
-            orderType: OrderType,
-            isVerifiedWholesaleCustomer,
-          }
-        );
+          customerId: null,
+          patientAllergiesOverride: structuredAllergies,
+          productIds: items.map((i) => i.ProductID),
+        });
 
-        if (resvCalc.effectiveOrderType === 'WHOLESALE') {
-          anyWholesaleLine = true;
+        let subTotal = 0;
+        const reservedLines: Array<{
+          ProductID: number;
+          Quantity: number;
+          Unit: string;
+          UnitPrice: number;
+          BaseQtyReserved: number;
+          LooseQtyReserved: number;
+          DosageNote: string;
+        }> = [];
+
+        // Giữ kho nguyên tử cho toàn bộ các dòng hàng (cưỡng chế đơn RETAIL, không bao giờ tự bật giá sỉ public)
+        for (const item of items) {
+          const resvCalc = await packagingService.reserveStockAtomically(
+            item.ProductID,
+            item.Unit,
+            item.Quantity,
+            tx,
+            {
+              orderType: 'RETAIL',
+              isVerifiedWholesaleCustomer: false,
+            }
+          );
+
+          subTotal += resvCalc.unitPrice * item.Quantity;
+
+          reservedLines.push({
+            ProductID: item.ProductID,
+            Quantity: item.Quantity,
+            Unit: resvCalc.requestedUnit,
+            UnitPrice: resvCalc.unitPrice,
+            BaseQtyReserved: resvCalc.baseQtyToReserve,
+            LooseQtyReserved: resvCalc.looseQtyToReserve,
+            DosageNote: item.DosageNote,
+          });
         }
 
-        subTotal += resvCalc.unitPrice * item.Quantity;
-
-        reservedLines.push({
-          ProductID: item.ProductID,
-          Quantity: item.Quantity,
-          Unit: resvCalc.requestedUnit,
-          UnitPrice: resvCalc.unitPrice,
-          BaseQtyReserved: resvCalc.baseQtyToReserve,
-          LooseQtyReserved: resvCalc.looseQtyToReserve,
-          DosageNote: item.DosageNote,
+        const vatAmount = IncludeVat ? Math.round(subTotal * 0.05) : 0;
+        const shippingFee = calculateServerShippingFee({
+          channel: 'ONLINE',
+          orderType: 'RETAIL',
+          shippingMethod: ShippingMethod,
+          netMerchandiseAmount: subTotal,
         });
-      }
+        const totalAmount = subTotal + vatAmount + shippingFee;
 
-      const effectiveOrderType: 'RETAIL' | 'WHOLESALE' = anyWholesaleLine
-        ? 'WHOLESALE'
-        : 'RETAIL';
+        // A5: Entropy cao cho OrderCode & TrackingToken (chỉ lưu hash trong DB, cấp TTL hết hạn)
+        const orderCode = `WEB-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
+        const rawTrackingToken = `TRK-${crypto.randomBytes(12).toString('hex').toUpperCase()}`;
+        const trackingTokenHash = hashTrackingToken(rawTrackingToken);
+        const trackingExpiresAt = new Date(
+          Date.now() + TRACKING_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000
+        );
+        const reservedUntil = new Date(Date.now() + reservationTtlMinutes * 60 * 1000);
+        const initialClinicalStatus = clinicalSafety.requiresPharmacistReview
+          ? 'WARNING_REQUIRES_REVIEW'
+          : 'SAFE';
 
-      // Tính phí vận chuyển & VAT 5% hoàn toàn từ phía Server (Issue 9)
-      const vatAmount = IncludeVat ? Math.round(subTotal * 0.05) : 0;
-      const shippingFee = calculateServerShippingFee({
-        channel: 'ONLINE',
-        orderType: effectiveOrderType,
-        shippingMethod: ShippingMethod,
-        netMerchandiseAmount: subTotal,
-      });
-      const totalAmount = subTotal + vatAmount + shippingFee;
-
-      const orderCode = `ORD-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}${Math.floor(
-        Math.random() * 9 + 1
-      )}`;
-      const trackingToken = `TRK-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
-      const reservedUntil = new Date(Date.now() + reservationTtlMinutes * 60 * 1000);
-
-      const order = await tx.onlineOrder.create({
-        data: {
-          OrderCode: orderCode,
-          TrackingToken: trackingToken,
-          OrderType: effectiveOrderType,
-          Status: 'PENDING_REVIEW',
-          PaymentStatus: 'UNPAID',
-          PaymentMethod,
-          ...(CustomerID ? { CustomerID } : {}),
-          CustomerName,
-          CustomerPhone,
-          ShippingAddress,
-          ShippingMethod,
-          SubTotal: subTotal,
-          ShippingFee: shippingFee,
-          VatAmount: vatAmount,
-          Discount: 0,
-          TotalAmount: totalAmount,
-          PaidAmount: 0,
-          Note: [
-            PatientAllergies ? `[Dị ứng KH khai báo: ${PatientAllergies}]` : '',
-            parsed.data.PrescriptionImage ? `[Toa thuốc đính kèm: ${parsed.data.PrescriptionImage}]` : '',
-            Note,
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .trim(),
-          ReservedUntil: reservedUntil,
-          ClinicalSafetyStatus: clinicalSafety.status,
-          ClinicalWarningsJson: JSON.stringify(clinicalSafety.warnings),
-          items: {
-            create: reservedLines,
-          },
-        },
-        include: {
-          items: { include: { product: true } },
-        },
-      });
-
-      // Tạo bản ghi InventoryReservation + StockMovement(RESERVE) cho từng dòng
-      for (const createdItem of order.items) {
-        await tx.inventoryReservation.create({
+        const order = await tx.onlineOrder.create({
           data: {
-            OrderID: order.OrderID,
-            OrderItemID: createdItem.OrderItemID,
-            ProductID: createdItem.ProductID,
-            Unit: createdItem.Unit,
-            Quantity: createdItem.Quantity,
-            BaseQtyReserved: createdItem.BaseQtyReserved,
-            LooseQtyReserved: createdItem.LooseQtyReserved,
-            Status: 'ACTIVE',
-            ExpiresAt: reservedUntil,
+            OrderCode: orderCode,
+            TrackingToken: null,
+            TrackingTokenHash: trackingTokenHash,
+            TrackingExpiresAt: trackingExpiresAt,
+            OrderType: 'RETAIL',
+            Status: 'PENDING_REVIEW',
+            PaymentStatus: 'UNPAID',
+            PaymentMethod,
+            CustomerName,
+            CustomerPhone,
+            ShippingAddress,
+            ShippingMethod,
+            SubTotal: subTotal,
+            ShippingFee: shippingFee,
+            VatAmount: vatAmount,
+            Discount: 0,
+            TotalAmount: totalAmount,
+            PaidAmount: 0,
+            PatientAllergies: structuredAllergies || null,
+            PrescriptionFileKey: validatedFileKey,
+            PrescriptionFileMime: validatedFileMime,
+            Note: Note.trim(),
+            ReservedUntil: reservedUntil,
+            ClinicalSafetyStatus: initialClinicalStatus,
+            ClinicalWarningsJson: JSON.stringify(clinicalSafety.warnings),
+            items: {
+              create: reservedLines,
+            },
+          },
+          include: {
+            items: { include: { product: true } },
           },
         });
 
-        await tx.stockMovement.create({
-          data: {
-            ProductID: createdItem.ProductID,
-            SourceType: 'ONLINE_ORDER',
-            SourceID: order.OrderID,
-            LineItemID: createdItem.OrderItemID,
-            MovementType: 'RESERVE',
-            Unit: createdItem.Unit,
-            Quantity: createdItem.Quantity,
-            BaseQtyDelta: -createdItem.BaseQtyReserved,
-            LooseQtyDelta: -createdItem.LooseQtyReserved,
-            ActorName: CustomerName,
-            Note: `Giữ kho tạm có hạn đến ${reservedUntil.toISOString()} cho đơn ${order.OrderCode}`,
+        for (const createdItem of order.items) {
+          await tx.inventoryReservation.create({
+            data: {
+              OrderID: order.OrderID,
+              OrderItemID: createdItem.OrderItemID,
+              ProductID: createdItem.ProductID,
+              Unit: createdItem.Unit,
+              Quantity: createdItem.Quantity,
+              BaseQtyReserved: createdItem.BaseQtyReserved,
+              LooseQtyReserved: createdItem.LooseQtyReserved,
+              Status: 'ACTIVE',
+              ExpiresAt: reservedUntil,
+            },
+          });
+
+          await tx.stockMovement.create({
+            data: {
+              ProductID: createdItem.ProductID,
+              SourceType: 'ONLINE_ORDER',
+              SourceID: order.OrderID,
+              LineItemID: createdItem.OrderItemID,
+              MovementType: 'RESERVE',
+              Unit: createdItem.Unit,
+              Quantity: createdItem.Quantity,
+              BaseQtyDelta: -createdItem.BaseQtyReserved,
+              LooseQtyDelta: -createdItem.LooseQtyReserved,
+              ActorName: CustomerName,
+              Note: `Giữ kho tạm có hạn đến ${reservedUntil.toISOString()} cho đơn ${order.OrderCode}`,
+            },
+          });
+        }
+
+        const fullOrder = await tx.onlineOrder.findUniqueOrThrow({
+          where: { OrderID: order.OrderID },
+          include: {
+            items: { include: { product: true } },
+            reservations: true,
           },
         });
+
+        // Không trả TrackingTokenHash ra ngoài; trả rawTrackingToken 1 lần duy nhất cho khách tra cứu
+        const { TrackingTokenHash: _omittedHash, TrackingToken: _omittedPlain, ...safeOrderView } =
+          fullOrder;
+
+        return {
+          statusCode: 201,
+          body: {
+            success: true,
+            message: `Đã tiếp nhận đơn đặt hàng ${order.OrderCode} và giữ thuốc tạm thời đến ${reservedUntil.toLocaleTimeString('vi-VN')} chờ Dược sĩ duyệt!`,
+            data: {
+              ...safeOrderView,
+              TrackingToken: rawTrackingToken,
+              clinicalSafety: {
+                isAdvisoryOnly: clinicalSafety.isAdvisoryOnly,
+                disclaimer: clinicalSafety.disclaimer,
+                requiresPharmacistReview: clinicalSafety.requiresPharmacistReview,
+                warnings: clinicalSafety.warnings,
+              },
+            },
+          },
+        };
       }
-
-      return tx.onlineOrder.findUniqueOrThrow({
-        where: { OrderID: order.OrderID },
-        include: {
-          items: { include: { product: true } },
-          reservations: true,
-        },
-      });
-    });
-
-    const responseBody = {
-      success: true,
-      message: `Đã tiếp nhận yêu cầu đặt hàng ${createdOrder.OrderCode} và giữ thuốc tạm thời đến ${new Date(
-        createdOrder.ReservedUntil!
-      ).toLocaleTimeString('vi-VN')} chờ Dược sĩ duyệt!`,
-      data: createdOrder,
-    };
-
-    await saveIdempotency(
-      idemCheck.compositeKey,
-      'CREATE_ONLINE_ORDER',
-      actorKey,
-      idemCheck.payloadHash,
-      201,
-      responseBody
     );
 
-    res.status(201).json(responseBody);
+    res.status(idemResult.statusCode).json(idemResult.body);
   } catch (error: any) {
     if (error instanceof IdempotencyConflictError) {
-      res.status(409).json({ success: false, message: error.message });
+      res.status(409).json({ success: false, code: 'IDEMPOTENCY_CONFLICT', message: error.message });
       return;
     }
     const isOutOfStock = error?.code === 'OUT_OF_STOCK';
-    res.status(error?.statusCode || 400).json({
+    const status = error?.statusCode && error.statusCode < 500 ? error.statusCode : 400;
+    res.status(status).json({
       success: false,
       code: error?.code || 'ONLINE_ORDER_ERROR',
       waitlistAvailable: isOutOfStock,
-      message: error instanceof Error ? error.message : 'Không thể tạo đơn đặt hàng trực tuyến',
+      message:
+        status >= 400 && status < 500 && error instanceof Error
+          ? error.message
+          : 'Không thể tạo đơn đặt hàng trực tuyến. Vui lòng kiểm tra lại giỏ hàng.',
     });
   }
 };
@@ -312,22 +430,35 @@ export const createCustomerOnlineOrder = async (
  * - Khách chỉ xem được đúng đơn của mình khi cung cấp khớp OrderCode + (CustomerPhone hoặc TrackingToken).
  * - Tuyệt đối không lộ danh sách đơn của khách hàng khác!
  */
+function maskPhone(phone: string): string {
+  const clean = phone.trim();
+  if (clean.length <= 4) return '****';
+  return `${clean.slice(0, 3)}****${clean.slice(-3)}`;
+}
+
+/**
+ * 2. PUBLIC API TRA CỨU ĐƠN HÀNG DÀNH RIÊNG CHO KHÁCH HÀNG (GET /api/online-orders/track) - A5
+ * - Bắt buộc khớp OrderCode + TrackingToken còn hiệu lực TTL (xác thực qua SHA-256 timingSafeEqual).
+ * - Không trả Token hash, không lộ PII nhạy cảm.
+ */
 export const trackCustomerOnlineOrder = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    await packagingService.releaseExpiredReservations();
+    await packagingService.releaseExpiredReservations().catch(() => 0);
 
     const orderCode = String(req.query.orderCode || '').trim().toUpperCase();
-    const phoneOrToken = String(req.query.phoneOrToken || '').trim();
-    const phone = String(req.query.phone || '').trim();
-    const trackingToken = String(req.query.trackingToken || '').trim().toUpperCase();
+    const headerToken = String(req.headers['x-tracking-token'] || '').trim().toUpperCase();
+    const queryToken = String(req.query.trackingToken || '').trim().toUpperCase();
+    const fallbackParam = String(req.query.phoneOrToken || '').trim().toUpperCase();
+    const trackingToken = headerToken || queryToken || (fallbackParam.startsWith('TRK-') ? fallbackParam : '');
 
-    if (!orderCode || (!phone && !trackingToken && !phoneOrToken)) {
+    if (!orderCode || !trackingToken) {
       res.status(400).json({
         success: false,
-        message: 'Vui lòng nhập Mã đơn hàng (ORD-...) kèm Số điện thoại hoặc Mã tra cứu (TRK-...)',
+        code: 'MISSING_TRACKING_CREDENTIALS',
+        message: 'Vui lòng cung cấp đủ Mã đơn hàng (WEB-...) và Mã tra cứu bảo mật (TRK-...).',
       });
       return;
     }
@@ -347,16 +478,13 @@ export const trackCustomerOnlineOrder = async (
             },
           },
         },
-        reservations: true,
         invoice: {
           select: {
-            InvoiceID: true,
             InvoiceCode: true,
             FulfillmentStatus: true,
             PaymentStatus: true,
             TotalAmount: true,
             PaidAmount: true,
-            DebtAmount: true,
           },
         },
       },
@@ -365,35 +493,72 @@ export const trackCustomerOnlineOrder = async (
     if (!order) {
       res.status(404).json({
         success: false,
-        message: 'Không tìm thấy đơn hàng hoặc thông tin xác thực không khớp',
+        code: 'ORDER_NOT_FOUND',
+        message: 'Không tìm thấy đơn hàng hoặc thông tin xác thực không khớp.',
       });
       return;
     }
 
-    const phoneMatches =
-      (phone && order.CustomerPhone.trim() === phone) ||
-      (phoneOrToken && order.CustomerPhone.trim() === phoneOrToken);
-    const tokenMatches =
-      (trackingToken && order.TrackingToken.toUpperCase() === trackingToken) ||
-      (phoneOrToken && order.TrackingToken.toUpperCase() === phoneOrToken.toUpperCase());
+    const isExpired = Boolean(
+      order.TrackingExpiresAt && order.TrackingExpiresAt.getTime() <= Date.now()
+    );
+    const hasValidToken =
+      !isExpired && timingSafeTokenMatch(trackingToken, order.TrackingTokenHash);
 
-    if (!phoneMatches && !tokenMatches) {
+    if (!hasValidToken) {
       res.status(403).json({
         success: false,
-        message: 'Số điện thoại hoặc mã tra cứu không khớp với đơn hàng này!',
+        code: isExpired ? 'TRACKING_TOKEN_EXPIRED' : 'INVALID_TRACKING_TOKEN',
+        message: isExpired
+          ? 'Mã tra cứu đơn hàng đã hết thời hạn hiệu lực. Vui lòng liên hệ Dược sĩ nhà thuốc.'
+          : 'Mã tra cứu bảo mật không khớp với đơn hàng này!',
       });
       return;
     }
 
     res.json({
       success: true,
-      data: order,
+      data: {
+        OrderID: order.OrderID,
+        OrderCode: order.OrderCode,
+        OrderType: order.OrderType,
+        Status: order.Status,
+        PaymentStatus: order.PaymentStatus,
+        PaymentMethod: order.PaymentMethod,
+        CustomerName: order.CustomerName,
+        CustomerPhoneMasked: maskPhone(order.CustomerPhone),
+        ShippingMethod: order.ShippingMethod,
+        SubTotal: order.SubTotal,
+        ShippingFee: order.ShippingFee,
+        VatAmount: order.VatAmount,
+        Discount: order.Discount,
+        TotalAmount: order.TotalAmount,
+        PaidAmount: order.PaidAmount,
+        PatientAllergies: order.PatientAllergies,
+        HasPrescriptionFile: Boolean(order.PrescriptionFileKey),
+        ReservedUntil: order.ReservedUntil,
+        ClinicalSafetyStatus: order.ClinicalSafetyStatus,
+        RejectCancelReason: order.RejectCancelReason,
+        CourierTrackingCode: order.CourierTrackingCode,
+        CreateDate: order.CreateDate,
+        UpdateDate: order.UpdateDate,
+        items: order.items.map((item) => ({
+          OrderItemID: item.OrderItemID,
+          ProductID: item.ProductID,
+          Quantity: item.Quantity,
+          Unit: item.Unit,
+          UnitPrice: item.UnitPrice,
+          DosageNote: item.DosageNote,
+          product: item.product,
+        })),
+        invoice: order.invoice,
+      },
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
-      message: 'Lỗi khi tra cứu tiến độ đơn hàng',
-      error: error instanceof Error ? error.message : 'Unknown error',
+      code: 'TRACKING_ERROR',
+      message: 'Lỗi khi tra cứu tiến độ đơn hàng.',
     });
   }
 };
@@ -407,12 +572,32 @@ export const customerCancelOnlineOrder = async (
 ): Promise<void> => {
   try {
     const orderId = Number(req.params.id);
-    const { phone, trackingToken, phoneOrToken, reason } = req.body as {
-      phone?: string;
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      res.status(400).json({ success: false, code: 'INVALID_ORDER_ID', message: 'Mã đơn không hợp lệ' });
+      return;
+    }
+
+    const { trackingToken, phoneOrToken, reason } = req.body as {
       trackingToken?: string;
       phoneOrToken?: string;
       reason?: string;
     };
+    const headerToken = String(req.headers['x-tracking-token'] || '').trim().toUpperCase();
+    const rawToken =
+      headerToken ||
+      String(trackingToken || '').trim().toUpperCase() ||
+      (String(phoneOrToken || '').trim().toUpperCase().startsWith('TRK-')
+        ? String(phoneOrToken || '').trim().toUpperCase()
+        : '');
+
+    if (!rawToken) {
+      res.status(403).json({
+        success: false,
+        code: 'MISSING_TRACKING_TOKEN',
+        message: 'Bắt buộc cung cấp Mã tra cứu bảo mật (TrackingToken) hợp lệ để hủy đơn!',
+      });
+      return;
+    }
 
     const updated = await prisma.$transaction(async (tx) => {
       const order = await tx.onlineOrder.findUnique({
@@ -421,18 +606,19 @@ export const customerCancelOnlineOrder = async (
       });
 
       if (!order) {
-        throw new Error('Không tìm thấy đơn hàng');
+        const err: any = new Error('Không tìm thấy đơn hàng');
+        err.statusCode = 404;
+        throw err;
       }
 
-      const phoneMatches =
-        (phone && order.CustomerPhone.trim() === phone.trim()) ||
-        (phoneOrToken && order.CustomerPhone.trim() === phoneOrToken.trim());
+      const isExpired = Boolean(
+        order.TrackingExpiresAt && order.TrackingExpiresAt.getTime() <= Date.now()
+      );
       const tokenMatches =
-        (trackingToken && order.TrackingToken.toUpperCase() === trackingToken.trim().toUpperCase()) ||
-        (phoneOrToken && order.TrackingToken.toUpperCase() === phoneOrToken.trim().toUpperCase());
+        !isExpired && timingSafeTokenMatch(rawToken, order.TrackingTokenHash);
 
-      if (!phoneMatches && !tokenMatches) {
-        const err: any = new Error('Bạn không có quyền hủy đơn hàng của người khác!');
+      if (!tokenMatches) {
+        const err: any = new Error('Mã tra cứu không khớp hoặc đã hết hạn, không thể hủy đơn!');
         err.statusCode = 403;
         throw err;
       }
@@ -456,9 +642,13 @@ export const customerCancelOnlineOrder = async (
           PaymentStatus: 'VOID',
           RejectCancelReason: reason?.trim() || 'Khách hàng chủ động hủy yêu cầu đặt thuốc',
         },
-        include: {
-          items: { include: { product: true } },
-          reservations: true,
+        select: {
+          OrderID: true,
+          OrderCode: true,
+          Status: true,
+          PaymentStatus: true,
+          RejectCancelReason: true,
+          UpdateDate: true,
         },
       });
     });
@@ -469,17 +659,20 @@ export const customerCancelOnlineOrder = async (
       data: updated,
     });
   } catch (error: any) {
-    res.status(error?.statusCode || 400).json({
+    const status = error?.statusCode && error.statusCode < 500 ? error.statusCode : 400;
+    res.status(status).json({
       success: false,
-      message: error instanceof Error ? error.message : 'Không thể hủy đơn hàng',
+      code: error?.code || 'CUSTOMER_CANCEL_ERROR',
+      message: status < 500 && error instanceof Error ? error.message : 'Không thể hủy đơn hàng',
     });
   }
 };
 
 /**
- * 0. PUBLIC STOREFRONT CATALOG API (GET /api/online-orders/catalog)
- * Trả về danh mục thuốc công khai cho Cổng Khách hàng Trực tuyến (Port 5174)
- * Chỉ trả về tồn kho khả dụng (Physical - Reserved) & quy cách, KHÔNG lộ dữ liệu giá vốn nội bộ
+ * 0. PUBLIC STOREFRONT CATALOG API (GET /api/online-orders/catalog) - A6 + U4 + P1
+ * - Chỉ trả danh mục ĐÃ XUẤT BẢN (IsPublished: true, IsTestOnly: false).
+ * - DTO Allowlist nghiêm ngặt: KHÔNG lộ tồn kho thực tế chính xác, giá sỉ B2B, stockLots, LooseUnits, ReservedBaseQty, Version.
+ * - Hỗ trợ phân trang & lọc phía Server (`page`, `limit`, `search`, `type`, `inStockOnly`).
  */
 export const getPublicStorefrontCatalog = async (
   req: Request,
@@ -489,85 +682,149 @@ export const getPublicStorefrontCatalog = async (
     await packagingService.releaseExpiredReservations().catch(() => 0);
 
     const search = String(req.query.search || '').trim().toLowerCase();
-    const type = String(req.query.type || '').trim();
+    const type = String(req.query.type || req.query.productType || '').trim();
+    const inStockOnly = req.query.inStockOnly === 'true' || req.query.inStockOnly === '1';
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(48, Math.max(1, Number(req.query.limit || 24)));
     const todayIso = new Date().toISOString().slice(0, 10);
 
-    const products = await prisma.product.findMany({
-      where: {
-        ...(type && type !== 'ALL' ? { ProductType: type } : {}),
-      },
+    const baseWhere = {
+      AND: [
+        {
+          packaging: {
+            is: {
+              IsPublished: true,
+              IsTestOnly: false,
+            },
+          },
+        },
+        ...(type && type !== 'ALL' ? [{ ProductType: type }] : []),
+      ],
+    };
+
+    const rawProducts = await prisma.product.findMany({
+      where: baseWhere,
       include: {
-        packaging: true,
+        packaging: {
+          select: {
+            PackageUnit: true,
+            BlisterUnit: true,
+            BlistersPerPackage: true,
+            SmallestUnit: true,
+            UnitsPerPackage: true,
+            UnitsPerBlister: true,
+            AllowFractionalSale: true,
+            ReservedBaseQty: true,
+          },
+        },
         stockLots: {
           where: { Status: 'ACTIVE', RemainingQuantity: { gt: 0 }, ExpiryDate: { gte: todayIso } },
-          orderBy: [{ ExpiryDate: 'asc' }, { LotID: 'asc' }],
           select: {
-            LotID: true,
-            ProductID: true,
-            BatchNumber: true,
-            ExpiryDate: true,
             RemainingQuantity: true,
-            Status: true,
           },
         },
       },
       orderBy: { ProductID: 'asc' },
     });
 
-    const filtered = search
-      ? products.filter(
-          (p) =>
-            p.ProductName.toLowerCase().includes(search) ||
-            p.Description.toLowerCase().includes(search) ||
-            p.ProductType.toLowerCase().includes(search)
-        )
-      : products;
-
-    const sanitized = filtered.map((p) => {
-      const reservedBase = p.packaging?.ReservedBaseQty || 0;
-      const availableQty = Math.max(0, p.Quantity - reservedBase);
-      const isRx =
-        p.ProductType.toLowerCase().includes('kháng sinh') ||
-        p.ProductType.toLowerCase().includes('tim mạch') ||
-        p.ProductType.toLowerCase().includes('thần kinh') ||
-        /augmentin|nexium|lipitor|glucophage|amoxicillin|cefuroxim|azithromycin/i.test(p.ProductName);
-
-      return {
-        ProductID: p.ProductID,
-        ProductName: p.ProductName,
-        PathImage: p.PathImage,
-        ProductType: p.ProductType,
-        Quantity: p.Quantity,
-        AvailableQuantity: availableQty,
-        Unit: p.Unit,
-        Price: p.Price,
-        Description: p.Description,
-        IsRx: isRx,
-        CreateDate: p.CreateDate,
-        UpdateDate: p.UpdateDate,
-        packaging: p.packaging,
-        stockLots: p.stockLots,
-      };
+    const categoriesRows = await prisma.product.findMany({
+      where: {
+        packaging: {
+          is: {
+            IsPublished: true,
+            IsTestOnly: false,
+          },
+        },
+      },
+      select: { ProductType: true },
+      distinct: ['ProductType'],
+      orderBy: { ProductType: 'asc' },
     });
+
+    const mapped = rawProducts
+      .filter((p) => {
+        if (!search) return true;
+        return (
+          p.ProductName.toLowerCase().includes(search) ||
+          p.Description.toLowerCase().includes(search) ||
+          p.ProductType.toLowerCase().includes(search)
+        );
+      })
+      .map((p) => {
+        const reservedBase = p.packaging?.ReservedBaseQty || 0;
+        const physicalAvailable = Math.max(0, p.Quantity - reservedBase);
+        const lotSum = p.stockLots.reduce((sum, l) => sum + l.RemainingQuantity, 0);
+        const sellableBoxes = Math.max(0, Math.min(physicalAvailable, lotSum));
+        const stockStatus: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK' =
+          sellableBoxes <= 0 ? 'OUT_OF_STOCK' : sellableBoxes <= 15 ? 'LOW_STOCK' : 'IN_STOCK';
+
+        const isRx =
+          p.ProductType.toLowerCase().includes('kháng sinh') ||
+          p.ProductType.toLowerCase().includes('tim mạch') ||
+          p.ProductType.toLowerCase().includes('thần kinh') ||
+          /augmentin|nexium|lipitor|glucophage|amoxicillin|cefuroxim|azithromycin/i.test(
+            p.ProductName
+          );
+
+        return {
+          inStock: sellableBoxes > 0,
+          dto: {
+            ProductID: p.ProductID,
+            ProductName: p.ProductName,
+            PathImage: p.PathImage,
+            ProductType: p.ProductType,
+            Unit: p.Unit,
+            Price: p.Price,
+            Description: p.Description,
+            IsRx: isRx,
+            StockStatus: stockStatus,
+            InStock: sellableBoxes > 0,
+            MaxOrderQty: sellableBoxes > 0 ? Math.min(sellableBoxes, 20) : 0,
+            packaging: p.packaging
+              ? {
+                  PackageUnit: p.packaging.PackageUnit,
+                  BlisterUnit: p.packaging.BlisterUnit,
+                  BlistersPerPackage: p.packaging.BlistersPerPackage,
+                  SmallestUnit: p.packaging.SmallestUnit,
+                  UnitsPerPackage: p.packaging.UnitsPerPackage,
+                  UnitsPerBlister: p.packaging.UnitsPerBlister,
+                  AllowFractionalSale: p.packaging.AllowFractionalSale,
+                }
+              : null,
+          },
+        };
+      })
+      .filter((entry) => (!inStockOnly ? true : entry.inStock));
+
+    const total = mapped.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage = Math.min(page, totalPages);
+    const pagedItems = mapped
+      .slice((safePage - 1) * limit, safePage * limit)
+      .map((entry) => entry.dto);
 
     res.json({
       success: true,
       data: {
-        items: sanitized,
-        total: sanitized.length,
+        items: pagedItems,
+        total,
+        page: safePage,
+        limit,
+        totalPages,
+        categories: categoriesRows.map((c) => c.ProductType),
       },
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
-      message: 'Không thể tải danh mục dược phẩm trực tuyến',
-      error: error instanceof Error ? error.message : 'Unknown error',
+      code: 'CATALOG_LOAD_ERROR',
+      message: 'Không thể tải danh mục dược phẩm trực tuyến.',
     });
   }
 };
 
 /**
- * 4. STAFF API: DANH SÁCH HÀNG CHỜ ĐƠN ONLINE CHO DƯỢC SĨ & ĐIỀU PHỐI (GET /api/online-orders)
+ * 4. STAFF API: DANH SÁCH HÀNG CHỜ ĐƠN ONLINE CHO DƯỢC SĨ & ĐIỀU PHỐI (GET /api/online-orders) - P1
  */
 export const listOnlineOrdersForStaff = async (
   req: Request,
@@ -577,23 +834,37 @@ export const listOnlineOrdersForStaff = async (
     await packagingService.releaseExpiredReservations();
 
     const statusFilter = String(req.query.status || '').trim();
-    const orders = await prisma.onlineOrder.findMany({
-      where: {
-        ...(statusFilter && statusFilter !== 'ALL' ? { Status: statusFilter } : {}),
-      },
-      include: {
-        items: { include: { product: true } },
-        reservations: true,
-        customer: true,
-        invoice: {
-          include: {
-            payment: true,
-            paymentTransactions: { orderBy: { CreateDate: 'desc' } },
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 40)));
+    const skip = (page - 1) * limit;
+    const whereClause =
+      statusFilter && statusFilter !== 'ALL' ? { Status: statusFilter } : {};
+
+    const [total, orders] = await Promise.all([
+      prisma.onlineOrder.count({ where: whereClause }),
+      prisma.onlineOrder.findMany({
+        where: whereClause,
+        include: {
+          items: {
+            include: {
+              product: true,
+              lotAllocations: true,
+            },
+          },
+          reservations: true,
+          customer: true,
+          invoice: {
+            include: {
+              payment: true,
+              paymentTransactions: { orderBy: { CreateDate: 'desc' } },
+            },
           },
         },
-      },
-      orderBy: { CreateDate: 'desc' },
-    });
+        orderBy: { CreateDate: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
 
     const formatted = orders.map((o) => {
       let clinicalWarnings: unknown[] = [];
@@ -604,8 +875,9 @@ export const listOnlineOrdersForStaff = async (
           clinicalWarnings = [];
         }
       }
+      const { TrackingTokenHash: _h, TrackingToken: _t, ...safeOrder } = o;
       return {
-        ...o,
+        ...safeOrder,
         clinicalWarnings,
       };
     });
@@ -613,6 +885,12 @@ export const listOnlineOrdersForStaff = async (
     res.json({
       success: true,
       data: formatted,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
     });
   } catch (error) {
     res.status(500).json({
@@ -636,11 +914,19 @@ export const pharmacistReviewOnlineOrder = async (
 ): Promise<void> => {
   try {
     const orderId = Number(req.params.id);
-    const { action, reason, rejectReason, clinicalReviewNote, idempotencyKey } = req.body as {
+    const {
+      action,
+      reason,
+      rejectReason,
+      clinicalReviewNote,
+      clinicalOverrideCode,
+      idempotencyKey,
+    } = req.body as {
       action: 'APPROVE' | 'REJECT';
       reason?: string;
       rejectReason?: string;
       clinicalReviewNote?: string;
+      clinicalOverrideCode?: string;
       idempotencyKey?: string;
     };
     const effectiveReason = (reason || rejectReason || '').trim();
@@ -650,282 +936,395 @@ export const pharmacistReviewOnlineOrder = async (
       return;
     }
 
-    const rawIdemKey =
-      (req.headers['idempotency-key'] as string | undefined) || idempotencyKey;
-    const actorKey = req.user ? `user:${req.user.UserID}` : 'pharmacist';
-
-    const idemCheck = await checkIdempotency(
-      rawIdemKey,
-      `REVIEW_ORDER:${orderId}`,
-      actorKey,
-      { orderId, action, reason: effectiveReason, clinicalReviewNote }
-    );
-    if (idemCheck.hit && idemCheck.body) {
-      res.status(idemCheck.statusCode || 200).json(idemCheck.body);
+    if (!canRoleOverrideClinicalSafety(req.user?.Role)) {
+      res.status(403).json({
+        success: false,
+        code: 'CLINICAL_REVIEW_ROLE_REQUIRED',
+        message: 'Chỉ Dược sĩ (PHARMACIST) hoặc Quản trị viên (ADMIN) mới có quyền thẩm định đơn Online.',
+      });
       return;
     }
 
-    const actorUserId = req.user?.UserID || null;
+    const rawIdemKey =
+      (req.headers['idempotency-key'] as string | undefined) || idempotencyKey;
+    const actorUserId = req.user?.UserID;
+    if (!actorUserId) {
+      res.status(401).json({ success: false, message: 'Yêu cầu tài khoản Dược sĩ hợp lệ' });
+      return;
+    }
     const actorName = req.user?.FullName || 'Dược sĩ Phụ trách';
+    const actorRole = req.user?.Role || 'PHARMACIST';
+    const actorKey = `user:${actorUserId}`;
 
-    const reviewedOrder = await prisma.$transaction(async (tx) => {
-      await packagingService.releaseExpiredReservations(tx);
-
-      const order = await tx.onlineOrder.findUnique({
-        where: { OrderID: orderId },
-        include: {
-          items: { include: { product: true } },
-          reservations: true,
-          customer: true,
+    const idemResult = await runWithIdempotencyTx(
+      {
+        rawKey: rawIdemKey,
+        scope: `REVIEW_ORDER:${orderId}`,
+        actorKey,
+        payload: {
+          orderId,
+          action,
+          reason: effectiveReason,
+          clinicalReviewNote,
+          clinicalOverrideCode,
         },
-      });
+      },
+      async (tx) => {
+        await packagingService.releaseExpiredReservations(tx);
 
-      if (!order) {
-        throw new Error('Không tìm thấy đơn đặt hàng Online');
-      }
-
-      if (order.Status !== 'PENDING_REVIEW') {
-        throw new Error(
-          `Đơn hàng ${order.OrderCode} không ở trạng thái chờ duyệt (Trạng thái hiện tại: ${order.Status})!`
-        );
-      }
-
-      // Nhánh 1: TỪ CHỐI ĐƠN HÀNG (REJECT) -> Giải phóng giữ kho 1 lần, không tạo hóa đơn
-      if (action === 'REJECT') {
-        if (!effectiveReason || effectiveReason.length < 5) {
-          throw new Error('Vui lòng nhập lý do từ chối đơn hàng (tối thiểu 5 ký tự) để thông báo cho khách!');
-        }
-
-        for (const resv of order.reservations) {
-          await packagingService.releaseReservationOnce(resv.ReservationID, 'RELEASED', tx, {
-            userId: actorUserId,
-            userName: actorName,
-          });
-        }
-
-        return tx.onlineOrder.update({
-          where: { OrderID: order.OrderID },
-          data: {
-            Status: 'REJECTED',
-            PaymentStatus: 'VOID',
-            ClinicalSafetyStatus: 'REJECTED',
-            RejectCancelReason: effectiveReason,
-            ReviewedByUserID: actorUserId,
-            ReviewedByName: actorName,
-            ReviewedAt: new Date(),
-          },
+        const order = await tx.onlineOrder.findUnique({
+          where: { OrderID: orderId },
           include: {
             items: { include: { product: true } },
             reservations: true,
-            invoice: true,
+            customer: true,
           },
         });
-      }
 
-      // Nhánh 2: DƯỢC SĨ CHẤP THUẬN ĐƠN HÀNG (APPROVE)
-      const clinicalAssessment = await evaluateClinicalSafetyServerSide(
-        {
-          productIds: order.items.map((i) => i.ProductID),
-          customerId: order.CustomerID,
-        },
-        tx
-      );
-
-      if (
-        clinicalAssessment.hasWarning &&
-        (!clinicalReviewNote || clinicalReviewNote.trim().length < 5)
-      ) {
-        const err: any = new Error(
-          'Đơn hàng có cảnh báo Dị ứng / Tương tác thuốc / Thuốc kê đơn (Rx)! Dược sĩ bắt buộc phải nhập Ghi chú thẩm định lâm sàng (clinicalReviewNote) trước khi duyệt xuất kho.'
-        );
-        err.statusCode = 422;
-        err.code = 'CLINICAL_REVIEW_REQUIRED';
-        throw err;
-      }
-
-      // Kiểm tra hạn mức công nợ B2B nếu đơn chọn phương thức CREDIT
-      if (order.PaymentMethod === 'CREDIT') {
-        if (!order.CustomerID || !order.customer) {
-          throw new Error('Đơn công nợ B2B phải gắn với hồ sơ Đại lý hợp lệ!');
+        if (!order) {
+          throw new Error('Không tìm thấy đơn đặt hàng Online');
         }
-        const nextDebt = (order.customer.DebtBalance || 0) + order.TotalAmount;
-        const limit = order.customer.CreditLimit || 50000000;
-        if (nextDebt > limit) {
+
+        if (order.Status !== 'PENDING_REVIEW') {
           throw new Error(
-            `Vượt hạn mức công nợ đại lý B2B (${nextDebt.toLocaleString('vi-VN')} > ${limit.toLocaleString('vi-VN')} đ)!`
+            `Đơn hàng ${order.OrderCode} không ở trạng thái chờ duyệt (Trạng thái hiện tại: ${order.Status})!`
           );
         }
-        await tx.customer.update({
-          where: { CustomerID: order.CustomerID },
-          data: {
-            DebtBalance: nextDebt,
-          },
-        });
-      }
 
-      // Chuyển từng InventoryReservation sang xuất kho thực tế & phân bổ Lô FEFO
-      const invoiceItemsData: Array<{
-        ProductID: number;
-        Quantity: number;
-        Unit: string;
-        UnitPrice: number;
-        BaseQuantityDeducted: number;
-        LooseUnitsDeducted: number;
-        BatchNumber: string;
-        ExpiryDate: string;
-        LotID: number | null;
-        DosageNote: string;
-      }> = [];
+        // Nhánh 1: TỪ CHỐI ĐƠN HÀNG (REJECT) -> Giải phóng giữ kho 1 lần, ghi nhật ký lâm sàng
+        if (action === 'REJECT') {
+          if (!effectiveReason || effectiveReason.length < 5) {
+            throw new Error(
+              'Vui lòng nhập lý do từ chối đơn hàng (tối thiểu 5 ký tự) để thông báo cho khách!'
+            );
+          }
 
-      for (const item of order.items) {
-        const resv = order.reservations.find((r) => r.OrderItemID === item.OrderItemID);
-        if (!resv) {
-          throw new Error(`Không tìm thấy bản ghi giữ kho cho sản phẩm #${item.ProductID}`);
+          for (const resv of order.reservations) {
+            await packagingService.releaseReservationOnce(resv.ReservationID, 'RELEASED', tx, {
+              userId: actorUserId,
+              userName: actorName,
+            });
+          }
+
+          let parsedWarnings: unknown[] = [];
+          if (order.ClinicalWarningsJson) {
+            try {
+              parsedWarnings = JSON.parse(order.ClinicalWarningsJson);
+            } catch {
+              parsedWarnings = [];
+            }
+          }
+
+          await recordClinicalAuditLogTx(tx, {
+            actorUserId,
+            actorName,
+            actorRole,
+            contextType: 'ONLINE_ORDER_REVIEW',
+            onlineOrderId: order.OrderID,
+            customerId: order.CustomerID,
+            patientAllergies: order.PatientAllergies,
+            action: 'REJECT_RX',
+            reasonCode: 'REJECTED_BY_PHARMACIST',
+            reasonNote: effectiveReason,
+            warnings: parsedWarnings,
+          });
+
+          const rejected = await tx.onlineOrder.update({
+            where: { OrderID: order.OrderID },
+            data: {
+              Status: 'REJECTED',
+              PaymentStatus: 'VOID',
+              ClinicalSafetyStatus: 'REJECTED',
+              RejectCancelReason: effectiveReason,
+              ReviewedByUserID: actorUserId,
+              ReviewedByName: actorName,
+              ReviewedAt: new Date(),
+            },
+            include: {
+              items: { include: { product: true } },
+              reservations: true,
+              invoice: true,
+            },
+          });
+
+          const { TrackingTokenHash: _h, TrackingToken: _t, ...safeRejected } = rejected;
+          return {
+            statusCode: 200,
+            body: {
+              success: true,
+              message: `Đã từ chối đơn ${safeRejected.OrderCode} và giải phóng hoàn toàn lượng thuốc giữ tạm!`,
+              data: safeRejected,
+            },
+          };
         }
 
-        const consumed = await packagingService.consumeReservationAtomically(
-          resv.ReservationID,
+        // Nhánh 2: DƯỢC SĨ CHẤP THUẬN ĐƠN HÀNG (APPROVE)
+        // S2 FIX: Luôn truyền cả CustomerID VÀ PatientAllergies khai báo trên OnlineOrder
+        const clinicalAssessment = await evaluateClinicalSafetyServerSide({
           tx,
-          { userId: actorUserId, userName: actorName }
-        );
+          customerId: order.CustomerID,
+          patientAllergiesOverride: order.PatientAllergies,
+          productIds: order.items.map((i) => i.ProductID),
+        });
 
-        await tx.onlineOrderItem.update({
-          where: { OrderItemID: item.OrderItemID },
-          data: {
+        const isCriticalOrHigh =
+          clinicalAssessment.hasCriticalAllergy || clinicalAssessment.hasHighRiskWarning;
+
+        if (isCriticalOrHigh) {
+          if (
+            !isValidOverrideReasonCode(clinicalOverrideCode) ||
+            !clinicalReviewNote ||
+            clinicalReviewNote.trim().length < 10
+          ) {
+            const err: any = new Error(
+              clinicalAssessment.warnings[0]?.detail ||
+                'Đơn hàng có cảnh báo Dị ứng / Tương tác thuốc mức CAO! Dược sĩ phải chọn mã lý do vượt cảnh báo (clinicalOverrideCode) và nhập ghi chú thẩm định >= 10 ký tự.'
+            );
+            err.statusCode = 422;
+            err.code = 'CLINICAL_REVIEW_REQUIRED';
+            throw err;
+          }
+        } else if (
+          clinicalAssessment.requiresPharmacistReview &&
+          (!clinicalReviewNote || clinicalReviewNote.trim().length < 5)
+        ) {
+          const err: any = new Error(
+            'Đơn hàng có lưu ý tương tác thuốc! Dược sĩ cần nhập ghi chú tư vấn (clinicalReviewNote >= 5 ký tự) trước khi duyệt.'
+          );
+          err.statusCode = 422;
+          err.code = 'CLINICAL_REVIEW_REQUIRED';
+          throw err;
+        }
+
+        if (order.PaymentMethod === 'CREDIT') {
+          if (!order.CustomerID || !order.customer) {
+            throw new Error('Đơn công nợ B2B phải gắn với hồ sơ Đại lý hợp lệ!');
+          }
+          const nextDebt = (order.customer.DebtBalance || 0) + order.TotalAmount;
+          const limit = order.customer.CreditLimit || 50000000;
+          if (nextDebt > limit) {
+            throw new Error(
+              `Vượt hạn mức công nợ đại lý B2B (${nextDebt.toLocaleString('vi-VN')} > ${limit.toLocaleString('vi-VN')} đ)!`
+            );
+          }
+          await tx.customer.update({
+            where: { CustomerID: order.CustomerID },
+            data: {
+              DebtBalance: nextDebt,
+            },
+          });
+        }
+
+        const invoiceItemsData: Array<{
+          ProductID: number;
+          Quantity: number;
+          Unit: string;
+          UnitPrice: number;
+          BaseQuantityDeducted: number;
+          LooseUnitsDeducted: number;
+          BatchNumber: string | null;
+          ExpiryDate: string | null;
+          LotID: number | null;
+          DosageNote: string;
+          allocations: Array<{
+            lotId: number;
+            batchNumber: string;
+            expiryDate: string;
+            quantity: number;
+          }>;
+        }> = [];
+
+        for (const item of order.items) {
+          const resv = order.reservations.find((r) => r.OrderItemID === item.OrderItemID);
+          if (!resv) {
+            throw new Error(`Không tìm thấy bản ghi giữ kho cho sản phẩm #${item.ProductID}`);
+          }
+
+          const consumed = await packagingService.consumeReservationAtomically(
+            resv.ReservationID,
+            tx,
+            { userId: actorUserId, userName: actorName }
+          );
+
+          await tx.onlineOrderItem.update({
+            where: { OrderItemID: item.OrderItemID },
+            data: {
+              BatchNumber: consumed.batchNumber,
+              ExpiryDate: consumed.expiryDate,
+              ...(consumed.allocations && consumed.allocations.length > 0
+                ? {
+                    lotAllocations: {
+                      create: consumed.allocations.map((alloc) => ({
+                        LotID: alloc.lotId,
+                        BatchNumber: alloc.batchNumber,
+                        ExpiryDate: alloc.expiryDate,
+                        Quantity: alloc.quantity,
+                      })),
+                    },
+                  }
+                : {}),
+            },
+          });
+
+          invoiceItemsData.push({
+            ProductID: item.ProductID,
+            Quantity: item.Quantity,
+            Unit: item.Unit,
+            UnitPrice: item.UnitPrice,
+            BaseQuantityDeducted: consumed.baseQuantityDeducted,
+            LooseUnitsDeducted: consumed.looseUnitsDeducted,
             BatchNumber: consumed.batchNumber,
             ExpiryDate: consumed.expiryDate,
-          },
-        });
+            LotID: consumed.lotId,
+            DosageNote: item.DosageNote || 'Theo hướng dẫn của Dược sĩ',
+            allocations: consumed.allocations || [],
+          });
+        }
 
-        invoiceItemsData.push({
-          ProductID: item.ProductID,
-          Quantity: item.Quantity,
-          Unit: item.Unit,
-          UnitPrice: item.UnitPrice,
-          BaseQuantityDeducted: consumed.baseQuantityDeducted,
-          LooseUnitsDeducted: consumed.looseUnitsDeducted,
-          BatchNumber: consumed.batchNumber,
-          ExpiryDate: consumed.expiryDate,
-          LotID: consumed.lotId,
-          DosageNote: item.DosageNote || 'Theo hướng dẫn của Dược sĩ',
-        });
-      }
+        const suffix = crypto.randomBytes(2).toString('hex').toUpperCase();
+        const invoiceCode = `ONL-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}${suffix}`;
+        const txCode = `${order.PaymentMethod}-${String(Date.now()).slice(-6)}${suffix}`;
 
-      // Phát hành Hóa đơn chính thức (Invoice) sau khi Dược sĩ duyệt
-      const invoiceCode = `ONL-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
-      const txCode = `${order.PaymentMethod}-${String(Date.now()).slice(-6)}`;
-
-      const createdInvoice = await tx.invoice.create({
-        data: {
-          InvoiceCode: invoiceCode,
-          OrderType: order.OrderType,
-          Channel: 'ONLINE',
-          FulfillmentStatus: 'CONFIRMED',
-          PaymentStatus: 'UNPAID',
-          CustomerName: order.CustomerName,
-          CustomerPhone: order.CustomerPhone,
-          ...(order.CustomerID ? { CustomerID: order.CustomerID } : {}),
-          ...(actorUserId ? { UserID: actorUserId } : {}),
-          CreatedByName: order.CustomerName,
-          ApprovedByUserID: actorUserId,
-          ApprovedByName: actorName,
-          ApprovedAt: new Date(),
-          ClinicalOverrideNote: clinicalReviewNote || 'Đạt kiểm duyệt Dược lâm sàng GPP',
-          ShippingAddress: order.ShippingAddress,
-          ShippingMethod: order.ShippingMethod,
-          ShippingFee: order.ShippingFee,
-          VatAmount: order.VatAmount,
-          PaidAmount: 0,
-          DebtAmount: order.TotalAmount,
-          Discount: order.Discount,
-          TotalAmount: order.TotalAmount,
-          Note: order.Note,
-          Status: 'COMPLETED',
-          items: {
-            create: invoiceItemsData,
-          },
-          payment: {
-            create: {
-              PaymentMethod: order.PaymentMethod,
-              TransactionCode: txCode,
-              PaidAmount: 0,
-              Status: 'UNPAID',
-            },
-          },
-        },
-        include: {
-          items: true,
-        },
-      });
-
-      // Ghi StockMovement(EXPORT) cho từng dòng hóa đơn vừa phát hành
-      for (const invItem of createdInvoice.items) {
-        await tx.stockMovement.create({
+        const createdInvoice = await tx.invoice.create({
           data: {
-            ProductID: invItem.ProductID,
-            SourceType: 'INVOICE',
-            SourceID: createdInvoice.InvoiceID,
-            LineItemID: invItem.ItemID,
-            MovementType: 'EXPORT',
-            Unit: invItem.Unit || 'Hộp',
-            Quantity: invItem.Quantity,
-            BaseQtyDelta: -(invItem.BaseQuantityDeducted ?? 0),
-            LooseQtyDelta: -(invItem.LooseUnitsDeducted ?? 0),
-            BatchNumber: invItem.BatchNumber,
-            ExpiryDate: invItem.ExpiryDate,
-            ActorUserID: actorUserId,
-            ActorName: actorName,
-            Note: `Chuyển giữ kho đơn ${order.OrderCode} thành xuất bán hóa đơn ${createdInvoice.InvoiceCode}`,
-          },
-        });
-      }
-
-      return tx.onlineOrder.update({
-        where: { OrderID: order.OrderID },
-        data: {
-          Status: 'CONFIRMED',
-          ClinicalSafetyStatus: clinicalAssessment.hasWarning
-            ? 'APPROVED_WITH_OVERRIDE'
-            : 'SAFE',
-          ClinicalReviewNote:
-            clinicalReviewNote?.trim() || 'Đã kiểm tra an toàn thuốc & duyệt cấp phát',
-          ReviewedByUserID: actorUserId,
-          ReviewedByName: actorName,
-          ReviewedAt: new Date(),
-          InvoiceID: createdInvoice.InvoiceID,
-        },
-        include: {
-          items: { include: { product: true } },
-          reservations: true,
-          invoice: {
-            include: {
-              payment: true,
-              paymentTransactions: true,
+            InvoiceCode: invoiceCode,
+            OrderType: order.OrderType,
+            Channel: 'ONLINE',
+            FulfillmentStatus: 'CONFIRMED',
+            PaymentStatus: 'UNPAID',
+            CustomerName: order.CustomerName,
+            CustomerPhone: order.CustomerPhone,
+            ...(order.CustomerID ? { CustomerID: order.CustomerID } : {}),
+            UserID: actorUserId,
+            CreatedByName: order.CustomerName,
+            ApprovedByUserID: actorUserId,
+            ApprovedByName: actorName,
+            ApprovedAt: new Date(),
+            ClinicalOverrideCode: isCriticalOrHigh ? clinicalOverrideCode : null,
+            ClinicalOverrideNote: clinicalReviewNote?.trim() || 'Đạt kiểm duyệt Dược lâm sàng GPP',
+            ShippingAddress: order.ShippingAddress,
+            ShippingMethod: order.ShippingMethod,
+            ShippingFee: order.ShippingFee,
+            VatAmount: order.VatAmount,
+            PaidAmount: 0,
+            DebtAmount: order.TotalAmount,
+            Discount: order.Discount,
+            TotalAmount: order.TotalAmount,
+            Note: order.Note,
+            Status: 'COMPLETED',
+            items: {
+              create: invoiceItemsData.map(({ allocations, ...lineData }) => ({
+                ...lineData,
+                ...(allocations.length > 0
+                  ? {
+                      lotAllocations: {
+                        create: allocations.map((alloc) => ({
+                          LotID: alloc.lotId,
+                          BatchNumber: alloc.batchNumber,
+                          ExpiryDate: alloc.expiryDate,
+                          Quantity: alloc.quantity,
+                        })),
+                      },
+                    }
+                  : {}),
+              })),
+            },
+            payment: {
+              create: {
+                PaymentMethod: order.PaymentMethod,
+                TransactionCode: txCode,
+                PaidAmount: 0,
+                Status: 'UNPAID',
+              },
             },
           },
-        },
-      });
-    });
+          include: {
+            items: { include: { lotAllocations: true } },
+          },
+        });
 
-    const responseBody = {
-      success: true,
-      message:
-        action === 'APPROVE'
-          ? `Đã duyệt đơn ${reviewedOrder.OrderCode}, chuyển giữ kho thành xuất bán FEFO và phát hành hóa đơn ${reviewedOrder.invoice?.InvoiceCode}!`
-          : `Đã từ chối đơn ${reviewedOrder.OrderCode} và giải phóng hoàn toàn lượng thuốc giữ tạm!`,
-      data: reviewedOrder,
-    };
+        // S1/S2 AUDIT: Ghi nhật ký thẩm định dược lâm sàng GPP
+        await recordClinicalAuditLogTx(tx, {
+          actorUserId,
+          actorName,
+          actorRole,
+          contextType: 'ONLINE_ORDER_REVIEW',
+          invoiceId: createdInvoice.InvoiceID,
+          onlineOrderId: order.OrderID,
+          customerId: order.CustomerID,
+          patientAllergies: clinicalAssessment.patientAllergies || order.PatientAllergies,
+          action: clinicalAssessment.hasCriticalAllergy
+            ? 'OVERRIDE_ALLERGY'
+            : clinicalAssessment.requiresPharmacistReview
+            ? 'OVERRIDE_INTERACTION'
+            : 'APPROVE_RX',
+          reasonCode:
+            clinicalOverrideCode ||
+            (clinicalAssessment.requiresPharmacistReview ? 'PHARMACIST_VERIFIED' : 'CLEAN_RX_APPROVAL'),
+          reasonNote: clinicalReviewNote?.trim() || 'Đã kiểm duyệt Dược lâm sàng GPP',
+          warnings: clinicalAssessment.warnings,
+        });
 
-    await saveIdempotency(
-      idemCheck.compositeKey,
-      `REVIEW_ORDER:${orderId}`,
-      actorKey,
-      idemCheck.payloadHash,
-      200,
-      responseBody
+        for (const invItem of createdInvoice.items) {
+          await tx.stockMovement.create({
+            data: {
+              ProductID: invItem.ProductID,
+              SourceType: 'INVOICE',
+              SourceID: createdInvoice.InvoiceID,
+              LineItemID: invItem.ItemID,
+              MovementType: 'EXPORT',
+              Unit: invItem.Unit || 'Hộp',
+              Quantity: invItem.Quantity,
+              BaseQtyDelta: -(invItem.BaseQuantityDeducted ?? 0),
+              LooseQtyDelta: -(invItem.LooseUnitsDeducted ?? 0),
+              BatchNumber: invItem.BatchNumber,
+              ExpiryDate: invItem.ExpiryDate,
+              ActorUserID: actorUserId,
+              ActorName: actorName,
+              Note: `Chuyển giữ kho đơn ${order.OrderCode} thành xuất bán hóa đơn ${createdInvoice.InvoiceCode}`,
+            },
+          });
+        }
+
+        const approved = await tx.onlineOrder.update({
+          where: { OrderID: order.OrderID },
+          data: {
+            Status: 'CONFIRMED',
+            ClinicalSafetyStatus: clinicalAssessment.requiresPharmacistReview
+              ? 'APPROVED_WITH_OVERRIDE'
+              : 'SAFE',
+            ClinicalReviewNote:
+              clinicalReviewNote?.trim() || 'Đã kiểm tra an toàn thuốc & duyệt cấp phát',
+            ReviewedByUserID: actorUserId,
+            ReviewedByName: actorName,
+            ReviewedAt: new Date(),
+            InvoiceID: createdInvoice.InvoiceID,
+          },
+          include: {
+            items: { include: { product: true, lotAllocations: true } },
+            reservations: true,
+            invoice: {
+              include: {
+                payment: true,
+                paymentTransactions: true,
+              },
+            },
+          },
+        });
+
+        const { TrackingTokenHash: _h, TrackingToken: _t, ...safeApproved } = approved;
+        return {
+          statusCode: 200,
+          body: {
+            success: true,
+            message: `Đã duyệt đơn ${safeApproved.OrderCode}, chuyển giữ kho thành xuất bán FEFO và phát hành hóa đơn ${safeApproved.invoice?.InvoiceCode}!`,
+            data: safeApproved,
+          },
+        };
+      }
     );
 
-    res.json(responseBody);
+    res.status(idemResult.statusCode).json(idemResult.body);
   } catch (error: any) {
     if (error instanceof IdempotencyConflictError) {
       res.status(409).json({ success: false, message: error.message });
@@ -975,7 +1374,12 @@ export const updateOnlineOrderStage = async (req: Request, res: Response): Promi
         where: { OrderID: orderId },
         include: {
           items: { include: { product: true } },
-          invoice: { include: { items: { include: { product: true } }, customer: true } },
+          invoice: {
+            include: {
+              items: { include: { product: true, lotAllocations: true } },
+              customer: true,
+            },
+          },
         },
       });
 
@@ -995,7 +1399,7 @@ export const updateOnlineOrderStage = async (req: Request, res: Response): Promi
           throw new Error('Vui lòng nhập lý do hủy đơn hàng sau xác nhận!');
         }
 
-        // Hoàn lại kho cho Hóa đơn liên kết nếu hủy sau khi đã CONFIRMED
+        // Hoàn lại kho cho Hóa đơn liên kết nếu hủy sau khi đã CONFIRMED (D1 exact multi-lot restore)
         if (order.invoice && order.invoice.Status !== 'REFUNDED') {
           for (const invItem of order.invoice.items) {
             if (!invItem.product) continue;
@@ -1004,7 +1408,15 @@ export const updateOnlineOrderStage = async (req: Request, res: Response): Promi
               invItem.BaseQuantityDeducted ?? 0,
               invItem.LooseUnitsDeducted ?? 0,
               tx,
-              { lotId: invItem.LotID, batchNumber: invItem.BatchNumber }
+              {
+                lotId: invItem.LotID,
+                batchNumber: invItem.BatchNumber,
+                lotAllocations: invItem.lotAllocations.map((alloc) => ({
+                  lotId: alloc.LotID,
+                  batchNumber: alloc.BatchNumber,
+                  quantity: alloc.Quantity,
+                })),
+              }
             );
             await tx.stockMovement.create({
               data: {

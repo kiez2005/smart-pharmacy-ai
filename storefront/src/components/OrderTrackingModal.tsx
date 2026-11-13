@@ -16,36 +16,36 @@ import { formatVND } from '../utils/packaging';
 
 interface OrderTrackingModalProps {
   initialOrderCode?: string;
-  initialPhoneOrToken?: string;
+  initialTrackingToken?: string;
   onClose: () => void;
   onOrderCancelled?: () => void;
 }
 
 export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
   initialOrderCode = '',
-  initialPhoneOrToken = '',
+  initialTrackingToken = '',
   onClose,
   onOrderCancelled,
 }) => {
   const [orderCode, setOrderCode] = useState(initialOrderCode);
-  const [phoneOrToken, setPhoneOrToken] = useState(initialPhoneOrToken);
+  const [trackingToken, setTrackingToken] = useState(initialTrackingToken);
   const [loading, setLoading] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [order, setOrder] = useState<OnlineOrderRecord | null>(null);
 
-  const fetchOrder = async (code: string, credential: string) => {
-    if (!code.trim() || !credential.trim()) {
-      toast.error('Vui lòng nhập Mã đơn hàng và SĐT hoặc Mã tra cứu');
+  const fetchOrder = async (code: string, token: string) => {
+    if (!code.trim() || !token.trim()) {
+      toast.error('Vui lòng nhập đầy đủ Mã đơn hàng (WEB-...) và Mã tra cứu bảo mật (TRK-...)');
       return;
     }
     setLoading(true);
     try {
-      const res = await storeApi.trackOrder(code.trim(), credential.trim());
+      const res = await storeApi.trackOrder(code.trim().toUpperCase(), token.trim().toUpperCase());
       setOrder(res);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Không tìm thấy đơn hàng hoặc SĐT/Mã tra cứu không khớp';
+        'Không tìm thấy đơn hàng hoặc Tracking Token không hợp lệ / đã hết hạn';
       toast.error(msg);
       setOrder(null);
     } finally {
@@ -54,14 +54,14 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
   };
 
   useEffect(() => {
-    if (initialOrderCode && initialPhoneOrToken) {
-      void fetchOrder(initialOrderCode, initialPhoneOrToken);
+    if (initialOrderCode && initialTrackingToken) {
+      void fetchOrder(initialOrderCode, initialTrackingToken);
     }
-  }, [initialOrderCode, initialPhoneOrToken]);
+  }, [initialOrderCode, initialTrackingToken]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    void fetchOrder(orderCode, phoneOrToken);
+    void fetchOrder(orderCode, trackingToken);
   };
 
   const handleCancelOrder = async () => {
@@ -70,7 +70,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
     try {
       const updated = await storeApi.cancelOrder(
         order.OrderID,
-        phoneOrToken.trim(),
+        trackingToken.trim().toUpperCase(),
         'Khách hàng tự hủy trên Cổng Storefront'
       );
       setOrder(updated);
@@ -104,10 +104,10 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-extrabold text-slate-900">
-                Tra Cứu Hành Trình Đơn Hàng Trực Tuyến
+                Tra Cứu Hành Trình Đơn Hàng Bảo Mật
               </h3>
               <p className="text-[11px] text-teal-700 font-medium">
-                Bảo mật riêng tư: Chỉ hiển thị khi khớp Mã đơn hàng & SĐT / Tracking Token
+                Bắt buộc nhập Mã đơn (WEB-...) và Mã tra cứu bảo mật (TRK-...) được cấp khi đặt hàng
               </p>
             </div>
           </div>
@@ -126,15 +126,15 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
               type="text"
               value={orderCode}
               onChange={(e) => setOrderCode(e.target.value)}
-              placeholder="Mã đơn (VD: ORD-2026-...)"
+              placeholder="Mã đơn (VD: WEB-2026-...)"
               className="sm:col-span-2 h-9 rounded-xl border border-slate-300 px-3 font-mono font-bold text-slate-900 focus:border-teal-600 focus:outline-none"
             />
             <input
               type="text"
-              value={phoneOrToken}
-              onChange={(e) => setPhoneOrToken(e.target.value)}
-              placeholder="SĐT hoặc Token (TRK-...)"
-              className="sm:col-span-2 h-9 rounded-xl border border-slate-300 px-3 text-slate-900 focus:border-teal-600 focus:outline-none"
+              value={trackingToken}
+              onChange={(e) => setTrackingToken(e.target.value)}
+              placeholder="Mã bảo mật (TRK-...)"
+              className="sm:col-span-2 h-9 rounded-xl border border-slate-300 px-3 font-mono text-slate-900 focus:border-teal-600 focus:outline-none"
             />
             <button
               type="submit"
@@ -164,7 +164,6 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                 </div>
               </div>
 
-              {/* Pipeline hoặc trạng thái Hủy/Từ chối */}
               {['REJECTED', 'CANCELLED', 'EXPIRED'].includes(order.Status) ? (
                 <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 flex items-start gap-2.5 text-rose-800">
                   <XCircle className="h-5 w-5 text-rose-600 shrink-0" />
@@ -182,7 +181,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {[
                     { step: 1, label: 'Chờ Dược sĩ duyệt', icon: Clock },
                     { step: 2, label: 'Đã duyệt & Đóng gói', icon: PackageCheck },
@@ -230,6 +229,11 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                 <div>
                   <strong>Địa chỉ:</strong> {order.ShippingAddress}
                 </div>
+                {order.PatientAllergies && (
+                  <div className="text-rose-700 font-semibold">
+                    <strong>Dị ứng đã khai báo:</strong> {order.PatientAllergies}
+                  </div>
+                )}
                 {order.CourierTrackingCode && (
                   <div className="text-indigo-700 font-semibold font-mono">
                     <strong>Mã vận đơn Shipper:</strong> {order.CourierTrackingCode}

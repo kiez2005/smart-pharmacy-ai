@@ -26,73 +26,87 @@ interface CartDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   cart: CartItem[];
-  buyerMode: 'RETAIL' | 'WHOLESALE';
   onUpdateQty: (productId: number, unitMode: UnitMode, delta: number) => void;
   onRemoveItem: (productId: number, unitMode: UnitMode) => void;
   onClearCart: () => void;
   onOrderSuccess: (order: OnlineOrderRecord) => void;
-  onTrackOrder: (orderCode: string, phoneOrToken: string) => void;
+  onTrackOrder: (orderCode: string, trackingToken: string) => void;
+  onOpenB2BQuoteModal: () => void;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
   isOpen,
   onClose,
   cart,
-  buyerMode,
   onUpdateQty,
   onRemoveItem,
   onClearCart,
   onOrderSuccess,
   onTrackOrder,
+  onOpenB2BQuoteModal,
 }) => {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
-  const [shippingMethod, setShippingMethod] = useState<'EXPRESS_2H' | 'STANDARD' | 'GDP_TRUCK'>(
-    buyerMode === 'WHOLESALE' ? 'GDP_TRUCK' : 'EXPRESS_2H'
-  );
-  const [paymentMethod, setPaymentMethod] = useState<'COD' | 'VIETQR' | 'CREDIT'>('COD');
+  const [shippingMethod, setShippingMethod] = useState<'EXPRESS_2H' | 'STANDARD'>('EXPRESS_2H');
+  const [paymentMethod, setPaymentMethod] = useState<'COD' | 'VIETQR'>('COD');
   const [patientAllergies, setPatientAllergies] = useState('');
-  const [prescriptionImage, setPrescriptionImage] = useState('');
+  const [prescriptionFileKey, setPrescriptionFileKey] = useState('');
+  const [prescriptionPreviewUrl, setPrescriptionPreviewUrl] = useState('');
   const [prescriptionFileName, setPrescriptionFileName] = useState('');
+  const [uploadingRx, setUploadingRx] = useState(false);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [placedOrder, setPlacedOrder] = useState<OnlineOrderRecord | null>(null);
 
   useEffect(() => {
-    setShippingMethod((prev) => {
-      if (buyerMode === 'WHOLESALE') return 'GDP_TRUCK';
-      return prev === 'GDP_TRUCK' ? 'EXPRESS_2H' : prev;
-    });
-    if (buyerMode === 'RETAIL' && paymentMethod === 'CREDIT') {
-      setPaymentMethod('COD');
-    }
-  }, [buyerMode, paymentMethod]);
+    return () => {
+      if (prescriptionPreviewUrl) URL.revokeObjectURL(prescriptionPreviewUrl);
+    };
+  }, [prescriptionPreviewUrl]);
 
   if (!isOpen) return null;
 
   const hasRxItem = cart.some((item) => item.product.IsRx);
   const subTotal = cart.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
-  const shippingFee =
-    shippingMethod === 'EXPRESS_2H' ? 30000 : shippingMethod === 'GDP_TRUCK' ? 150000 : 15000;
-  const vatAmount = buyerMode === 'WHOLESALE' ? Math.round(subTotal * 0.05) : 0;
-  const grandTotal = subTotal + shippingFee + vatAmount;
+  // Khớp chính xác công thức tính phí vận chuyển của Server (miễn phí đơn từ 300.000đ)
+  const shippingFee = subTotal >= 300000 ? 0 : shippingMethod === 'EXPRESS_2H' ? 30000 : 15000;
+  const grandTotal = subTotal + shippingFee;
 
-  const handleRxUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleRxUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 3 * 1024 * 1024) {
-      toast.error('Ảnh đơn thuốc tải lên khi thanh toán tối đa 3MB');
+      toast.error('Ảnh đơn thuốc tải lên tối đa 3MB (JPEG, PNG, WEBP)');
       return;
     }
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      toast.error('Chỉ hỗ trợ định dạng ảnh JPEG, PNG hoặc WEBP');
+      return;
+    }
+
     setPrescriptionFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setPrescriptionImage(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
+    const localUrl = URL.createObjectURL(file);
+    setPrescriptionPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return localUrl;
+    });
+
+    setUploadingRx(true);
+    try {
+      const uploaded = await storeApi.uploadPrescriptionImage(file);
+      setPrescriptionFileKey(uploaded.fileKey);
+      toast.success('Đã tải ảnh đơn thuốc bảo mật thành công!');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Không thể tải lên ảnh đơn thuốc';
+      toast.error(msg);
+      setPrescriptionFileKey('');
+    } finally {
+      setUploadingRx(false);
+    }
   };
 
   const handleCopyText = async (label: string, text: string) => {
@@ -138,14 +152,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       const idempotencyKey = `web-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       const created = await storeApi.createOnlineOrder(
         {
-          OrderType: buyerMode,
+          OrderType: 'RETAIL',
           CustomerName: cleanName,
           CustomerPhone: cleanPhone,
           ShippingAddress: cleanAddress,
           ShippingMethod: shippingMethod,
           PaymentMethod: paymentMethod,
           PatientAllergies: patientAllergies.trim() || undefined,
-          PrescriptionImage: prescriptionImage || undefined,
+          PrescriptionFileKey: prescriptionFileKey || undefined,
           Note: note.trim() || undefined,
           items: cart.map((item) => ({
             ProductID: item.product.ProductID,
@@ -165,13 +179,18 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       setCustomerPhone('');
       setShippingAddress('');
       setPatientAllergies('');
-      setPrescriptionImage('');
+      setPrescriptionFileKey('');
       setPrescriptionFileName('');
+      setPrescriptionPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return '';
+      });
       setNote('');
       toast.success(`Đặt hàng thành công! Mã đơn: ${created.OrderCode}`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       const msg =
-        err?.response?.data?.message || 'Không thể đặt đơn hàng. Vui lòng kiểm tra lại tồn kho.';
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Không thể đặt đơn hàng. Vui lòng kiểm tra lại tồn kho.';
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -192,9 +211,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 {placedOrder ? 'Đặt hàng thành công' : `Giỏ thuốc & Thanh toán (${cart.length})`}
               </h2>
               <p className="text-xs text-slate-500">
-                {buyerMode === 'WHOLESALE'
-                  ? 'Chế độ Đại lý / Nhà thuốc B2B (xuất hóa đơn VAT 5%)'
-                  : 'Giữ kho nguyên tử 15 phút • Dược sĩ GPP thẩm định'}
+                Giữ kho nguyên tử 15 phút • Dược sĩ GPP thẩm định lâm sàng
               </p>
             </div>
           </div>
@@ -220,8 +237,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       Đơn hàng đang chờ Dược sĩ kiểm duyệt chuyên môn
                     </h3>
                     <p className="text-xs text-emerald-800 leading-relaxed">
-                      Hệ thống đã tạm giữ tồn kho theo chuẩn FEFO trong vòng 15 phút. Dược sĩ tại
-                      nhà thuốc sẽ thẩm định đơn và liên hệ xác nhận với bạn.
+                      Vui lòng lưu lại cả <strong>Mã đơn hàng</strong> và{' '}
+                      <strong>Tracking Token bảo mật</strong> bên dưới để tra cứu hoặc hủy đơn trực tuyến.
                     </p>
                   </div>
                 </div>
@@ -233,13 +250,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                       Mã đơn hàng
                     </span>
-                    <div className="text-lg font-extrabold text-slate-900 tabular-nums">
+                    <div className="text-lg font-extrabold text-slate-900 tabular-nums font-mono">
                       {placedOrder.OrderCode}
                     </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleCopyText('Mã đơn hàng', placedOrder.OrderCode)}
+                    onClick={() => void handleCopyText('Mã đơn hàng', placedOrder.OrderCode)}
                     className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                   >
                     <Copy className="h-3.5 w-3.5" />
@@ -247,24 +264,28 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between gap-2 border-t border-slate-200 pt-2.5">
-                  <div>
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                      Mã bảo mật tra cứu (Tracking Token)
-                    </span>
-                    <div className="font-mono text-sm font-bold text-teal-700">
-                      {placedOrder.TrackingToken}
+                {placedOrder.TrackingToken && (
+                  <div className="flex items-center justify-between gap-2 border-t border-slate-200 pt-2.5">
+                    <div>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Mã bảo mật tra cứu (Tracking Token)
+                      </span>
+                      <div className="font-mono text-sm font-bold text-teal-700">
+                        {placedOrder.TrackingToken}
+                      </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleCopyText('Tracking Token', placedOrder.TrackingToken || '')
+                      }
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Sao chép
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyText('Tracking Token', placedOrder.TrackingToken)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                    Sao chép
-                  </button>
-                </div>
+                )}
 
                 <div className="flex items-center justify-between border-t border-slate-200 pt-2.5 text-xs">
                   <span className="inline-flex items-center gap-1.5 text-amber-700 font-medium">
@@ -311,9 +332,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   type="button"
                   onClick={() => {
                     const code = placedOrder.OrderCode;
-                    const phone = placedOrder.CustomerPhone || placedOrder.TrackingToken;
+                    const token = placedOrder.TrackingToken || '';
                     setPlacedOrder(null);
-                    onTrackOrder(code, phone);
+                    onTrackOrder(code, token);
                   }}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-teal-700 shadow-xs"
                 >
@@ -425,37 +446,45 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 })}
               </div>
 
-              {/* Rx Notice & Optional Prescription Attachment */}
+              {/* Rx Notice & Multipart Private Prescription Attachment */}
               {hasRxItem && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 space-y-2.5">
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
                     <p className="text-xs text-amber-900 leading-relaxed">
-                      Giỏ thuốc có sản phẩm <strong>thuốc kê đơn (Rx)</strong>. Theo quy định GPP,
-                      Dược sĩ cần kiểm tra đơn thuốc và tiền sử dị ứng trước khi xuất kho.
+                      Giỏ thuốc có sản phẩm <strong>thuốc kê đơn (Rx)</strong>. Bạn nên tải lên ảnh toa thuốc bác sĩ (tối đa 3MB) để Dược sĩ thẩm định nhanh.
                     </p>
                   </div>
                   <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-amber-300 bg-white px-3 py-2 text-xs hover:bg-amber-50/50">
-                    <span className="inline-flex items-center gap-2 font-medium text-amber-900">
-                      <UploadCloud className="h-4 w-4 text-amber-600" />
-                      {prescriptionFileName
-                        ? `Đã chọn: ${prescriptionFileName}`
-                        : 'Đính kèm ảnh toa thuốc bác sĩ (tùy chọn)'}
+                    <span className="inline-flex items-center gap-2 font-medium text-amber-900 truncate">
+                      <UploadCloud className="h-4 w-4 text-amber-600 shrink-0" />
+                      {uploadingRx
+                        ? 'Đang tải ảnh lên máy chủ...'
+                        : prescriptionFileName
+                        ? `Đã tải bảo mật: ${prescriptionFileName}`
+                        : 'Đính kèm ảnh toa thuốc (JPEG/PNG/WEBP <= 3MB)'}
                     </span>
                     <input
                       type="file"
-                      accept="image/*"
-                      onChange={handleRxUpload}
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(e) => void handleRxUpload(e)}
                       className="hidden"
                     />
                   </label>
+                  {prescriptionPreviewUrl && (
+                    <img
+                      src={prescriptionPreviewUrl}
+                      alt="Xem trước toa thuốc"
+                      className="max-h-28 rounded-lg border border-amber-200 bg-white object-contain p-1"
+                    />
+                  )}
                 </div>
               )}
 
               {/* Recipient Information */}
               <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  1. Thông tin người nhận thuốc
+                  1. Thông tin người nhận & Sàng lọc dị ứng
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
@@ -509,7 +538,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       type="text"
                       value={patientAllergies}
                       onChange={(e) => setPatientAllergies(e.target.value)}
-                      placeholder="VD: Dị ứng Penicillin, Aspirin..."
+                      placeholder="VD: Penicillin, Aspirin..."
                       className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                     />
                   </div>
@@ -528,31 +557,25 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
               </div>
 
-              {/* Shipping & Payment */}
+              {/* Retail Shipping & Payment + B2B Quote CTA */}
               <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  2. Vận chuyển & Thanh toán
+                  2. Vận chuyển & Thanh toán bán lẻ
                 </h3>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {[
                     {
                       id: 'EXPRESS_2H' as const,
                       label: 'Hỏa tốc 2H',
-                      price: '30.000đ',
+                      price: subTotal >= 300000 ? 'Miễn phí' : '30.000đ',
                       sub: 'Nội thành siêu tốc',
                     },
                     {
                       id: 'STANDARD' as const,
                       label: 'Tiêu chuẩn',
-                      price: '15.000đ',
-                      sub: '1 - 2 ngày làm việc',
-                    },
-                    {
-                      id: 'GDP_TRUCK' as const,
-                      label: 'Xe lạnh GDP',
-                      price: '150.000đ',
-                      sub: 'Đơn sỉ / bảo quản lạnh',
+                      price: subTotal >= 300000 ? 'Miễn phí' : '15.000đ',
+                      sub: '1 - 2 ngày (Miễn phí từ 300k)',
                     },
                   ].map((opt) => (
                     <button
@@ -577,7 +600,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   ))}
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                <div className="grid grid-cols-2 gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('COD')}
@@ -602,20 +625,23 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     <QrCode className="h-4 w-4 text-sky-600 shrink-0" />
                     <span>Chuyển khoản VietQR</span>
                   </button>
-                  {buyerMode === 'WHOLESALE' && (
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('CREDIT')}
-                      className={`flex items-center gap-2 rounded-xl border p-2.5 text-xs font-semibold transition-all ${
-                        paymentMethod === 'CREDIT'
-                          ? 'border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-600'
-                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                      }`}
-                    >
-                      <Building2 className="h-4 w-4 text-indigo-600 shrink-0" />
-                      <span>Công nợ B2B</span>
-                    </button>
-                  )}
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-indigo-100 bg-indigo-50/70 px-3 py-2 text-[11px] text-indigo-900">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Building2 className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                    <span>Khách đại lý / phòng khám đặt sỉ số lượng lớn?</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenB2BQuoteModal();
+                    }}
+                    className="font-bold text-indigo-700 hover:underline shrink-0 ml-2"
+                  >
+                    Báo giá sỉ B2B
+                  </button>
                 </div>
               </div>
             </form>
@@ -635,17 +661,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <div className="flex justify-between">
                 <span>Phí vận chuyển</span>
                 <span className="font-semibold text-slate-900 tabular-nums">
-                  {formatVND(shippingFee)}
+                  {shippingFee === 0 ? 'Miễn phí' : formatVND(shippingFee)}
                 </span>
               </div>
-              {vatAmount > 0 && (
-                <div className="flex justify-between">
-                  <span>Thuế GTGT B2B (5%)</span>
-                  <span className="font-semibold text-slate-900 tabular-nums">
-                    {formatVND(vatAmount)}
-                  </span>
-                </div>
-              )}
               <div className="flex justify-between border-t border-slate-100 pt-2 text-sm font-bold text-slate-900">
                 <span>Tổng thanh toán</span>
                 <span className="text-lg text-teal-700 tabular-nums">{formatVND(grandTotal)}</span>
@@ -655,7 +673,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <button
               type="submit"
               form="storefront-checkout-form"
-              disabled={submitting}
+              disabled={submitting || uploadingRx}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-teal-700 disabled:opacity-50"
             >
               <ShieldCheck className="h-4 w-4" />

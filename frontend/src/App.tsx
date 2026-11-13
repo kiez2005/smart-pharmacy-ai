@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
   LayoutDashboard,
@@ -18,27 +18,66 @@ import {
   Menu,
   Building2,
   ChevronRight,
-  RefreshCw,
-  MapPin,
-  Globe,
   ExternalLink,
+  LogOut,
+  MapPin,
 } from 'lucide-react';
-import { DashboardPage } from './pages/DashboardPage';
-import { ProductManagementPage } from './pages/ProductManagementPage';
-import { ProductStockCardPage } from './pages/ProductStockCardPage';
-import { SuppliersAndPurchaseOrdersPage } from './pages/SuppliersAndPurchaseOrdersPage';
-import { PosTerminalPage, PosCartItem } from './pages/PosTerminalPage';
-import { OnlineStorePage } from './pages/OnlineStorePage';
-import { StaffOnlineOrdersPage } from './pages/StaffOnlineOrdersPage';
-import { InvoicesManagementPage } from './pages/InvoicesManagementPage';
-import { PaymentsLedgerPage } from './pages/PaymentsLedgerPage';
-import { CustomersPage } from './pages/CustomersPage';
-import { PrescriptionOcrPage } from './pages/PrescriptionOcrPage';
-import { ClinicalAiAndInteractionPage } from './pages/ClinicalAiAndInteractionPage';
-import { ContactPage } from './pages/ContactPage';
-import { AuthPage } from './pages/AuthPage';
+import type { PosCartItem } from './pages/PosTerminalPage';
+import { LoginPage } from './pages/LoginPage';
 import { ModalPortal } from './components/common/ModalPortal';
 import { UserProfile } from './types/forms';
+import { formsApi } from './services/forms.api';
+
+const DashboardPage = lazy(() =>
+  import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage }))
+);
+const ProductManagementPage = lazy(() =>
+  import('./pages/ProductManagementPage').then((m) => ({ default: m.ProductManagementPage }))
+);
+const ProductStockCardPage = lazy(() =>
+  import('./pages/ProductStockCardPage').then((m) => ({ default: m.ProductStockCardPage }))
+);
+const SuppliersAndPurchaseOrdersPage = lazy(() =>
+  import('./pages/SuppliersAndPurchaseOrdersPage').then((m) => ({
+    default: m.SuppliersAndPurchaseOrdersPage,
+  }))
+);
+const PosTerminalPage = lazy(() =>
+  import('./pages/PosTerminalPage').then((m) => ({ default: m.PosTerminalPage }))
+);
+const StaffOnlineOrdersPage = lazy(() =>
+  import('./pages/StaffOnlineOrdersPage').then((m) => ({ default: m.StaffOnlineOrdersPage }))
+);
+const InvoicesManagementPage = lazy(() =>
+  import('./pages/InvoicesManagementPage').then((m) => ({ default: m.InvoicesManagementPage }))
+);
+const PaymentsLedgerPage = lazy(() =>
+  import('./pages/PaymentsLedgerPage').then((m) => ({ default: m.PaymentsLedgerPage }))
+);
+const CustomersPage = lazy(() =>
+  import('./pages/CustomersPage').then((m) => ({ default: m.CustomersPage }))
+);
+const PrescriptionOcrPage = lazy(() =>
+  import('./pages/PrescriptionOcrPage').then((m) => ({ default: m.PrescriptionOcrPage }))
+);
+const ClinicalAiAndInteractionPage = lazy(() =>
+  import('./pages/ClinicalAiAndInteractionPage').then((m) => ({
+    default: m.ClinicalAiAndInteractionPage,
+  }))
+);
+const ContactPage = lazy(() =>
+  import('./pages/ContactPage').then((m) => ({ default: m.ContactPage }))
+);
+const AuthPage = lazy(() => import('./pages/AuthPage').then((m) => ({ default: m.AuthPage })));
+
+const STOREFRONT_URL = import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:5174';
+
+const TabLoadingFallback = () => (
+  <div className="flex flex-col items-center justify-center min-h-[320px] gap-3 text-slate-500">
+    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+    <span className="text-sm font-medium">Đang tải phân hệ ERP...</span>
+  </div>
+);
 
 export type ActiveTab =
   | 'DASHBOARD'
@@ -46,7 +85,6 @@ export type ActiveTab =
   | 'STOCK_CARD'
   | 'IMPORTS'
   | 'POS'
-  | 'ONLINE_STORE'
   | 'STAFF_ORDERS'
   | 'INVOICES'
   | 'PAYMENTS'
@@ -76,30 +114,52 @@ export const App: React.FC = () => {
   const [posInitialCart, setPosInitialCart] = useState<PosCartItem[] | undefined>(undefined);
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
-  const [selectedBranch, setSelectedBranch] = useState<string>('CS1 - Nhà thuốc Trung Tâm (GPP)');
-  const [syncingNationalPortal, setSyncingNationalPortal] = useState<boolean>(false);
 
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    const token = localStorage.getItem('pharmacore_token');
     const savedUser = localStorage.getItem('pharmacore_user');
-    if (savedUser) {
+    if (token && savedUser) {
       try {
         return JSON.parse(savedUser);
       } catch {
+        localStorage.removeItem('pharmacore_token');
+        localStorage.removeItem('pharmacore_user');
         return null;
       }
     }
+    localStorage.removeItem('pharmacore_token');
+    localStorage.removeItem('pharmacore_user');
     return null;
   });
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const unauthorizedHandled = useRef(false);
 
-  // Lắng nghe sự kiện hết hạn token 401 từ Axios Interceptor
-  React.useEffect(() => {
+  // Lắng nghe sự kiện hết hạn / thu hồi token 401 từ Axios Interceptor + Xác thực phiên thực từ /auth/me (A3)
+  useEffect(() => {
     const handleUnauthorized = () => {
       setCurrentUser(null);
       localStorage.removeItem('pharmacore_token');
       localStorage.removeItem('pharmacore_user');
-      toast.error('Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại!');
+      setSessionExpired(true);
+      if (!unauthorizedHandled.current) {
+        unauthorizedHandled.current = true;
+        toast.error('Phiên làm việc đã hết hạn hoặc bị thu hồi. Vui lòng đăng nhập lại!');
+      }
     };
     window.addEventListener('pharmacore_unauthorized', handleUnauthorized);
+
+    if (localStorage.getItem('pharmacore_token')) {
+      formsApi
+        .getMe()
+        .then((freshUser) => {
+          setCurrentUser(freshUser);
+          localStorage.setItem('pharmacore_user', JSON.stringify(freshUser));
+        })
+        .catch(() => {
+          // 401 interceptor sẽ xử lý nếu token đã bị thu hồi
+        });
+    }
+
     return () => window.removeEventListener('pharmacore_unauthorized', handleUnauthorized);
   }, []);
 
@@ -113,14 +173,12 @@ export const App: React.FC = () => {
     setActiveTab('POS');
   };
 
-  const handleSyncNationalPortal = () => {
-    setSyncingNationalPortal(true);
-    setTimeout(() => {
-      setSyncingNationalPortal(false);
-      toast.success(
-        'Đã đồng bộ dữ liệu Xuất-Nhập-Tồn và Hóa đơn lên Cổng Dược Quốc Gia (duocquocgia.com.vn)!'
-      );
-    }, 600);
+  const handleLogout = async () => {
+    await formsApi.logout();
+    setCurrentUser(null);
+    setSessionExpired(false);
+    setIsMobileMenuOpen(false);
+    toast.success('Đã đăng xuất và thu hồi phiên đăng nhập');
   };
 
   const navGroups: Array<{
@@ -130,6 +188,7 @@ export const App: React.FC = () => {
       label: string;
       icon: React.ElementType;
       badge?: string;
+      roles?: Array<'ADMIN' | 'PHARMACIST' | 'CASHIER'>;
     }>;
   }> = [
     {
@@ -138,26 +197,93 @@ export const App: React.FC = () => {
         { id: 'DASHBOARD', label: 'Tổng quan điều hành', icon: LayoutDashboard },
         { id: 'PRODUCTS', label: 'Danh mục dược phẩm', icon: Package, badge: 'GPP/GDP' },
         { id: 'STOCK_CARD', label: 'Thẻ kho & Kiểm kê', icon: FileSpreadsheet, badge: 'FEFO' },
-        { id: 'IMPORTS', label: 'Nhà cung cấp & Nhập kho', icon: Truck },
+        {
+          id: 'IMPORTS',
+          label: 'Nhà cung cấp & Nhập kho',
+          icon: Truck,
+          roles: ['ADMIN', 'PHARMACIST'],
+        },
       ],
     },
     {
       groupLabel: 'Phân khu 2: Bán lẻ, Bán buôn & Online',
       items: [
         { id: 'POS', label: 'Bán lẻ POS & Bán buôn B2B', icon: ShoppingCart, badge: 'POS/B2B' },
-        { id: 'ONLINE_STORE', label: 'Cổng Khách Hàng Online', icon: Globe, badge: 'PUBLIC' },
-        { id: 'STAFF_ORDERS', label: 'Duyệt & Xử lý đơn Online', icon: Truck, badge: 'STAFF' },
+        { id: 'STAFF_ORDERS', label: 'Đơn online (Xử lý & Duyệt)', icon: Truck, badge: 'ONLINE' },
         { id: 'INVOICES', label: 'Hóa đơn, Công nợ & Hoàn trả', icon: Receipt },
         { id: 'PAYMENTS', label: 'Sổ quỹ Thu - Chi & VietQR', icon: Wallet },
         { id: 'CUSTOMERS', label: 'Bệnh nhân & Đại lý B2B', icon: Users },
-        { id: 'AUTH', label: 'Nhân sự & Phân quyền', icon: Shield },
+        {
+          id: 'AUTH',
+          label: 'Nhân sự & Phân quyền',
+          icon: Shield,
+          roles: ['ADMIN', 'PHARMACIST', 'CASHIER'],
+        },
+      ],
+    },
+    {
+      groupLabel: 'Phân khu 3: AI Dược lâm sàng & Tư vấn',
+      items: [
+        {
+          id: 'AI_OCR',
+          label: 'AI Quét đơn (OCR)',
+          icon: ScanLine,
+          badge: 'OCR',
+          roles: ['ADMIN', 'PHARMACIST'],
+        },
+        {
+          id: 'AI_CLINICAL',
+          label: 'AI Lâm sàng & Tương tác',
+          icon: Stethoscope,
+          badge: 'AI',
+          roles: ['ADMIN', 'PHARMACIST', 'CASHIER'],
+        },
+        {
+          id: 'CONTACT',
+          label: 'Hộp thư Dược sĩ',
+          icon: MessageSquare,
+          roles: ['ADMIN', 'PHARMACIST'],
+        },
       ],
     },
   ];
 
-  const activeGroup = navGroups.find((g) => g.items.some((i) => i.id === activeTab));
+  const isNavItemVisible = (item: { roles?: Array<'ADMIN' | 'PHARMACIST' | 'CASHIER'> }) => {
+    if (!item.roles || !currentUser) return true;
+    return item.roles.includes(currentUser.Role as 'ADMIN' | 'PHARMACIST' | 'CASHIER');
+  };
+
+  const visibleNavGroups = navGroups
+    .map((g) => ({
+      ...g,
+      items: g.items.filter(isNavItemVisible),
+    }))
+    .filter((g) => g.items.length > 0);
+
+  const activeGroup = visibleNavGroups.find((g) => g.items.some((i) => i.id === activeTab));
   const activeLabel =
-    navGroups.flatMap((g) => g.items).find((i) => i.id === activeTab)?.label || '';
+    visibleNavGroups.flatMap((g) => g.items).find((i) => i.id === activeTab)?.label || '';
+
+  if (!currentUser) {
+    return (
+      <>
+        <Toaster position="bottom-right" richColors />
+        <LoginPage
+          sessionExpired={sessionExpired}
+          onAuthSuccess={(user, token) => {
+            unauthorizedHandled.current = false;
+            setSessionExpired(false);
+            setCurrentUser(user);
+            localStorage.setItem('pharmacore_user', JSON.stringify(user));
+            localStorage.setItem('pharmacore_token', token);
+            if (user.Role === 'CASHIER') {
+              setActiveTab('POS');
+            }
+          }}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex">
@@ -181,13 +307,13 @@ export const App: React.FC = () => {
             </div>
           </div>
           <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-600 border border-slate-200">
-            v2.4
+            v2.5
           </span>
         </div>
 
-        {/* 12-Module Navigation Groups */}
+        {/* Navigation Groups */}
         <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
-          {navGroups.map((group) => (
+          {visibleNavGroups.map((group) => (
             <div key={group.groupLabel} className="space-y-0.5">
               <div className="px-2.5 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 {group.groupLabel}
@@ -249,24 +375,32 @@ export const App: React.FC = () => {
             </kbd>
           </button>
 
-          <div
-            onClick={() => setActiveTab('AUTH')}
-            className="cursor-pointer flex items-center gap-2.5 rounded-lg bg-white px-2.5 py-2 border border-slate-200/90 shadow-2xs hover:border-teal-300 transition-colors"
-          >
-            <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-xs font-bold text-white">
-              NT
-              <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold text-slate-900 truncate">
-                {currentUser ? currentUser.FullName : 'Chưa đăng nhập'}
+          <div className="flex items-center gap-1.5">
+            <div
+              onClick={() => setActiveTab('AUTH')}
+              className="cursor-pointer flex flex-1 min-w-0 items-center gap-2.5 rounded-lg bg-white px-2.5 py-2 border border-slate-200/90 shadow-2xs hover:border-teal-300 transition-colors"
+            >
+              <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-xs font-bold text-white">
+                {currentUser.FullName.slice(0, 2).toUpperCase()}
+                <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500" />
               </div>
-              <div className="text-[11px] text-slate-500 truncate">
-                {currentUser
-                  ? `Dược sĩ phụ trách • ${currentUser.Role}`
-                  : 'Nhấn để đăng nhập'}
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold text-slate-900 truncate">
+                  {currentUser.FullName}
+                </div>
+                <div className="text-[11px] text-slate-500 truncate">
+                  Quyền: {currentUser.Role}
+                </div>
               </div>
             </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Đăng xuất & thu hồi token"
+              className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </aside>
@@ -291,7 +425,7 @@ export const App: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/60 text-slate-600"
+                  className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-200/60"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -312,7 +446,7 @@ export const App: React.FC = () => {
 
               {/* Mobile Navigation Links */}
               <nav className="p-3 space-y-4 max-h-[calc(100vh-210px)] overflow-y-auto">
-                {navGroups.map((group) => (
+                {visibleNavGroups.map((group) => (
                   <div key={group.groupLabel} className="space-y-1">
                     <div className="px-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                       {group.groupLabel}
@@ -356,26 +490,34 @@ export const App: React.FC = () => {
             </div>
 
             {/* Mobile Footer Pharmacist Info */}
-            <div className="p-3 border-t border-slate-200 bg-slate-50">
+            <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center gap-2">
               <div
                 onClick={() => {
                   setActiveTab('AUTH');
                   setIsMobileMenuOpen(false);
                 }}
-                className="cursor-pointer flex items-center gap-2.5 rounded-lg bg-white p-2 border border-slate-200 shadow-2xs"
+                className="cursor-pointer flex flex-1 min-w-0 items-center gap-2.5 rounded-lg bg-white p-2 border border-slate-200 shadow-2xs"
               >
                 <div className="h-8 w-8 shrink-0 rounded-full bg-teal-600 text-xs font-bold text-white flex items-center justify-center">
-                  NT
+                  {currentUser.FullName.slice(0, 2).toUpperCase()}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-bold text-slate-900 truncate">
-                    {currentUser ? currentUser.FullName : 'Chưa đăng nhập'}
+                    {currentUser.FullName}
                   </div>
                   <div className="text-[10px] text-teal-700 truncate">
-                    {currentUser ? `Quyền: ${currentUser.Role}` : 'Đăng nhập'}
+                    Quyền: {currentUser.Role}
                   </div>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                title="Đăng xuất"
+                className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-600"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
             </div>
           </div>
         </div>
@@ -384,7 +526,7 @@ export const App: React.FC = () => {
 
       {/* MAIN CONTENT SHELL */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Enterprise Topbar with Mobile Hamburger, Portal Status & Quick POS */}
+        {/* Enterprise Topbar with Mobile Hamburger & Quick Actions */}
         <header className="sticky top-0 z-20 h-14 border-b border-slate-200/80 bg-white/95 backdrop-blur px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-4">
           <div className="flex items-center gap-2 min-w-0">
             {/* Mobile Hamburger Button */}
@@ -416,40 +558,15 @@ export const App: React.FC = () => {
             </div>
 
             <a
-              href="http://localhost:5174"
+              href={STOREFRONT_URL}
               target="_blank"
               rel="noreferrer"
-              title="Mở trang Web Bán Hàng Độc Lập dành cho khách mua online (localhost:5174)"
-              className="hidden md:inline-flex h-9 items-center gap-1.5 rounded-lg border border-teal-300 bg-teal-600 px-3 text-xs font-semibold text-white hover:bg-teal-700 shadow-2xs transition-colors"
+              title="Mở trang Web Bán Hàng Độc Lập dành cho khách mua online"
+              className="hidden md:inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 text-xs font-semibold text-sky-800 hover:bg-sky-100 shadow-2xs transition-colors"
             >
               <ExternalLink className="h-3.5 w-3.5" />
-              <span>Mở Web Bán Hàng (:5174)</span>
+              <span>Web Bán Hàng (:5174)</span>
             </a>
-
-            {/* Trạng thái Liên thông Dược Quốc Gia */}
-            <button
-              type="button"
-              onClick={handleSyncNationalPortal}
-              title="Nhấn để đồng bộ tức thời với Cổng Dược Quốc Gia (duocquocgia.com.vn)"
-              className="hidden lg:inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 text-xs font-medium text-emerald-800 hover:bg-emerald-100 shadow-2xs transition-colors"
-            >
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Cổng Dược QG: Online</span>
-              <RefreshCw
-                className={`h-3 w-3 text-emerald-700 ${
-                  syncingNationalPortal ? 'animate-spin' : ''
-                }`}
-              />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('ONLINE_STORE')}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 sm:px-3 text-xs font-semibold text-sky-700 hover:bg-sky-100 shadow-2xs transition-colors"
-            >
-              <Globe className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Bán thuốc Online</span>
-            </button>
 
             <button
               type="button"
@@ -472,57 +589,56 @@ export const App: React.FC = () => {
           </div>
         </header>
 
-        {/* Workspace Content (12 Modules) */}
+        {/* Workspace Content (Lazy-loaded Code-split Modules) */}
         <main className="flex-1 p-3.5 sm:p-5 md:p-6 max-w-[1480px] w-full mx-auto">
-          {activeTab === 'DASHBOARD' && (
-            <DashboardPage
-              onOpenStockCard={handleOpenStockCard}
-              onNavigateToImports={() => setActiveTab('IMPORTS')}
-              onNavigateToPos={() => setActiveTab('POS')}
-            />
-          )}
-          {activeTab === 'PRODUCTS' && (
-            <ProductManagementPage onOpenStockCard={handleOpenStockCard} />
-          )}
-          {activeTab === 'STOCK_CARD' && (
-            <ProductStockCardPage
-              productId={selectedStockCardProductId}
-              onBack={() => setActiveTab('PRODUCTS')}
-            />
-          )}
-          {activeTab === 'IMPORTS' && <SuppliersAndPurchaseOrdersPage />}
-          {activeTab === 'POS' && (
-            <PosTerminalPage
-              initialCartItems={posInitialCart}
-              onClearInitialCart={() => setPosInitialCart(undefined)}
-              onNavigateToInvoices={() => setActiveTab('INVOICES')}
-            />
-          )}
-          {activeTab === 'ONLINE_STORE' && <OnlineStorePage />}
-          {activeTab === 'STAFF_ORDERS' && <StaffOnlineOrdersPage />}
-          {activeTab === 'INVOICES' && <InvoicesManagementPage />}
-          {activeTab === 'PAYMENTS' && <PaymentsLedgerPage />}
-          {activeTab === 'CUSTOMERS' && <CustomersPage />}
-          {activeTab === 'AI_OCR' && (
-            <PrescriptionOcrPage onTransferToPos={handleTransferOcrToPos} />
-          )}
-          {activeTab === 'AI_CLINICAL' && <ClinicalAiAndInteractionPage />}
-          {activeTab === 'CONTACT' && <ContactPage />}
-          {activeTab === 'AUTH' && (
-            <AuthPage
-              currentUser={currentUser}
-              onAuthSuccess={(user, token) => {
-                setCurrentUser(user);
-                localStorage.setItem('pharmacore_user', JSON.stringify(user));
-                if (token) localStorage.setItem('pharmacore_token', token);
-              }}
-              onLogout={() => {
-                setCurrentUser(null);
-                localStorage.removeItem('pharmacore_token');
-                localStorage.removeItem('pharmacore_user');
-              }}
-            />
-          )}
+          <Suspense fallback={<TabLoadingFallback />}>
+            {activeTab === 'DASHBOARD' && (
+              <DashboardPage
+                onOpenStockCard={handleOpenStockCard}
+                onNavigateToImports={() => setActiveTab('IMPORTS')}
+                onNavigateToPos={() => setActiveTab('POS')}
+              />
+            )}
+            {activeTab === 'PRODUCTS' && (
+              <ProductManagementPage onOpenStockCard={handleOpenStockCard} />
+            )}
+            {activeTab === 'STOCK_CARD' && (
+              <ProductStockCardPage
+                productId={selectedStockCardProductId}
+                onBack={() => setActiveTab('PRODUCTS')}
+              />
+            )}
+            {activeTab === 'IMPORTS' && currentUser.Role !== 'CASHIER' && (
+              <SuppliersAndPurchaseOrdersPage />
+            )}
+            {activeTab === 'POS' && (
+              <PosTerminalPage
+                initialCartItems={posInitialCart}
+                onClearInitialCart={() => setPosInitialCart(undefined)}
+                onNavigateToInvoices={() => setActiveTab('INVOICES')}
+              />
+            )}
+            {activeTab === 'STAFF_ORDERS' && <StaffOnlineOrdersPage />}
+            {activeTab === 'INVOICES' && <InvoicesManagementPage />}
+            {activeTab === 'PAYMENTS' && <PaymentsLedgerPage />}
+            {activeTab === 'CUSTOMERS' && <CustomersPage />}
+            {activeTab === 'AI_OCR' && currentUser.Role !== 'CASHIER' && (
+              <PrescriptionOcrPage onTransferToPos={handleTransferOcrToPos} />
+            )}
+            {activeTab === 'AI_CLINICAL' && <ClinicalAiAndInteractionPage />}
+            {activeTab === 'CONTACT' && currentUser.Role !== 'CASHIER' && <ContactPage />}
+            {activeTab === 'AUTH' && (
+              <AuthPage
+                currentUser={currentUser}
+                onAuthSuccess={(user, token) => {
+                  setCurrentUser(user);
+                  localStorage.setItem('pharmacore_user', JSON.stringify(user));
+                  if (token) localStorage.setItem('pharmacore_token', token);
+                }}
+                onLogout={handleLogout}
+              />
+            )}
+          </Suspense>
         </main>
       </div>
 

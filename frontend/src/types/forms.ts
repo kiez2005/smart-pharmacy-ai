@@ -97,6 +97,7 @@ export interface InvoiceRecord {
   Status: 'COMPLETED' | 'CANCELLED' | 'PARTIAL' | 'DEBT' | string;
   Note?: string;
   CancelReason?: string;
+  ClinicalOverrideCode?: string;
   ClinicalOverrideNote?: string;
   ApprovedByUserID?: number | null;
   ApprovedByName?: string | null;
@@ -108,7 +109,10 @@ export interface InvoiceRecord {
 }
 
 export interface ClinicalWarning {
+  ruleId?: string;
+  source?: string;
   severity: 'CRITICAL' | 'WARNING' | 'INFO' | 'HIGH' | 'MEDIUM' | 'LOW';
+  category?: 'ALLERGY' | 'DUPLICATION' | 'INTERACTION' | 'CONTRAINDICATION';
   title: string;
   detail: string;
   recommendation: string;
@@ -171,6 +175,9 @@ export interface OnlineOrderRecord {
   TotalAmount: number;
   PaidAmount: number;
   Note?: string | null;
+  PatientAllergies?: string | null;
+  PrescriptionFileKey?: string | null;
+  PrescriptionFileMime?: string | null;
   ReservedUntil?: string | null;
   ClinicalSafetyStatus: 'SAFE' | 'WARNING_REQUIRES_REVIEW' | 'APPROVED_WITH_OVERRIDE' | 'REJECTED';
   ClinicalWarningsJson?: string | null;
@@ -220,6 +227,9 @@ export interface CreateInvoicePayload {
   Discount?: number;
   UsedPoints?: number;
   Note: string;
+  ClinicalOverrideCode?: string;
+  ClinicalOverrideNote?: string;
+  PatientAllergies?: string;
   PaymentMethod: 'CASH' | 'VIETQR' | 'CARD' | 'CREDIT' | 'COD';
   items: Array<{
     ProductID: number;

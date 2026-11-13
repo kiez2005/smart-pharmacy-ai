@@ -3,11 +3,15 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { packagingService } from '../services/packaging.service';
 import {
-  checkIdempotency,
   IdempotencyConflictError,
-  saveIdempotency,
+  runWithIdempotencyTx,
 } from '../services/idempotency.service';
-import { evaluateClinicalSafetyServerSide } from '../services/clinical-safety.service';
+import {
+  canRoleOverrideClinicalSafety,
+  evaluateClinicalSafetyServerSide,
+  isValidOverrideReasonCode,
+  recordClinicalAuditLogTx,
+} from '../services/clinical-safety.service';
 
 const invoiceItemSchema = z.object({
   ProductID: z.coerce.number().int().positive(),
@@ -30,7 +34,9 @@ const createInvoiceSchema = z.object({
   Discount: z.coerce.number().min(0, 'Số tiền chiết khấu không được âm').optional().default(0),
   UsedPoints: z.coerce.number().int().min(0, 'Số điểm tích lũy không được âm').optional().default(0),
   Note: z.string().trim().optional().default(''),
+  ClinicalOverrideCode: z.string().trim().optional().default(''),
   ClinicalOverrideNote: z.string().trim().optional().default(''),
+  PatientAllergies: z.string().trim().optional().default(''),
   PaymentMethod: z.enum(['CASH', 'VIETQR', 'CARD', 'CREDIT', 'COD']).optional().default('VIETQR'),
   idempotencyKey: z.string().trim().optional(),
   items: z.array(invoiceItemSchema).min(1, 'Hóa đơn phải có ít nhất 1 sản phẩm thuốc'),
@@ -56,25 +62,38 @@ export function calculateServerShippingFee(params: {
 /**
  * LẤY DANH SÁCH HÓA ĐƠN ĐA KÊNH: POS, BÁN BUÔN B2B & ONLINE (GET /api/invoices)
  */
-export const getInvoices = async (_req: Request, res: Response): Promise<void> => {
+export const getInvoices = async (req: Request, res: Response): Promise<void> => {
   try {
     await packagingService.releaseExpiredReservations();
 
-    const rawInvoices = await prisma.invoice.findMany({
-      include: {
-        items: {
-          include: {
-            product: true,
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+    const skip = (page - 1) * limit;
+    const statusFilter = typeof req.query.status === 'string' && req.query.status !== 'ALL' ? req.query.status.trim() : undefined;
+    const whereClause = statusFilter ? { Status: statusFilter } : {};
+
+    const [total, rawInvoices] = await Promise.all([
+      prisma.invoice.count({ where: whereClause }),
+      prisma.invoice.findMany({
+        where: whereClause,
+        include: {
+          items: {
+            include: {
+              product: true,
+              lotAllocations: true,
+            },
           },
+          payment: true,
+          paymentTransactions: {
+            orderBy: { CreateDate: 'desc' },
+          },
+          customer: true,
         },
-        payment: true,
-        paymentTransactions: {
-          orderBy: { CreateDate: 'desc' },
-        },
-        customer: true,
-      },
-      orderBy: { CreateDate: 'desc' },
-    });
+        orderBy: { CreateDate: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
 
     const invoices = rawInvoices.map((inv) => ({
       ...inv,
@@ -86,7 +105,16 @@ export const getInvoices = async (_req: Request, res: Response): Promise<void> =
           : inv.Status,
     }));
 
-    res.json({ success: true, data: invoices });
+    res.json({
+      success: true,
+      data: invoices,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -115,17 +143,6 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       (req.headers['idempotency-key'] as string | undefined) || parsed.data.idempotencyKey;
     const actorKey = req.user ? `user:${req.user.UserID}` : 'pos-staff';
 
-    const idemCheck = await checkIdempotency(
-      rawIdemKey,
-      'CREATE_INVOICE',
-      actorKey,
-      parsed.data
-    );
-    if (idemCheck.hit && idemCheck.body) {
-      res.status(idemCheck.statusCode || 200).json(idemCheck.body);
-      return;
-    }
-
     const {
       CustomerName,
       CustomerPhone,
@@ -139,30 +156,60 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       Discount,
       UsedPoints,
       Note,
+      ClinicalOverrideCode,
       ClinicalOverrideNote,
+      PatientAllergies,
       PaymentMethod,
       items,
     } = parsed.data;
 
-    // Kiểm tra an toàn dược lâm sàng (Dị ứng & Tương tác thuốc) phía Server (Issue 16)
+    // Kiểm tra an toàn dược lâm sàng (S1: Phân quyền Override + Mã lý do có cấu trúc)
     const clinicalSafety = await evaluateClinicalSafetyServerSide({
       productIds: items.map((i) => i.ProductID),
       customerId: CustomerID,
+      patientAllergiesOverride: PatientAllergies,
     });
 
-    if (clinicalSafety.hasCriticalAllergy && (!ClinicalOverrideNote || ClinicalOverrideNote.length < 5)) {
-      res.status(422).json({
-        success: false,
-        code: 'CLINICAL_SAFETY_BLOCK',
-        message:
-          clinicalSafety.warnings[0]?.detail ||
-          'Phát hiện xung đột dị ứng / trùng hoạt chất nghiêm trọng! Dược sĩ cần nhập ghi chú quyết định chuyên môn (ClinicalOverrideNote) hoặc đổi thuốc.',
-        clinicalSafety,
-      });
-      return;
+    const requiresClinicalOverride =
+      clinicalSafety.hasCriticalAllergy || clinicalSafety.hasHighRiskWarning;
+
+    if (requiresClinicalOverride) {
+      if (!canRoleOverrideClinicalSafety(req.user?.Role)) {
+        res.status(403).json({
+          success: false,
+          code: 'CLINICAL_OVERRIDE_ROLE_REQUIRED',
+          message:
+            'Thu ngân (CASHIER) không được phép tự vượt cảnh báo dị ứng / tương tác thuốc nguy cơ cao. Yêu cầu Dược sĩ hoặc Quản trị viên xác nhận!',
+          clinicalSafety,
+        });
+        return;
+      }
+
+      if (
+        !isValidOverrideReasonCode(ClinicalOverrideCode) ||
+        !ClinicalOverrideNote ||
+        ClinicalOverrideNote.trim().length < 10
+      ) {
+        res.status(422).json({
+          success: false,
+          code: 'CLINICAL_SAFETY_BLOCK',
+          message:
+            clinicalSafety.warnings[0]?.detail ||
+            'Phát hiện cảnh báo lâm sàng mức CAO / dị ứng thuốc! Dược sĩ cần chọn mã lý do chuẩn (ClinicalOverrideCode) và ghi chú >= 10 ký tự.',
+          clinicalSafety,
+        });
+        return;
+      }
     }
 
-    const createdInvoice = await prisma.$transaction(async (tx) => {
+    const idemResult = await runWithIdempotencyTx(
+      {
+        rawKey: rawIdemKey,
+        scope: 'CREATE_INVOICE',
+        actorKey,
+        payload: parsed.data,
+      },
+      async (tx) => {
       await packagingService.releaseExpiredReservations(tx);
 
       // 1. Kiểm tra hồ sơ khách hàng / đại lý B2B & điểm tích lũy
@@ -200,9 +247,10 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
         UnitPrice: number;
         BaseQuantityDeducted: number;
         LooseUnitsDeducted: number;
-        BatchNumber: string;
-        ExpiryDate: string;
+        BatchNumber: string | null;
+        ExpiryDate: string | null;
         LotID: number | null;
+        allocations: Array<{ lotId: number; batchNumber: string; expiryDate: string; quantity: number }>;
         DosageNote: string;
       }> = [];
 
@@ -234,6 +282,7 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           BatchNumber: deducted.batchNumber,
           ExpiryDate: deducted.expiryDate,
           LotID: deducted.lotId,
+          allocations: deducted.allocations || [],
           DosageNote: item.DosageNote,
         });
       }
@@ -326,6 +375,7 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           ApprovedByUserID: actorUserId,
           ApprovedByName: actorName,
           ApprovedAt: new Date(),
+          ClinicalOverrideCode: requiresClinicalOverride ? ClinicalOverrideCode : null,
           ClinicalOverrideNote: ClinicalOverrideNote || null,
           ShippingAddress,
           ShippingMethod,
@@ -341,7 +391,21 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           TotalAmount: finalTotal,
           Status: 'COMPLETED',
           items: {
-            create: preparedItems,
+            create: preparedItems.map(({ allocations, ...itemFields }) => ({
+              ...itemFields,
+              ...(allocations.length > 0
+                ? {
+                    lotAllocations: {
+                      create: allocations.map((alloc) => ({
+                        LotID: alloc.lotId,
+                        BatchNumber: alloc.batchNumber,
+                        ExpiryDate: alloc.expiryDate,
+                        Quantity: alloc.quantity,
+                      })),
+                    },
+                  }
+                : {}),
+            })),
           },
           payment: {
             create: {
@@ -371,12 +435,28 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
             : {}),
         },
         include: {
-          items: { include: { product: true } },
+          items: { include: { product: true, lotAllocations: true } },
           payment: true,
           paymentTransactions: true,
           customer: true,
         },
       });
+
+      if (requiresClinicalOverride && actorUserId) {
+        await recordClinicalAuditLogTx(tx, {
+          actorUserId,
+          actorName,
+          actorRole: req.user?.Role || 'PHARMACIST',
+          contextType: 'POS_INVOICE',
+          invoiceId: inv.InvoiceID,
+          customerId: CustomerID || null,
+          patientAllergies: clinicalSafety.patientAllergies,
+          action: clinicalSafety.hasCriticalAllergy ? 'OVERRIDE_ALLERGY' : 'OVERRIDE_INTERACTION',
+          reasonCode: ClinicalOverrideCode,
+          reasonNote: ClinicalOverrideNote,
+          warnings: clinicalSafety.warnings,
+        });
+      }
 
       // Ghi sổ cái biến động kho Append-only (StockMovement — Issue 14)
       for (const createdItem of inv.items) {
@@ -400,28 +480,20 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
         });
       }
 
-      return inv;
+      return {
+        statusCode: 201,
+        body: {
+          success: true,
+          message: `Đã lập chứng từ ${inv.InvoiceCode} thành công`,
+          data: {
+            ...inv,
+            Status: 'COMPLETED',
+          },
+        },
+      };
     });
 
-    const responseBody = {
-      success: true,
-      message: `Đã lập chứng từ ${createdInvoice.InvoiceCode} thành công`,
-      data: {
-        ...createdInvoice,
-        Status: 'COMPLETED',
-      },
-    };
-
-    await saveIdempotency(
-      idemCheck.compositeKey,
-      'CREATE_INVOICE',
-      actorKey,
-      idemCheck.payloadHash,
-      201,
-      responseBody
-    );
-
-    res.status(201).json(responseBody);
+    res.status(idemResult.statusCode).json(idemResult.body);
   } catch (error: any) {
     if (error instanceof IdempotencyConflictError) {
       res.status(409).json({ success: false, message: error.message });
@@ -572,127 +644,118 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
       (req.headers['idempotency-key'] as string | undefined) || req.body?.idempotencyKey;
     const actorKey = req.user ? `user:${req.user.UserID}` : 'staff';
 
-    const idemCheck = await checkIdempotency(rawIdemKey, `COLLECT_DEBT:${invoiceId}`, actorKey, {
-      invoiceId,
-      payAmount,
-      method,
-    });
-    if (idemCheck.hit && idemCheck.body) {
-      res.status(idemCheck.statusCode || 200).json(idemCheck.body);
-      return;
-    }
+    const idemResult = await runWithIdempotencyTx(
+      {
+        rawKey: rawIdemKey,
+        scope: `COLLECT_DEBT:${invoiceId}`,
+        actorKey,
+        payload: { invoiceId, payAmount, method },
+      },
+      async (tx) => {
+        const invoice = await tx.invoice.findUnique({
+          where: { InvoiceID: invoiceId },
+          include: { payment: true, customer: true, onlineOrder: true },
+        });
 
-    const updated = await prisma.$transaction(async (tx) => {
-      const invoice = await tx.invoice.findUnique({
-        where: { InvoiceID: invoiceId },
-        include: { payment: true, customer: true, onlineOrder: true },
-      });
+        if (!invoice) {
+          throw new Error('Không tìm thấy hóa đơn cần thu tiền / đối soát');
+        }
+        if (invoice.Status === 'REFUNDED' || invoice.Status === 'CANCELLED') {
+          throw new Error('Hóa đơn đã hủy/hoàn trả, không thể thu tiền');
+        }
+        if (invoice.DebtAmount <= 0) {
+          throw new Error('Hóa đơn này đã được thanh toán đủ, không còn số dư cần thu');
+        }
 
-      if (!invoice) {
-        throw new Error('Không tìm thấy hóa đơn cần thu tiền / đối soát');
-      }
-      if (invoice.Status === 'REFUNDED' || invoice.Status === 'CANCELLED') {
-        throw new Error('Hóa đơn đã hủy/hoàn trả, không thể thu tiền');
-      }
-      if (invoice.DebtAmount <= 0) {
-        throw new Error('Hóa đơn này đã được thanh toán đủ, không còn số dư cần thu');
-      }
+        const collected = Math.min(invoice.DebtAmount, payAmount);
+        const nextPaid = invoice.PaidAmount + collected;
+        const nextDebt = Math.max(0, invoice.DebtAmount - collected);
+        const nextPaymentStatus = nextDebt === 0 ? 'PAID' : 'PARTIALLY_PAID';
 
-      const collected = Math.min(invoice.DebtAmount, payAmount);
-      const nextPaid = invoice.PaidAmount + collected;
-      const nextDebt = Math.max(0, invoice.DebtAmount - collected);
-      const nextPaymentStatus = nextDebt === 0 ? 'PAID' : 'PARTIALLY_PAID';
+        const isCodCollection = invoice.payment?.PaymentMethod === 'COD';
+        const entryType = isCodCollection ? 'COLLECT_COD' : 'DEBT_COLLECTION';
 
-      const isCodCollection = invoice.payment?.PaymentMethod === 'COD';
-      const entryType = isCodCollection ? 'COLLECT_COD' : 'DEBT_COLLECTION';
+        if (
+          invoice.CustomerID &&
+          invoice.customer &&
+          invoice.payment?.PaymentMethod === 'CREDIT'
+        ) {
+          await tx.customer.update({
+            where: { CustomerID: invoice.CustomerID },
+            data: {
+              DebtBalance: Math.max(0, (invoice.customer.DebtBalance || 0) - collected),
+            },
+          });
+        }
 
-      // Chỉ giảm DebtBalance của Customer nếu đây là khoản nợ CREDIT (không giảm nhầm nếu là đơn COD của khách có công nợ khác)
-      if (
-        invoice.CustomerID &&
-        invoice.customer &&
-        invoice.payment?.PaymentMethod === 'CREDIT'
-      ) {
-        await tx.customer.update({
-          where: { CustomerID: invoice.CustomerID },
+        if (invoice.payment) {
+          await tx.payment.update({
+            where: { PaymentID: invoice.payment.PaymentID },
+            data: {
+              PaidAmount: nextPaid,
+              Status: nextDebt === 0 ? 'COMPLETED' : 'PARTIAL',
+            },
+          });
+        }
+
+        await tx.paymentTransaction.create({
           data: {
-            DebtBalance: Math.max(0, (invoice.customer.DebtBalance || 0) - collected),
+            InvoiceID: invoice.InvoiceID,
+            EntryType: entryType,
+            PaymentMethod: method,
+            Amount: collected,
+            ReferenceCode: referenceCode,
+            ActorUserID: req.user?.UserID || null,
+            ActorName: req.user?.FullName || 'Kế toán Thu ngân',
+            Note:
+              note ||
+              (isCodCollection
+                ? `Đối soát tiền thu hộ COD cho đơn ${invoice.InvoiceCode}`
+                : `Thu công nợ B2B hóa đơn ${invoice.InvoiceCode}`),
+            Status: 'COMPLETED',
           },
         });
-      }
 
-      if (invoice.payment) {
-        await tx.payment.update({
-          where: { PaymentID: invoice.payment.PaymentID },
+        if (invoice.onlineOrder) {
+          await tx.onlineOrder.update({
+            where: { OrderID: invoice.onlineOrder.OrderID },
+            data: {
+              PaidAmount: nextPaid,
+              PaymentStatus: nextPaymentStatus,
+            },
+          });
+        }
+
+        const updated = await tx.invoice.update({
+          where: { InvoiceID: invoiceId },
           data: {
             PaidAmount: nextPaid,
-            Status: nextDebt === 0 ? 'COMPLETED' : 'PARTIAL',
-          },
-        });
-      }
-
-      await tx.paymentTransaction.create({
-        data: {
-          InvoiceID: invoice.InvoiceID,
-          EntryType: entryType,
-          PaymentMethod: method,
-          Amount: collected,
-          ReferenceCode: referenceCode,
-          ActorUserID: req.user?.UserID || null,
-          ActorName: req.user?.FullName || 'Kế toán Thu ngân',
-          Note:
-            note ||
-            (isCodCollection
-              ? `Đối soát tiền thu hộ COD cho đơn ${invoice.InvoiceCode}`
-              : `Thu công nợ B2B hóa đơn ${invoice.InvoiceCode}`),
-          Status: 'COMPLETED',
-        },
-      });
-
-      if (invoice.onlineOrder) {
-        await tx.onlineOrder.update({
-          where: { OrderID: invoice.onlineOrder.OrderID },
-          data: {
-            PaidAmount: nextPaid,
+            DebtAmount: nextDebt,
             PaymentStatus: nextPaymentStatus,
           },
+          include: {
+            items: { include: { product: true } },
+            payment: true,
+            paymentTransactions: { orderBy: { CreateDate: 'desc' } },
+            customer: true,
+          },
         });
+
+        return {
+          statusCode: 200,
+          body: {
+            success: true,
+            message: `Đã ghi nhận phiếu thu ${updated.InvoiceCode} thành công`,
+            data: {
+              ...updated,
+              Status: 'COMPLETED',
+            },
+          },
+        };
       }
-
-      return tx.invoice.update({
-        where: { InvoiceID: invoiceId },
-        data: {
-          PaidAmount: nextPaid,
-          DebtAmount: nextDebt,
-          PaymentStatus: nextPaymentStatus,
-        },
-        include: {
-          items: { include: { product: true } },
-          payment: true,
-          paymentTransactions: { orderBy: { CreateDate: 'desc' } },
-          customer: true,
-        },
-      });
-    });
-
-    const responseBody = {
-      success: true,
-      message: `Đã ghi nhận phiếu thu ${updated.InvoiceCode} thành công`,
-      data: {
-        ...updated,
-        Status: 'COMPLETED',
-      },
-    };
-
-    await saveIdempotency(
-      idemCheck.compositeKey,
-      `COLLECT_DEBT:${invoiceId}`,
-      actorKey,
-      idemCheck.payloadHash,
-      200,
-      responseBody
     );
 
-    res.json(responseBody);
+    res.status(idemResult.statusCode).json(idemResult.body);
   } catch (error) {
     if (error instanceof IdempotencyConflictError) {
       res.status(409).json({ success: false, message: error.message });
@@ -728,7 +791,7 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
       const invoice = await tx.invoice.findUnique({
         where: { InvoiceID: invoiceId },
         include: {
-          items: { include: { product: true } },
+          items: { include: { product: true, lotAllocations: true } },
           payment: true,
           customer: true,
           onlineOrder: true,
@@ -792,6 +855,11 @@ export const cancelInvoice = async (req: Request, res: Response): Promise<void> 
           {
             lotId: item.LotID,
             batchNumber: item.BatchNumber,
+            lotAllocations: item.lotAllocations.map((alloc) => ({
+              lotId: alloc.LotID,
+              batchNumber: alloc.BatchNumber,
+              quantity: alloc.Quantity,
+            })),
           }
         );
       }

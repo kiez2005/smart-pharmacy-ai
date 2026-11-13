@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   PackageCheck,
   Search,
@@ -18,9 +19,11 @@ import {
   Building2,
   ArrowRight,
   ClipboardList,
+  Lock,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { formsApi } from '../services/forms.api';
+import { CLINICAL_OVERRIDE_REASONS, formsApi } from '../services/forms.api';
 import { OnlineOrderRecord, InvoiceRecord } from '../types/forms';
 import { ModalPortal } from '../components/common/ModalPortal';
 
@@ -29,10 +32,16 @@ export const StaffOnlineOrdersPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [search, setSearch] = useState<string>('');
+  const [page, setPage] = useState<number>(1);
+  const [limit] = useState<number>(30);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const orderTableRef = useRef<HTMLDivElement | null>(null);
 
   // Modal Thẩm định lâm sàng của Dược sĩ
   const [reviewingOrder, setReviewingOrder] = useState<OnlineOrderRecord | null>(null);
   const [reviewAction, setReviewAction] = useState<'APPROVE' | 'REJECT'>('APPROVE');
+  const [clinicalOverrideCode, setClinicalOverrideCode] = useState<string>('');
   const [clinicalReviewNote, setClinicalReviewNote] = useState<string>('');
   const [rejectReason, setRejectReason] = useState<string>('');
   const [submittingReview, setSubmittingReview] = useState<boolean>(false);
@@ -42,6 +51,21 @@ export const StaffOnlineOrdersPage: React.FC = () => {
   const [courierTrackingCode, setCourierTrackingCode] = useState<string>('');
   const [submittingStage, setSubmittingStage] = useState<boolean>(false);
 
+  // Tải ảnh đơn thuốc bảo mật RBAC từ private endpoint (A5)
+  const [rxPreviewUrl, setRxPreviewUrl] = useState<string | null>(null);
+  const [rxLoading, setRxLoading] = useState<boolean>(false);
+
+  const canReviewClinical = (() => {
+    try {
+      const raw = localStorage.getItem('pharmacore_user');
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as { Role?: string };
+      return parsed.Role === 'ADMIN' || parsed.Role === 'PHARMACIST';
+    } catch {
+      return false;
+    }
+  })();
+
   // Modal Thu tiền COD
   const [collectingCodOrder, setCollectingCodOrder] = useState<OnlineOrderRecord | null>(null);
   const [codReceivedAmount, setCodReceivedAmount] = useState<number>(0);
@@ -50,10 +74,14 @@ export const StaffOnlineOrdersPage: React.FC = () => {
   const loadOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await formsApi.listStaffOnlineOrders(
-        statusFilter !== 'ALL' ? { status: statusFilter } : undefined
-      );
-      setOrders(data);
+      const res = await formsApi.listStaffOnlineOrdersPaged({
+        ...(statusFilter !== 'ALL' ? { status: statusFilter } : {}),
+        page,
+        limit,
+      });
+      setOrders(res.items);
+      setTotal(res.pagination.total);
+      setTotalPages(res.pagination.totalPages);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
@@ -62,11 +90,48 @@ export const StaffOnlineOrdersPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, page, limit]);
 
   useEffect(() => {
     void loadOrders();
   }, [loadOrders]);
+
+  useEffect(() => {
+    const fileKey = reviewingOrder?.PrescriptionFileKey || selectedOrder?.PrescriptionFileKey;
+    if (!fileKey) {
+      setRxPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    setRxLoading(true);
+    formsApi
+      .fetchPrescriptionImageBlobUrl(fileKey)
+      .then((url) => {
+        createdUrl = url;
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+        } else {
+          setRxPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setRxPreviewUrl(null);
+      })
+      .finally(() => {
+        if (!cancelled) setRxLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [reviewingOrder?.PrescriptionFileKey, selectedOrder?.PrescriptionFileKey]);
 
   const filteredOrders = orders.filter((o) => {
     if (!search.trim()) return true;
@@ -79,15 +144,33 @@ export const StaffOnlineOrdersPage: React.FC = () => {
     );
   });
 
+  const orderVirtualizer = useVirtualizer({
+    count: filteredOrders.length,
+    getScrollElement: () => orderTableRef.current,
+    estimateSize: () => 88,
+    overscan: 6,
+  });
+  const virtualOrderRows = orderVirtualizer.getVirtualItems();
+  const orderPaddingTop = virtualOrderRows.length > 0 ? virtualOrderRows[0].start : 0;
+  const orderPaddingBottom =
+    virtualOrderRows.length > 0
+      ? orderVirtualizer.getTotalSize() - virtualOrderRows[virtualOrderRows.length - 1].end
+      : 0;
+
   const handleOpenReview = (order: OnlineOrderRecord, action: 'APPROVE' | 'REJECT') => {
     setReviewingOrder(order);
     setReviewAction(action);
+    setClinicalOverrideCode('');
     setClinicalReviewNote('');
     setRejectReason('');
   };
 
   const handleSubmitReview = async () => {
     if (!reviewingOrder) return;
+    if (!canReviewClinical) {
+      toast.error('Chỉ Dược sĩ (PHARMACIST) hoặc Quản trị viên (ADMIN) mới có quyền thẩm định đơn Online!');
+      return;
+    }
     if (reviewAction === 'REJECT' && !rejectReason.trim()) {
       toast.error('Vui lòng nhập lý do từ chối đơn hàng để thông báo đến khách hàng!');
       return;
@@ -95,11 +178,13 @@ export const StaffOnlineOrdersPage: React.FC = () => {
     const hasWarnings =
       reviewingOrder.ClinicalSafetyStatus === 'WARNING_REQUIRES_REVIEW' ||
       (reviewingOrder.clinicalWarnings && reviewingOrder.clinicalWarnings.length > 0);
-    if (reviewAction === 'APPROVE' && hasWarnings && !clinicalReviewNote.trim()) {
-      toast.error(
-        'Đơn thuốc có cảnh báo tương tác / liều dùng. Dược sĩ bắt buộc phải ghi nhận thẩm định chuyên môn trước khi duyệt xuất kho!'
-      );
-      return;
+    if (reviewAction === 'APPROVE' && hasWarnings) {
+      if (!clinicalOverrideCode || clinicalReviewNote.trim().length < 10) {
+        toast.error(
+          'Đơn thuốc có cảnh báo lâm sàng. Dược sĩ bắt buộc phải chọn mã lý do và ghi chú thẩm định tối thiểu 10 ký tự!'
+        );
+        return;
+      }
     }
 
     setSubmittingReview(true);
@@ -109,6 +194,7 @@ export const StaffOnlineOrdersPage: React.FC = () => {
         reviewingOrder.OrderID,
         {
           action: reviewAction,
+          clinicalOverrideCode: clinicalOverrideCode || undefined,
           clinicalReviewNote: clinicalReviewNote.trim() || undefined,
           rejectReason: rejectReason.trim() || undefined,
         },
@@ -349,7 +435,10 @@ export const StaffOnlineOrdersPage: React.FC = () => {
             <button
               key={tab.id}
               type="button"
-              onClick={() => setStatusFilter(tab.id)}
+              onClick={() => {
+                setStatusFilter(tab.id);
+                setPage(1);
+              }}
               className={`h-8 px-3 rounded-lg text-xs font-semibold transition-colors shrink-0 ${
                 statusFilter === tab.id
                   ? 'bg-teal-600 text-white shadow-2xs'
@@ -371,10 +460,10 @@ export const StaffOnlineOrdersPage: React.FC = () => {
             Không tìm thấy đơn hàng trực tuyến nào phù hợp bộ lọc.
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div ref={orderTableRef} className="overflow-auto max-h-[560px]">
             <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/75 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
+              <thead className="sticky top-0 z-10 bg-slate-50 shadow-[0_1px_0_0_rgba(226,232,240,0.9)]">
+                <tr className="border-b border-slate-200 bg-slate-50/95 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
                   <th className="py-3 px-3.5">Mã đơn & Thời gian</th>
                   <th className="py-3 px-3.5">Khách hàng</th>
                   <th className="py-3 px-3.5">Mặt hàng đặt</th>
@@ -385,7 +474,13 @@ export const StaffOnlineOrdersPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredOrders.map((order) => {
+                {orderPaddingTop > 0 && (
+                  <tr>
+                    <td colSpan={7} style={{ height: `${orderPaddingTop}px`, padding: 0 }} />
+                  </tr>
+                )}
+                {virtualOrderRows.map((vRow) => {
+                  const order = filteredOrders[vRow.index];
                   const hasWarning =
                     order.ClinicalSafetyStatus === 'WARNING_REQUIRES_REVIEW' ||
                     (order.clinicalWarnings && order.clinicalWarnings.length > 0);
@@ -537,10 +632,38 @@ export const StaffOnlineOrdersPage: React.FC = () => {
                     </tr>
                   );
                 })}
+                {orderPaddingBottom > 0 && (
+                  <tr>
+                    <td colSpan={7} style={{ height: `${orderPaddingBottom}px`, padding: 0 }} />
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         )}
+        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-2.5 text-xs text-slate-600 bg-slate-50/60">
+          <span>
+            Trang <strong>{page}</strong> / {totalPages} ({total} đơn hàng)
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="h-7 px-2.5 rounded border border-slate-300 bg-white font-semibold disabled:opacity-40 hover:bg-slate-100"
+            >
+              Trước
+            </button>
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="h-7 px-2.5 rounded border border-slate-300 bg-white font-semibold disabled:opacity-40 hover:bg-slate-100"
+            >
+              Sau
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Modal Dược sĩ Thẩm định & Duyệt đơn */}
@@ -567,16 +690,49 @@ export const StaffOnlineOrdersPage: React.FC = () => {
               </div>
 
               <div className="space-y-3 text-xs">
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
                   <div className="font-bold text-slate-900">Đơn hàng: #{reviewingOrder.OrderCode}</div>
-                  <div className="text-slate-600 mt-1">
+                  <div className="text-slate-600">
                     Khách hàng: {reviewingOrder.CustomerName} ({reviewingOrder.CustomerPhone})
                   </div>
                   <div className="text-slate-600">Địa chỉ: {reviewingOrder.ShippingAddress}</div>
-                  <div className="text-teal-700 font-bold mt-1">
+                  {reviewingOrder.PatientAllergies && (
+                    <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-800 border border-rose-200">
+                      <AlertTriangle className="h-3 w-3 shrink-0" />
+                      Tiền sử dị ứng khách khai báo: {reviewingOrder.PatientAllergies}
+                    </div>
+                  )}
+                  <div className="text-teal-700 font-bold pt-0.5">
                     Tổng giá trị: {formatVND(reviewingOrder.TotalAmount)} ({reviewingOrder.PaymentMethod})
                   </div>
                 </div>
+
+                {/* Ảnh đơn thuốc bảo mật RBAC */}
+                {(reviewingOrder.PrescriptionFileKey || rxLoading) && (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-2.5 space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-bold text-indigo-900 text-[11px]">
+                      <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
+                      <span>Hình ảnh đơn thuốc bác sĩ (Truy cập bảo mật RBAC):</span>
+                    </div>
+                    {rxLoading ? (
+                      <div className="h-24 rounded-lg bg-slate-100 animate-pulse flex items-center justify-center text-slate-500">
+                        Đang tải ảnh đơn thuốc...
+                      </div>
+                    ) : rxPreviewUrl ? (
+                      <a href={rxPreviewUrl} target="_blank" rel="noreferrer" className="block">
+                        <img
+                          src={rxPreviewUrl}
+                          alt="Đơn thuốc bác sĩ"
+                          className="max-h-44 w-full object-contain rounded-lg border border-indigo-200 bg-white"
+                        />
+                      </a>
+                    ) : (
+                      <div className="text-[11px] text-rose-600">
+                        Không thể tải ảnh đơn thuốc hoặc thiếu quyền truy cập.
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Danh mục thuốc */}
                 <div className="space-y-1">
@@ -600,29 +756,61 @@ export const StaffOnlineOrdersPage: React.FC = () => {
                   <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 space-y-1">
                     <div className="flex items-center gap-1.5 font-bold text-rose-800">
                       <AlertTriangle className="h-4 w-4 text-rose-600" />
-                      <span>Cảnh báo An toàn Dược Lâm Sàng:</span>
+                      <span>Cảnh báo An toàn Dược Lâm Sàng ({reviewingOrder.clinicalWarnings.length}):</span>
                     </div>
                     {reviewingOrder.clinicalWarnings.map((w, idx) => (
                       <div key={idx} className="text-rose-700 pl-4">
-                        • <strong>{w.title}:</strong> {w.detail}
+                        • <strong>[{w.severity}] {w.title}:</strong> {w.detail}
+                        {w.ruleId && (
+                          <span className="ml-1 text-[10px] font-mono text-rose-500">
+                            ({w.ruleId}{w.source ? ` · ${w.source}` : ''})
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>
                 )}
 
                 {/* Form ghi nhận */}
-                {reviewAction === 'APPROVE' ? (
-                  <div className="space-y-1.5">
-                    <label className="block font-semibold text-slate-700">
-                      Ghi chú thẩm định của Dược sĩ (Bắt buộc nếu có cảnh báo lâm sàng):
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={clinicalReviewNote}
-                      onChange={(e) => setClinicalReviewNote(e.target.value)}
-                      placeholder="VD: Đã liên hệ bệnh nhân xác nhận liều lượng, hướng dẫn uống cách 2 giờ..."
-                      className="w-full rounded-lg border border-slate-300 p-2 text-xs focus:border-teal-600 focus:outline-none"
-                    />
+                {!canReviewClinical ? (
+                  <div className="rounded-xl border border-rose-300 bg-rose-50 p-2.5 flex items-start gap-2 text-rose-900 font-semibold">
+                    <Lock className="h-4 w-4 text-rose-700 shrink-0 mt-0.5" />
+                    <span>Chỉ Dược sĩ (PHARMACIST) hoặc Admin mới có quyền thẩm định và duyệt xuất đơn Online.</span>
+                  </div>
+                ) : reviewAction === 'APPROVE' ? (
+                  <div className="space-y-2">
+                    {(reviewingOrder.ClinicalSafetyStatus === 'WARNING_REQUIRES_REVIEW' ||
+                      (reviewingOrder.clinicalWarnings && reviewingOrder.clinicalWarnings.length > 0)) && (
+                      <div className="space-y-1">
+                        <label className="block font-semibold text-slate-700">
+                          Mã lý do vượt cảnh báo lâm sàng (Bắt buộc):
+                        </label>
+                        <select
+                          value={clinicalOverrideCode}
+                          onChange={(e) => setClinicalOverrideCode(e.target.value)}
+                          className="w-full h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:border-teal-600 focus:outline-none"
+                        >
+                          <option value="">-- Chọn mã lý do thẩm định --</option>
+                          {CLINICAL_OVERRIDE_REASONS.map((r) => (
+                            <option key={r.code} value={r.code}>
+                              {r.code} - {r.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <label className="block font-semibold text-slate-700">
+                        Ghi chú thẩm định của Dược sĩ (Tối thiểu 10 ký tự nếu có cảnh báo):
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={clinicalReviewNote}
+                        onChange={(e) => setClinicalReviewNote(e.target.value)}
+                        placeholder="VD: Đã liên hệ bệnh nhân xác nhận liều lượng, hướng dẫn uống cách 2 giờ..."
+                        className="w-full rounded-lg border border-slate-300 p-2 text-xs focus:border-teal-600 focus:outline-none"
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-1.5">
@@ -704,6 +892,11 @@ export const StaffOnlineOrdersPage: React.FC = () => {
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
                   <div><strong>Người nhận:</strong> {selectedOrder.CustomerName} ({selectedOrder.CustomerPhone})</div>
                   <div><strong>Địa chỉ:</strong> {selectedOrder.ShippingAddress}</div>
+                  {selectedOrder.PatientAllergies && (
+                    <div className="text-rose-700 font-bold">
+                      <strong>Dị ứng khách khai báo:</strong> {selectedOrder.PatientAllergies}
+                    </div>
+                  )}
                   <div><strong>Phương thức vận chuyển:</strong> {selectedOrder.ShippingMethod} (Phí ship: {formatVND(selectedOrder.ShippingFee)})</div>
                   {selectedOrder.CourierTrackingCode && (
                     <div className="text-teal-700 font-mono"><strong>Mã vận đơn bưu cục:</strong> {selectedOrder.CourierTrackingCode}</div>
@@ -716,6 +909,28 @@ export const StaffOnlineOrdersPage: React.FC = () => {
                     <div className="text-rose-700 font-semibold"><strong>Lý do từ chối/hủy:</strong> {selectedOrder.RejectCancelReason}</div>
                   )}
                 </div>
+
+                {selectedOrder.PrescriptionFileKey && (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-2.5 space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-bold text-indigo-900 text-[11px]">
+                      <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
+                      <span>Hình ảnh đơn thuốc đã tải lên (RBAC):</span>
+                    </div>
+                    {rxLoading ? (
+                      <div className="h-20 rounded-lg bg-slate-100 animate-pulse flex items-center justify-center text-slate-500">
+                        Đang tải ảnh đơn thuốc...
+                      </div>
+                    ) : rxPreviewUrl ? (
+                      <a href={rxPreviewUrl} target="_blank" rel="noreferrer" className="block">
+                        <img
+                          src={rxPreviewUrl}
+                          alt="Đơn thuốc khách tải lên"
+                          className="max-h-40 w-full object-contain rounded-lg border border-indigo-200 bg-white"
+                        />
+                      </a>
+                    ) : null}
+                  </div>
+                )}
 
                 {/* Nếu đang ở trạng thái PACKING, cho phép nhập mã vận đơn để xuất giao */}
                 {selectedOrder.Status === 'PACKING' && (

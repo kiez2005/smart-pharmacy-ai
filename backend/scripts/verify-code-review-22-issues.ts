@@ -1,7 +1,11 @@
 import { prisma } from '../src/config/prisma';
 import { packagingService } from '../src/services/packaging.service';
 import { evaluateClinicalSafetyServerSide } from '../src/services/clinical-safety.service';
-import { checkIdempotency, saveIdempotency } from '../src/services/idempotency.service';
+import {
+  IdempotencyConflictError,
+  runWithIdempotencyTx,
+} from '../src/services/idempotency.service';
+import { hashTrackingToken } from '../src/controllers/online-order.controller';
 
 /**
  * SCRIPT KIỂM THỬ TỰ ĐỘNG 10 TIÊU CHÍ NGHIỆM THU
@@ -29,6 +33,16 @@ async function main() {
         Unit: 'Hộp',
         Price: 50000,
         Description: 'Thuốc test race condition',
+      },
+    });
+    await prisma.stockLot.create({
+      data: {
+        ProductID: testProd1.ProductID,
+        BatchNumber: `LOT-RACE-${Date.now()}`,
+        ExpiryDate: '2028-12-31',
+        InitialQuantity: 1,
+        RemainingQuantity: 1,
+        Status: 'ACTIVE',
       },
     });
     await packagingService.getOrCreatePackagingSpec(testProd1);
@@ -100,27 +114,61 @@ async function main() {
     const payloadA = { orderId: 100, amount: 200000 };
     const payloadB = { orderId: 100, amount: 350000 };
 
-    const firstCheck = await checkIdempotency(testIdemKey, 'ONLINE_ORDER', 'USER_1', payloadA);
-    await saveIdempotency(firstCheck.compositeKey, 'ONLINE_ORDER', 'USER_1', payloadA, 201, {
-      message: 'Created Order',
-    });
+    let txRuns = 0;
+    const firstResult = await runWithIdempotencyTx(
+      {
+        rawKey: testIdemKey,
+        scope: 'ONLINE_ORDER',
+        actorKey: 'USER_1',
+        payload: payloadA,
+      },
+      async () => {
+        txRuns++;
+        return { statusCode: 201, body: { message: 'Created Order' } };
+      }
+    );
 
-    const replayCheck = await checkIdempotency(testIdemKey, 'ONLINE_ORDER', 'USER_1', payloadA);
+    const replayResult = await runWithIdempotencyTx(
+      {
+        rawKey: testIdemKey,
+        scope: 'ONLINE_ORDER',
+        actorKey: 'USER_1',
+        payload: payloadA,
+      },
+      async () => {
+        txRuns++;
+        return { statusCode: 201, body: { message: 'Should Not Run Again' } };
+      }
+    );
+
     let mismatchBlocked = false;
     try {
-      await checkIdempotency(testIdemKey, 'ONLINE_ORDER', 'USER_1', payloadB);
+      await runWithIdempotencyTx(
+        {
+          rawKey: testIdemKey,
+          scope: 'ONLINE_ORDER',
+          actorKey: 'USER_1',
+          payload: payloadB,
+        },
+        async () => {
+          txRuns++;
+          return { statusCode: 201, body: {} };
+        }
+      );
     } catch (err: unknown) {
-      if ((err as Error).message.includes('khác')) {
+      if (err instanceof IdempotencyConflictError || (err as Error).message.includes('khác')) {
         mismatchBlocked = true;
       }
     }
 
-    if (replayCheck.hit && mismatchBlocked) {
+    if (!firstResult.replayed && replayResult.replayed && txRuns === 1 && mismatchBlocked) {
       console.log('  ✅ ĐẠT: Gửi lại request cũ trả về cache, gửi payload khác cùng key bị chặn 409.');
       passedTests++;
     } else {
       console.error('  ❌ THẤT BẠI: Cơ chế Idempotency không phản hồi đúng như thiết kế!', {
-        hit: replayCheck.hit,
+        replayedFirst: firstResult.replayed,
+        replayedSecond: replayResult.replayed,
+        txRuns,
         mismatchBlocked,
       });
     }
@@ -137,6 +185,16 @@ async function main() {
         Unit: 'Hộp',
         Price: 100000,
         Description: 'Thuốc test release',
+      },
+    });
+    await prisma.stockLot.create({
+      data: {
+        ProductID: testProd3.ProductID,
+        BatchNumber: `LOT-REL-${Date.now()}`,
+        ExpiryDate: '2028-12-31',
+        InitialQuantity: 5,
+        RemainingQuantity: 5,
+        Status: 'ACTIVE',
       },
     });
     const spec3 = await packagingService.getOrCreatePackagingSpec(testProd3);
@@ -296,13 +354,15 @@ async function main() {
     }
 
     // -------------------------------------------------------------------------
-    // TIÊU CHÍ 6: Tra cứu đơn hàng bảo mật cách ly theo SĐT hoặc Tracking Token
+    // TIÊU CHÍ 6: Tra cứu đơn hàng bảo mật cách ly theo Tracking Token Hash (A5)
     // -------------------------------------------------------------------------
-    console.log('\n▶ [Test 6/10] Kiểm tra Bảo mật Tra cứu Đơn hàng Khách hàng...');
+    console.log('\n▶ [Test 6/10] Kiểm tra Bảo mật Tra cứu Đơn hàng Khách hàng (TrackingTokenHash)...');
+    const rawToken = `TRK-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
     const onlineOrder = await prisma.onlineOrder.create({
       data: {
-        OrderCode: `ORD-TEST-${Date.now()}`,
-        TrackingToken: `TRK-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        OrderCode: `WEB-TEST-${Date.now()}`,
+        TrackingTokenHash: hashTrackingToken(rawToken),
+        TrackingExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         CustomerName: 'Khách Hàng Bảo Mật',
         CustomerPhone: '0988776655',
         ShippingAddress: 'Hà Nội',
@@ -310,25 +370,19 @@ async function main() {
       },
     });
 
-    // Tra cứu đúng SĐT
+    // Tra cứu đúng OrderCode + TrackingTokenHash
     const validMatch = await prisma.onlineOrder.findFirst({
       where: {
         OrderCode: onlineOrder.OrderCode,
-        OR: [
-          { CustomerPhone: '0988776655' },
-          { TrackingToken: onlineOrder.TrackingToken },
-        ],
+        TrackingTokenHash: hashTrackingToken(rawToken),
       },
     });
 
-    // Tra cứu sai SĐT
+    // Tra cứu sai Token
     const invalidMatch = await prisma.onlineOrder.findFirst({
       where: {
         OrderCode: onlineOrder.OrderCode,
-        OR: [
-          { CustomerPhone: '0912345678' },
-          { TrackingToken: 'INVALID-TOKEN' },
-        ],
+        TrackingTokenHash: hashTrackingToken('INVALID-TOKEN'),
       },
     });
 
@@ -417,16 +471,15 @@ async function main() {
     });
 
     const hasDuplicateParacetamolWarning = safetyCheck.warnings.some(
-      (w) => w.severity === 'CRITICAL' && w.title.includes('Paracetamol')
+      (w) => (w.severity === 'HIGH' || w.severity === 'CRITICAL') && w.title.includes('Paracetamol')
     );
 
-    if (safetyCheck.hasCriticalAllergy && hasDuplicateParacetamolWarning) {
-      console.log('  ✅ ĐẠT: Server phát hiện trùng hoạt chất Paracetamol (CRITICAL) và yêu cầu Dược sĩ nhập ghi chú thẩm định.');
+    if (safetyCheck.hasHighRiskWarning && hasDuplicateParacetamolWarning) {
+      console.log('  ✅ ĐẠT: Server phát hiện trùng hoạt chất Paracetamol (HIGH) và yêu cầu Dược sĩ thẩm định.');
       passedTests++;
     } else {
       console.error('  ❌ THẤT BẠI: Không phát hiện cảnh báo tương tác thuốc!', {
-        status: safetyCheck.status,
-        hasCriticalAllergy: safetyCheck.hasCriticalAllergy,
+        hasHighRiskWarning: safetyCheck.hasHighRiskWarning,
         warnings: safetyCheck.warnings,
       });
     }

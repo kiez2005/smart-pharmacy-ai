@@ -11,24 +11,32 @@ import {
   RefreshCw,
   Pill,
   Layers,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { Product } from '../types';
 import {
   formatVND,
-  getAvailableBaseStock,
-  getEffectivePrice,
   getPackagingSpec,
+  getStockStatusBadgeInfo,
 } from '../utils/packaging';
 
 interface HomePageProps {
   products: Product[];
+  categories: string[];
+  selectedCategory: string;
+  onSelectCategory: (cat: string) => void;
+  page: number;
+  total: number;
+  totalPages: number;
+  onPageChange: (nextPage: number) => void;
   loading: boolean;
   search: string;
-  buyerMode: 'RETAIL' | 'WHOLESALE';
   onRefresh: () => void;
   onSelectProduct: (product: Product) => void;
   onQuickAdd: (product: Product) => void;
   onOpenPrescriptionModal: () => void;
+  onOpenB2BQuoteModal: () => void;
   onOpenTrackingModal: () => void;
 }
 
@@ -58,22 +66,31 @@ const SYMPTOM_FILTERS = [
 
 export const HomePage: React.FC<HomePageProps> = ({
   products,
+  categories: serverCategories,
+  selectedCategory,
+  onSelectCategory,
+  page,
+  total,
+  totalPages,
+  onPageChange,
   loading,
   search,
-  buyerMode,
   onRefresh,
   onSelectProduct,
   onQuickAdd,
   onOpenPrescriptionModal,
+  onOpenB2BQuoteModal,
   onOpenTrackingModal,
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [rxFilter, setRxFilter] = useState<'ALL' | 'OTC' | 'RX'>('ALL');
   const [symptomFilter, setSymptomFilter] = useState<string>('ALL_SYMPTOM');
 
   const categories = useMemo(
-    () => ['ALL', ...Array.from(new Set(products.map((p) => p.ProductType).filter(Boolean)))],
-    [products]
+    () =>
+      serverCategories.length > 0
+        ? ['ALL', ...serverCategories]
+        : ['ALL', ...Array.from(new Set(products.map((p) => p.ProductType).filter(Boolean)))],
+    [serverCategories, products]
   );
 
   const filteredProducts = useMemo(() => {
@@ -81,7 +98,6 @@ export const HomePage: React.FC<HomePageProps> = ({
     const activeSymptom = SYMPTOM_FILTERS.find((s) => s.id === symptomFilter);
 
     return products.filter((p) => {
-      if (selectedCategory !== 'ALL' && p.ProductType !== selectedCategory) return false;
       if (rxFilter === 'OTC' && p.IsRx) return false;
       if (rxFilter === 'RX' && !p.IsRx) return false;
 
@@ -98,83 +114,87 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       return true;
     });
-  }, [products, selectedCategory, rxFilter, search, symptomFilter]);
+  }, [products, rxFilter, search, symptomFilter]);
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
+    <main className="mx-auto max-w-7xl px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-5 sm:space-y-6">
       {/* Hero Banner */}
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-teal-700 via-teal-600 to-emerald-600 p-6 sm:p-8 text-white shadow-lg">
-        <div className="relative z-10 flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
+      <section className="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-br from-teal-700 via-teal-600 to-emerald-600 p-5 sm:p-8 text-white shadow-lg">
+        <div className="relative z-10 flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
           <div className="max-w-2xl space-y-3">
             <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur-xs">
-              <ShieldCheck className="h-4 w-4 text-emerald-200" />
+              <ShieldCheck className="h-4 w-4 text-emerald-200 shrink-0" />
               <span>Nhà thuốc Chuẩn GPP • Dược sĩ Kiểm duyệt 100% Đơn Hàng</span>
             </div>
-            <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl lg:text-4xl">
-              {buyerMode === 'WHOLESALE'
-                ? 'Kênh Cung Ứng Thuốc Sỉ B2B & Phòng Khám GDP'
-                : 'Mua Thuốc Chính Hãng — Giao Nhanh Trong 2 Giờ'}
+            <h1 className="text-xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight">
+              Mua Thuốc Chính Hãng — Giao Nhanh Trong 2 Giờ
             </h1>
-            <p className="text-sm text-teal-50 sm:text-base leading-relaxed">
-              {buyerMode === 'WHOLESALE'
-                ? 'Chiết khấu bậc thang theo Thùng / Hộp, hỗ trợ công nợ B2B, xuất hóa đơn VAT và vận chuyển xe lạnh GDP toàn quốc.'
-                : 'Đặt thuốc không kê đơn (OTC) chọn linh hoạt Hộp / Vỉ / Viên hoặc tải lên toa thuốc bác sĩ để Dược sĩ chuyên môn tư vấn & giữ kho nguyên tử 15 phút.'}
+            <p className="text-xs sm:text-base text-teal-50 leading-relaxed">
+              Đặt thuốc không kê đơn (OTC) linh hoạt theo Hộp / Vỉ / Viên hoặc tải lên toa thuốc bác sĩ để Dược sĩ chuyên môn tư vấn & giữ kho nguyên tử 15 phút.
             </p>
-            <div className="flex flex-wrap items-center gap-3 pt-1">
+            <div className="flex flex-wrap items-center gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={onOpenPrescriptionModal}
-                className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-teal-800 shadow-sm hover:bg-teal-50 transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3.5 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-bold text-teal-800 shadow-sm hover:bg-teal-50 transition-colors"
               >
                 <FilePlus2 className="h-4 w-4 text-teal-600" />
-                Gửi Ảnh Đơn Thuốc (Rx)
+                Gửi Đơn Thuốc (Rx)
               </button>
               <button
                 type="button"
                 onClick={onOpenTrackingModal}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/20 backdrop-blur-xs transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/30 bg-white/10 px-3.5 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-semibold text-white hover:bg-white/20 backdrop-blur-xs transition-colors"
               >
                 <SearchCheck className="h-4 w-4" />
-                Tra cứu đơn đã đặt
+                Tra cứu đơn
+              </button>
+              <button
+                type="button"
+                onClick={onOpenB2BQuoteModal}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/25 bg-indigo-600/70 px-3.5 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-semibold text-white hover:bg-indigo-600 transition-colors lg:hidden"
+              >
+                <Building2 className="h-4 w-4" />
+                Báo giá B2B
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 shrink-0 sm:w-80">
-            <div className="rounded-2xl bg-white/12 p-3.5 backdrop-blur-xs border border-white/15">
-              <Truck className="h-5 w-5 text-emerald-200 mb-1.5" />
-              <div className="text-sm font-bold">Giao hỏa tốc 2H</div>
-              <div className="text-[11px] text-teal-100">Giữ kho nguyên tử 15p</div>
+          <div className="grid grid-cols-2 gap-2.5 sm:gap-3 shrink-0 sm:w-80">
+            <div className="rounded-xl sm:rounded-2xl bg-white/12 p-3 sm:p-3.5 backdrop-blur-xs border border-white/15">
+              <Truck className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-200 mb-1" />
+              <div className="text-xs sm:text-sm font-bold">Giao hỏa tốc 2H</div>
+              <div className="text-[10px] sm:text-[11px] text-teal-100">Miễn phí đơn &ge; 300k</div>
             </div>
-            <div className="rounded-2xl bg-white/12 p-3.5 backdrop-blur-xs border border-white/15">
-              <Pill className="h-5 w-5 text-emerald-200 mb-1.5" />
-              <div className="text-sm font-bold">Bán lẻ Vỉ / Viên</div>
-              <div className="text-[11px] text-teal-100">Đúng liều theo toa</div>
+            <div className="rounded-xl sm:rounded-2xl bg-white/12 p-3 sm:p-3.5 backdrop-blur-xs border border-white/15">
+              <Pill className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-200 mb-1" />
+              <div className="text-xs sm:text-sm font-bold">Bán lẻ Vỉ / Viên</div>
+              <div className="text-[10px] sm:text-[11px] text-teal-100">Đúng liều theo toa</div>
             </div>
-            <div className="rounded-2xl bg-white/12 p-3.5 backdrop-blur-xs border border-white/15">
-              <CalendarClock className="h-5 w-5 text-emerald-200 mb-1.5" />
-              <div className="text-sm font-bold">Lô FEFO mới nhất</div>
-              <div className="text-[11px] text-teal-100">Minh bạch hạn sử dụng</div>
+            <div className="rounded-xl sm:rounded-2xl bg-white/12 p-3 sm:p-3.5 backdrop-blur-xs border border-white/15">
+              <CalendarClock className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-200 mb-1" />
+              <div className="text-xs sm:text-sm font-bold">Xuất kho FEFO</div>
+              <div className="text-[10px] sm:text-[11px] text-teal-100">Ưu tiên lô date chuẩn</div>
             </div>
-            <div className="rounded-2xl bg-white/12 p-3.5 backdrop-blur-xs border border-white/15">
-              <Building2 className="h-5 w-5 text-emerald-200 mb-1.5" />
-              <div className="text-sm font-bold">Giá sỉ từ {products.length > 0 ? 'B2B' : ''}</div>
-              <div className="text-[11px] text-teal-100">Hóa đơn VAT chuẩn</div>
+            <div className="rounded-xl sm:rounded-2xl bg-white/12 p-3 sm:p-3.5 backdrop-blur-xs border border-white/15">
+              <Building2 className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-200 mb-1" />
+              <div className="text-xs sm:text-sm font-bold">Cung ứng sỉ B2B</div>
+              <div className="text-[10px] sm:text-[11px] text-teal-100">Báo giá riêng qua Dược sĩ</div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Filter Bar: Pathology Pills + Category & Rx Filter */}
-      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-1.5">
+      {/* Filter Bar (Compact mobile-friendly horizontal scroll chips - U5) */}
+      <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-2xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
             {SYMPTOM_FILTERS.map((sym) => (
               <button
                 key={sym.id}
                 type="button"
                 onClick={() => setSymptomFilter(sym.id)}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold shrink-0 transition-colors ${
                   symptomFilter === sym.id
                     ? 'bg-teal-600 text-white shadow-xs'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
@@ -185,12 +205,12 @@ export const HomePage: React.FC<HomePageProps> = ({
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between md:justify-end gap-2">
             <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5 text-xs font-semibold">
               {[
                 { key: 'ALL' as const, label: 'Tất cả' },
-                { key: 'OTC' as const, label: 'OTC (Không kê đơn)' },
-                { key: 'RX' as const, label: 'Rx (Kê đơn)' },
+                { key: 'OTC' as const, label: 'OTC' },
+                { key: 'RX' as const, label: 'Kê đơn (Rx)' },
               ].map((opt) => (
                 <button
                   key={opt.key}
@@ -214,23 +234,23 @@ export const HomePage: React.FC<HomePageProps> = ({
               className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">Đồng bộ kho</span>
+              <span className="hidden sm:inline">Đồng bộ</span>
             </button>
           </div>
         </div>
 
         {/* Dynamic ProductType Category Chips */}
-        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 mr-1">
+        <div className="flex items-center gap-2 border-t border-slate-100 pt-3 overflow-x-auto pb-1 sm:pb-0 sm:flex-wrap">
+          <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 mr-1 shrink-0">
             <SlidersHorizontal className="h-3.5 w-3.5" />
-            Nhóm dược phẩm:
+            Nhóm:
           </span>
           {categories.map((cat) => (
             <button
               key={cat}
               type="button"
-              onClick={() => setSelectedCategory(cat)}
-              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+              onClick={() => onSelectCategory(cat)}
+              className={`rounded-lg border px-2.5 py-1 text-xs font-medium shrink-0 transition-colors ${
                 selectedCategory === cat
                   ? 'border-teal-600 bg-teal-50 text-teal-800 font-semibold'
                   : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
@@ -243,46 +263,43 @@ export const HomePage: React.FC<HomePageProps> = ({
       </section>
 
       {/* Catalog Grid */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
+      <section className="space-y-4">
+        <div className="flex items-center justify-between gap-2">
           <h2 className="text-base font-bold text-slate-900">
-            Danh mục sản phẩm ({filteredProducts.length})
+            Danh mục dược phẩm ({total})
           </h2>
-          {buyerMode === 'WHOLESALE' && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 border border-indigo-200">
-              <Building2 className="h-3.5 w-3.5" />
-              Đang áp dụng bảng giá Sỉ B2B
-            </span>
-          )}
+          <span className="text-xs text-slate-500">
+            Trang <strong>{page}</strong> / {totalPages}
+          </span>
         </div>
 
         {loading && products.length === 0 ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
             {Array.from({ length: 8 }).map((_, idx) => (
               <div
                 key={idx}
-                className="h-80 animate-pulse rounded-2xl border border-slate-200 bg-white p-4"
+                className="h-72 sm:h-80 animate-pulse rounded-2xl border border-slate-200 bg-white p-3 sm:p-4"
               >
-                <div className="h-40 rounded-xl bg-slate-100" />
-                <div className="mt-4 h-4 w-3/4 rounded bg-slate-100" />
+                <div className="h-32 sm:h-40 rounded-xl bg-slate-100" />
+                <div className="mt-3 h-4 w-3/4 rounded bg-slate-100" />
                 <div className="mt-2 h-3 w-1/2 rounded bg-slate-100" />
-                <div className="mt-6 h-9 rounded-xl bg-slate-100" />
+                <div className="mt-5 h-8 rounded-xl bg-slate-100" />
               </div>
             ))}
           </div>
         ) : filteredProducts.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
             <p className="text-sm font-bold text-slate-700">
               Không tìm thấy sản phẩm phù hợp với bộ lọc hiện tại
             </p>
             <p className="mt-1 text-xs text-slate-500">
               Bạn có thể xóa bộ lọc hoặc gửi ảnh đơn thuốc để Dược sĩ tìm giúp.
             </p>
-            <div className="mt-4 flex justify-center gap-2">
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
               <button
                 type="button"
                 onClick={() => {
-                  setSelectedCategory('ALL');
+                  onSelectCategory('ALL');
                   setRxFilter('ALL');
                   setSymptomFilter('ALL_SYMPTOM');
                 }}
@@ -300,13 +317,11 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
             {filteredProducts.map((product) => {
-              const availBase = getAvailableBaseStock(product);
               const spec = getPackagingSpec(product);
-              const price = getEffectivePrice(product, 'BASE', 1, buyerMode);
-              const earliestLot = product.stockLots?.[0];
-              const isOutOfStock = availBase <= 0 && spec.LooseUnits - spec.ReservedLooseUnits <= 0;
+              const stockBadge = getStockStatusBadgeInfo(product);
+              const isOutOfStock = product.InStock === false;
 
               return (
                 <article
@@ -314,101 +329,76 @@ export const HomePage: React.FC<HomePageProps> = ({
                   className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs transition-all hover:border-teal-300 hover:shadow-md"
                 >
                   <div>
-                    {/* Thumbnail */}
                     <button
                       type="button"
                       onClick={() => onSelectProduct(product)}
-                      className="relative block h-44 w-full overflow-hidden bg-slate-50 text-left"
+                      className="relative block h-36 sm:h-44 w-full overflow-hidden bg-slate-50 text-left"
                     >
                       <img
                         src={product.PathImage}
                         alt={product.ProductName}
+                        loading="lazy"
                         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                       />
-                      <div className="absolute left-2.5 top-2.5 flex flex-wrap gap-1.5">
+                      <div className="absolute left-2 top-2 flex flex-wrap gap-1">
                         {product.IsRx ? (
                           <span className="rounded-full border border-rose-200 bg-rose-50/95 px-2 py-0.5 text-[10px] font-bold text-rose-700 shadow-2xs">
-                            Thuốc kê đơn (Rx)
+                            Kê đơn (Rx)
                           </span>
                         ) : (
                           <span className="rounded-full border border-emerald-200 bg-emerald-50/95 px-2 py-0.5 text-[10px] font-bold text-emerald-700 shadow-2xs">
-                            Không kê đơn (OTC)
+                            OTC
                           </span>
                         )}
                       </div>
 
-                      {buyerMode === 'WHOLESALE' && price < product.Price && (
-                        <span className="absolute right-2.5 top-2.5 rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
-                          Giá sỉ B2B
-                        </span>
-                      )}
-
                       {isOutOfStock && (
                         <div className="absolute inset-0 flex items-center justify-center bg-slate-900/45">
                           <span className="rounded-lg bg-white px-2.5 py-1 text-xs font-bold text-slate-900">
-                            Tạm hết tồn khả dụng
+                            Tạm hết hàng
                           </span>
                         </div>
                       )}
                     </button>
 
-                    {/* Content */}
-                    <div className="p-4 space-y-2">
-                      <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-teal-700">
-                        <span className="truncate">{product.ProductType}</span>
-                        <span className="shrink-0 text-slate-500 tabular-nums">
-                          Còn {availBase} {product.Unit}
+                    <div className="p-3 sm:p-4 space-y-1.5 sm:space-y-2">
+                      <div className="flex items-center justify-between gap-1.5 text-[10px] sm:text-[11px] font-semibold">
+                        <span className="truncate text-teal-700">{product.ProductType}</span>
+                        <span className={`shrink-0 rounded-full border px-1.5 py-0.2 ${stockBadge.className}`}>
+                          {stockBadge.label}
                         </span>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => onSelectProduct(product)}
-                        className="line-clamp-2 text-left text-sm font-bold text-slate-900 hover:text-teal-700"
+                        className="line-clamp-2 text-left text-xs sm:text-sm font-bold text-slate-900 hover:text-teal-700"
                       >
                         {product.ProductName}
                       </button>
 
-                      <p className="line-clamp-2 text-xs text-slate-500 leading-relaxed">
+                      <p className="hidden sm:line-clamp-2 text-xs text-slate-500 leading-relaxed">
                         {product.Description}
                       </p>
-
-                      {earliestLot && (
-                        <div className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
-                          <CalendarClock className="h-3 w-3 text-teal-600" />
-                          <span>
-                            Lô {earliestLot.BatchNumber} • HSD{' '}
-                            {new Date(earliestLot.ExpiryDate).toLocaleDateString('vi-VN')}
-                          </span>
-                        </div>
-                      )}
                     </div>
                   </div>
 
-                  {/* Price & Actions */}
-                  <div className="border-t border-slate-100 bg-slate-50/50 p-4 pt-3 space-y-2.5">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <div>
-                        <span className="text-base font-extrabold text-teal-700 tabular-nums">
-                          {formatVND(price)}
-                        </span>
-                        <span className="ml-1 text-xs text-slate-500">/ {product.Unit}</span>
-                      </div>
-                      {buyerMode === 'WHOLESALE' && price < product.Price && (
-                        <span className="text-xs text-slate-400 line-through tabular-nums">
-                          {formatVND(product.Price)}
-                        </span>
-                      )}
+                  <div className="border-t border-slate-100 bg-slate-50/50 p-3 sm:p-4 pt-2.5 sm:pt-3 space-y-2">
+                    <div>
+                      <span className="text-sm sm:text-base font-extrabold text-teal-700 tabular-nums">
+                        {formatVND(product.Price)}
+                      </span>
+                      <span className="ml-1 text-[11px] text-slate-500">/ {product.Unit}</span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
                       <button
                         type="button"
                         onClick={() => onSelectProduct(product)}
-                        className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                        className="hidden sm:inline-flex flex-1 items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                       >
                         <Layers className="h-3.5 w-3.5 text-teal-600" />
-                        {spec.AllowFractionalSale ? 'Chọn Hộp/Vỉ/Viên' : 'Chi tiết'}
+                        {spec.AllowFractionalSale ? 'Hộp/Vỉ/Viên' : 'Chi tiết'}
                       </button>
                       <button
                         type="button"
@@ -424,6 +414,35 @@ export const HomePage: React.FC<HomePageProps> = ({
                 </article>
               );
             })}
+          </div>
+        )}
+
+        {/* Server-side Pagination Controls (P1) */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+            <span>
+              Hiển thị trang <strong>{page}</strong> / {totalPages} ({total} sản phẩm)
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => onPageChange(Math.max(1, page - 1))}
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                Trước
+              </button>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              >
+                Sau
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         )}
       </section>

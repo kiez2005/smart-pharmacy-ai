@@ -310,6 +310,14 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
 
   return (
     <div className="space-y-6">
+      <div className="rounded-xl border border-amber-300 bg-amber-50/90 px-4 py-2.5 text-xs text-amber-950 flex items-start gap-2">
+        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+        <span>
+          <strong>Lưu ý an toàn Dược lâm sàng (Advisory Only):</strong>{' '}
+          {ocrResult?.disclaimer ||
+            'Kết quả nhận diện OCR từ ảnh chỉ hỗ trợ nhập liệu. Dược sĩ bắt buộc đối chiếu lại từng tên thuốc, hàm lượng và liều dùng với đơn gốc trước khi duyệt xuất POS.'}
+        </span>
+      </div>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>

@@ -100,8 +100,14 @@ export interface DrugInteractionResult {
   checkedProductsCount: number;
   patientAllergies?: string;
   isSafe: boolean;
+  isAdvisoryOnly?: boolean;
+  disclaimer?: string;
+  ruleVersion?: string;
   warnings: Array<{
-    severity: 'HIGH' | 'MEDIUM' | 'LOW';
+    ruleId?: string;
+    source?: string;
+    severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+    category?: 'ALLERGY' | 'DUPLICATE_INGREDIENT' | 'DRUG_INTERACTION' | 'DOSAGE_WARNING';
     title: string;
     detail: string;
     recommendation: string;

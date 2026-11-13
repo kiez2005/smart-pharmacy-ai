@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { createContact, getContacts, replyContact } from '../controllers/contact.controller';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware';
+import { publicWriteLimiter } from '../middlewares/rate-limit.middleware';
 
 const router = Router();
 
-// Khách hàng gửi thư liên hệ / yêu cầu tư vấn (Public)
-router.post('/', createContact);
+// Khách hàng gửi thư liên hệ / yêu cầu tư vấn (Public, rate-limited A4)
+router.post('/', publicWriteLimiter, createContact);
 
 // Dược sĩ xem danh sách thư cần phản hồi (ADMIN, PHARMACIST)
 router.get('/', authenticateToken, requireRoles(['ADMIN', 'PHARMACIST']), getContacts);

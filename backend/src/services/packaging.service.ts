@@ -547,7 +547,12 @@ export class PackagingService {
     productId: number,
     packagesNeeded: number,
     tx: any = defaultPrisma
-  ): Promise<{ batchNumber: string; expiryDate: string; lotId: number | null }> {
+  ): Promise<{
+    batchNumber: string | null;
+    expiryDate: string | null;
+    lotId: number | null;
+    allocations: Array<{ lotId: number; batchNumber: string; expiryDate: string; quantity: number }>;
+  }> {
     const todayIso = new Date().toISOString().slice(0, 10);
 
     // Tìm các lô đang ACTIVE, chưa hết hạn và còn tồn > 0, sắp xếp HSD gần nhất trước (FEFO)
@@ -561,40 +566,37 @@ export class PackagingService {
       orderBy: [{ ExpiryDate: 'asc' }, { LotID: 'asc' }],
     });
 
-    if (activeLots.length === 0) {
-      // Nếu sản phẩm chưa có bản ghi trong StockLot nhưng có PurchaseOrderItem -> tự động đồng bộ lô chuẩn từ PO hoặc tạo lô gốc
-      const product = await tx.product.findUnique({ where: { ProductID: productId } });
-      const latestPoItem = await tx.purchaseOrderItem.findFirst({
-        where: { ProductID: productId },
-        orderBy: { OrderItemID: 'desc' },
-      });
-      const defaultBatch = latestPoItem?.BatchNumber || `LOT-26${String(productId).padStart(3, '0')}`;
-      const defaultExpiry =
-        latestPoItem?.ExpiryDate && latestPoItem.ExpiryDate >= todayIso
-          ? latestPoItem.ExpiryDate
-          : '2028-12-31';
-      const initialQty = Math.max(product?.Quantity || 0, packagesNeeded);
-
-      const createdLot = await tx.stockLot.create({
-        data: {
-          ProductID: productId,
-          BatchNumber: defaultBatch,
-          ExpiryDate: defaultExpiry,
-          InitialQuantity: initialQty,
-          RemainingQuantity: Math.max(0, initialQty - packagesNeeded),
-          ImportPrice: latestPoItem?.ImportPrice || Math.round((product?.Price || 10000) * 0.7),
-          Status: 'ACTIVE',
-        },
-      });
+    if (packagesNeeded <= 0) {
+      const firstLot = activeLots[0] ?? null;
       return {
-        batchNumber: createdLot.BatchNumber,
-        expiryDate: createdLot.ExpiryDate,
-        lotId: createdLot.LotID,
+        batchNumber: firstLot?.BatchNumber ?? null,
+        expiryDate: firstLot?.ExpiryDate ?? null,
+        lotId: firstLot?.LotID ?? null,
+        allocations: [],
       };
     }
 
+    const totalAvailableInLots = activeLots.reduce(
+      (sum: number, lot: { RemainingQuantity: number }) => sum + lot.RemainingQuantity,
+      0
+    );
+
+    if (totalAvailableInLots < packagesNeeded) {
+      const err: any = new Error(
+        `Tồn kho theo lô FEFO (còn hạn sử dụng) không đủ cho sản phẩm #${productId}: cần ${packagesNeeded}, các lô khả dụng chỉ còn ${totalAvailableInLots}.`
+      );
+      err.statusCode = 409;
+      err.code = 'OUT_OF_STOCK';
+      throw err;
+    }
+
     let remainingToAllocate = packagesNeeded;
-    const primaryLot = activeLots[0];
+    const allocations: Array<{
+      lotId: number;
+      batchNumber: string;
+      expiryDate: string;
+      quantity: number;
+    }> = [];
 
     for (const lot of activeLots) {
       if (remainingToAllocate <= 0) break;
@@ -608,14 +610,25 @@ export class PackagingService {
             Status: nextRemaining === 0 ? 'DEPLETED' : 'ACTIVE',
           },
         });
+        allocations.push({
+          lotId: lot.LotID,
+          batchNumber: lot.BatchNumber,
+          expiryDate: lot.ExpiryDate,
+          quantity: take,
+        });
         remainingToAllocate -= take;
       }
     }
 
+    const primaryLot = allocations[0];
     return {
-      batchNumber: primaryLot.BatchNumber,
-      expiryDate: primaryLot.ExpiryDate,
-      lotId: primaryLot.LotID,
+      batchNumber:
+        allocations.length > 1
+          ? allocations.map((a) => `${a.batchNumber}(${a.quantity})`).join(', ')
+          : primaryLot.batchNumber,
+      expiryDate: primaryLot.expiryDate,
+      lotId: primaryLot.lotId,
+      allocations,
     };
   }
 
@@ -634,9 +647,10 @@ export class PackagingService {
     }
   ): Promise<
     UnitCalculationResult & {
-      batchNumber: string;
-      expiryDate: string;
+      batchNumber: string | null;
+      expiryDate: string | null;
       lotId: number | null;
+      allocations: Array<{ lotId: number; batchNumber: string; expiryDate: string; quantity: number }>;
     }
   > {
     const freshProduct = await tx.product.findUnique({
@@ -914,9 +928,10 @@ export class PackagingService {
   ): Promise<{
     baseQuantityDeducted: number;
     looseUnitsDeducted: number;
-    batchNumber: string;
-    expiryDate: string;
+    batchNumber: string | null;
+    expiryDate: string | null;
     lotId: number | null;
+    allocations: Array<{ lotId: number; batchNumber: string; expiryDate: string; quantity: number }>;
   }> {
     const reservation = await tx.inventoryReservation.findUnique({
       where: { ReservationID: reservationId },
@@ -1022,7 +1037,11 @@ export class PackagingService {
     packagesDeducted: number,
     totalSmallestUnitsDeducted: number,
     tx: any = defaultPrisma,
-    lotOptions?: { lotId?: number | null; batchNumber?: string | null }
+    lotOptions?: {
+      lotId?: number | null;
+      batchNumber?: string | null;
+      lotAllocations?: Array<{ lotId: number; batchNumber?: string | null; quantity: number }>;
+    }
   ): Promise<{ restoredPackages: number; newLooseUnits: number }> {
     const freshProduct =
       (await tx.product.findUnique({ where: { ProductID: productOrInput.ProductID } })) ||
@@ -1059,28 +1078,58 @@ export class PackagingService {
       },
     });
 
-    // Hoàn trả số lượng hộp nguyên về đúng Lô (StockLot) đã xuất
+    // D1 FIX: Hoàn trả chính xác số lượng hộp nguyên về TỪNG Lô (StockLot) đã phân bổ
     if (restoredPackages > 0) {
-      let targetLot = null;
-      if (lotOptions?.lotId) {
-        targetLot = await tx.stockLot.findUnique({ where: { LotID: lotOptions.lotId } });
+      let remainingToRestore = restoredPackages;
+
+      if (lotOptions?.lotAllocations && lotOptions.lotAllocations.length > 0) {
+        for (const alloc of lotOptions.lotAllocations) {
+          if (remainingToRestore <= 0) break;
+          const give = Math.min(remainingToRestore, alloc.quantity);
+          if (give <= 0) continue;
+
+          const lot = await tx.stockLot.findUnique({ where: { LotID: alloc.lotId } });
+          if (lot) {
+            await tx.stockLot.update({
+              where: { LotID: lot.LotID },
+              data: {
+                RemainingQuantity: { increment: give },
+                Status: 'ACTIVE',
+              },
+            });
+            remainingToRestore -= give;
+          }
+        }
       }
-      if (!targetLot && lotOptions?.batchNumber) {
-        targetLot = await tx.stockLot.findFirst({
-          where: {
-            ProductID: freshProduct.ProductID,
-            BatchNumber: lotOptions.batchNumber,
-          },
-        });
-      }
-      if (targetLot) {
-        await tx.stockLot.update({
-          where: { LotID: targetLot.LotID },
-          data: {
-            RemainingQuantity: { increment: restoredPackages },
-            Status: 'ACTIVE',
-          },
-        });
+
+      if (remainingToRestore > 0) {
+        let targetLot = null;
+        if (lotOptions?.lotId) {
+          targetLot = await tx.stockLot.findUnique({ where: { LotID: lotOptions.lotId } });
+        }
+        if (!targetLot && lotOptions?.batchNumber) {
+          targetLot = await tx.stockLot.findFirst({
+            where: {
+              ProductID: freshProduct.ProductID,
+              BatchNumber: lotOptions.batchNumber,
+            },
+          });
+        }
+        if (!targetLot) {
+          targetLot = await tx.stockLot.findFirst({
+            where: { ProductID: freshProduct.ProductID },
+            orderBy: [{ ExpiryDate: 'desc' }, { LotID: 'desc' }],
+          });
+        }
+        if (targetLot) {
+          await tx.stockLot.update({
+            where: { LotID: targetLot.LotID },
+            data: {
+              RemainingQuantity: { increment: remainingToRestore },
+              Status: 'ACTIVE',
+            },
+          });
+        }
       }
     }
 

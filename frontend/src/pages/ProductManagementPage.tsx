@@ -7,6 +7,7 @@ import {
   useReactTable,
   VisibilityState,
 } from '@tanstack/react-table';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Plus,
   Search,
@@ -95,6 +96,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const tableParentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     localStorage.setItem('pharmacy_product_columns', JSON.stringify(columnVisibility));
@@ -710,6 +712,20 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
     getCoreRowModel: getCoreRowModel(),
   });
 
+  const tableRows = table.getRowModel().rows;
+  const rowVirtualizer = useVirtualizer({
+    count: tableRows.length,
+    getScrollElement: () => tableParentRef.current,
+    estimateSize: () => 58,
+    overscan: 8,
+  });
+  const virtualProductRows = rowVirtualizer.getVirtualItems();
+  const productPaddingTop = virtualProductRows.length > 0 ? virtualProductRows[0].start : 0;
+  const productPaddingBottom =
+    virtualProductRows.length > 0
+      ? rowVirtualizer.getTotalSize() - virtualProductRows[virtualProductRows.length - 1].end
+      : 0;
+
   return (
     <div className="space-y-5">
       {/* Header khu vực quản lý kho */}
@@ -981,14 +997,14 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           </div>
         </div>
 
-        {/* Table Content */}
-        <div className="overflow-x-auto">
+        {/* Table Content (Virtualized) */}
+        <div ref={tableParentRef} className="overflow-auto max-h-[560px]">
           <table className="w-full text-left border-collapse">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-zinc-50 shadow-[0_1px_0_0_rgba(228,228,231,0.9)]">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr
                   key={headerGroup.id}
-                  className="border-b border-zinc-200/80 bg-zinc-50/60 text-xs font-medium text-zinc-500"
+                  className="border-b border-zinc-200/80 bg-zinc-50/95 text-xs font-medium text-zinc-500"
                 >
                   {headerGroup.headers.map((header) => (
                     <th key={header.id} className="h-10 px-4 whitespace-nowrap font-medium">
@@ -1007,27 +1023,42 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                     Đang tải dữ liệu...
                   </td>
                 </tr>
-              ) : table.getRowModel().rows.length === 0 ? (
+              ) : tableRows.length === 0 ? (
                 <tr>
                   <td colSpan={columns.length} className="py-12 text-center text-zinc-500">
                     Không tìm thấy dược phẩm phù hợp với bộ lọc hiện tại.
                   </td>
                 </tr>
               ) : (
-                table.getRowModel().rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    className={`transition-colors hover:bg-zinc-50/80 ${
-                      row.getIsSelected() ? 'bg-zinc-100/70' : ''
-                    }`}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-2.5 align-middle">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))
+                <>
+                  {productPaddingTop > 0 && (
+                    <tr>
+                      <td colSpan={columns.length} style={{ height: `${productPaddingTop}px`, padding: 0 }} />
+                    </tr>
+                  )}
+                  {virtualProductRows.map((virtualRow) => {
+                    const row = tableRows[virtualRow.index];
+                    return (
+                      <tr
+                        key={row.id}
+                        className={`transition-colors hover:bg-zinc-50/80 ${
+                          row.getIsSelected() ? 'bg-zinc-100/70' : ''
+                        }`}
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <td key={cell.id} className="px-4 py-2.5 align-middle">
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                  {productPaddingBottom > 0 && (
+                    <tr>
+                      <td colSpan={columns.length} style={{ height: `${productPaddingBottom}px`, padding: 0 }} />
+                    </tr>
+                  )}
+                </>
               )}
             </tbody>
           </table>

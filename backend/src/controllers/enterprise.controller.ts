@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { evaluateDrugSetSafety } from '../services/clinical-safety.service';
 import ExcelJS from 'exceljs';
 import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import path from 'path';
@@ -466,18 +467,32 @@ const customerSchema = z.object({
   ChronicCond: z.string().trim().optional().default('Không'),
 });
 
-export const getCustomers = async (_req: Request, res: Response): Promise<void> => {
+export const getCustomers = async (req: Request, res: Response): Promise<void> => {
   try {
-    const customers = await prisma.customer.findMany({
-      include: {
-        invoices: {
-          include: { items: { include: { product: true } } },
-          orderBy: { CreateDate: 'desc' },
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+    const skip = (page - 1) * limit;
+
+    const [total, customers] = await Promise.all([
+      prisma.customer.count(),
+      prisma.customer.findMany({
+        include: {
+          invoices: {
+            include: { items: { include: { product: true } } },
+            orderBy: { CreateDate: 'desc' },
+          },
         },
-      },
-      orderBy: { CustomerID: 'desc' },
+        orderBy: { CustomerID: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: customers,
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
     });
-    res.json({ success: true, data: customers });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -541,20 +556,29 @@ export const updateCustomer = async (req: Request, res: Response): Promise<void>
 // ============================================================================
 // 5. SỔ QUỸ THANH TOÁN & ĐỐI SOÁT GIAO DỊCH (/payments)
 // ============================================================================
-export const getPaymentsLedger = async (_req: Request, res: Response): Promise<void> => {
+export const getPaymentsLedger = async (req: Request, res: Response): Promise<void> => {
   try {
-    const [rawPayments, rawLedgerTx] = await Promise.all([
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+    const skip = (page - 1) * limit;
+
+    const [total, rawPayments, rawLedgerTx] = await Promise.all([
+      prisma.payment.count(),
       prisma.payment.findMany({
         include: {
           invoice: true,
         },
         orderBy: { PaymentDate: 'desc' },
+        skip,
+        take: limit,
       }),
       prisma.paymentTransaction.findMany({
         include: {
           invoice: true,
         },
         orderBy: { CreateDate: 'desc' },
+        skip,
+        take: limit,
       }),
     ]);
 
@@ -568,6 +592,7 @@ export const getPaymentsLedger = async (_req: Request, res: Response): Promise<v
       success: true,
       data: payments,
       transactions: rawLedgerTx,
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
     });
   } catch {
     res.status(500).json({
@@ -606,12 +631,29 @@ export const getStaffList = async (_req: Request, res: Response): Promise<void> 
 export const updateStaffRole = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ success: false, message: 'ID nhân sự không hợp lệ' });
+      return;
+    }
     const { Role, Status } = req.body as { Role?: string; Status?: string };
+    const allowedRoles = new Set(['ADMIN', 'PHARMACIST', 'CASHIER']);
+    const allowedStatuses = new Set(['ACTIVE', 'INACTIVE']);
+
+    if (Role !== undefined && !allowedRoles.has(Role)) {
+      res.status(400).json({ success: false, message: 'Vai trò phân quyền không hợp lệ' });
+      return;
+    }
+    if (Status !== undefined && !allowedStatuses.has(Status)) {
+      res.status(400).json({ success: false, message: 'Trạng thái tài khoản không hợp lệ' });
+      return;
+    }
+
     const updated = await prisma.user.update({
       where: { UserID: id },
       data: {
         ...(Role ? { Role } : {}),
         ...(Status ? { Status } : {}),
+        TokenVersion: { increment: 1 },
       },
       select: {
         UserID: true,
@@ -654,112 +696,21 @@ export const checkDrugInteractions = async (req: Request, res: Response): Promis
       where: { ProductID: { in: productIds.map(Number) } },
     });
 
-    const warnings: Array<{
-      severity: 'HIGH' | 'MEDIUM' | 'LOW';
-      title: string;
-      detail: string;
-      recommendation: string;
-    }> = [];
-
-    // 1. Kiểm tra trùng lặp hoạt chất Paracetamol (Nguy cơ ngộ độc gan)
-    const paracetamolDrugs = products.filter(
-      (p) =>
-        p.Description.toLowerCase().includes('paracetamol') ||
-        p.ProductName.toLowerCase().includes('panadol') ||
-        p.ProductName.toLowerCase().includes('efferalgan') ||
-        p.ProductName.toLowerCase().includes('hapacol') ||
-        p.ProductName.toLowerCase().includes('tiffy') ||
-        p.ProductName.toLowerCase().includes('decolgen')
-    );
-
-    if (paracetamolDrugs.length >= 2) {
-      warnings.push({
-        severity: 'HIGH',
-        title: `Trùng lặp hoạt chất Paracetamol (${paracetamolDrugs.map((d) => d.ProductName).join(' + ')})`,
-        detail:
-          'Các thuốc được chọn đều chứa hoạt chất Paracetamol. Sử dụng đồng thời có nguy cơ vượt ngưỡng tối đa 4.000mg/24 giờ gây độc tế bào gan cấp tính.',
-        recommendation:
-          'Chỉ giữ lại 1 chế phẩm chứa Paracetamol trong đơn, loại bỏ thuốc trùng lặp.',
-      });
-    }
-
-    // 2. Kiểm tra nhóm kháng viêm NSAID (Ibuprofen, Diclofenac, Aspirin)
-    const nsaidDrugs = products.filter(
-      (p) =>
-        p.Description.toLowerCase().includes('nsaid') ||
-        p.Description.toLowerCase().includes('ibuprofen') ||
-        p.Description.toLowerCase().includes('diclofenac')
-    );
-
-    if (nsaidDrugs.length >= 2) {
-      warnings.push({
-        severity: 'HIGH',
-        title: 'Tương tác bất lợi giữa các thuốc kháng viêm NSAID',
-        detail:
-          'Phối hợp nhiều thuốc nhóm NSAID làm tăng nguy cơ loét, xuất huyết tiêu hóa và suy giảm chức năng thận.',
-        recommendation: 'Không phối hợp 2 thuốc NSAID cùng lúc; uống sau ăn no.',
-      });
-    }
-
-    // 3. Kiểm tra tương tác Kháng sinh + Men vi sinh / Thuốc bao niêm mạc dạ dày
-    const antibiotics = products.filter((p) => p.ProductType === 'Kháng sinh');
-    const antacidsAndProbiotics = products.filter(
-      (p) =>
-        p.ProductName.toLowerCase().includes('phosphalugel') ||
-        p.ProductName.toLowerCase().includes('smecta') ||
-        p.ProductName.toLowerCase().includes('enterogermina')
-    );
-
-    if (antibiotics.length >= 1 && antacidsAndProbiotics.length >= 1) {
-      warnings.push({
-        severity: 'MEDIUM',
-        title: 'Tương tác hấp thu giữa Kháng sinh & Chế phẩm Tiêu hóa',
-        detail:
-          'Các chế phẩm chứa Nhôm/Magie (Phosphalugel), Smecta hoặc lợi khuẩn (Enterogermina) làm giảm sinh khả dụng của kháng sinh nếu uống cùng lúc.',
-        recommendation: 'Hướng dẫn bệnh nhân uống cách thời điểm uống Kháng sinh ít nhất 2 giờ.',
-      });
-    }
-
-    // 4. Kiểm tra tiền sử dị ứng của bệnh nhân
-    const allergyLower = patientAllergies.toLowerCase();
-    if (
-      allergyLower &&
-      allergyLower !== 'không có' &&
-      allergyLower !== 'không ghi nhận' &&
-      allergyLower !== 'không'
-    ) {
-      const tokens = allergyLower
-        .split(/[,;/]+/)
-        .map((t) => t.trim())
-        .filter((t) => t.length >= 3);
-
-      for (const token of tokens) {
-        const matchedAllergyDrugs = products.filter(
-          (p) =>
-            p.ProductName.toLowerCase().includes(token) ||
-            p.Description.toLowerCase().includes(token)
-        );
-        if (matchedAllergyDrugs.length > 0) {
-          warnings.push({
-            severity: 'HIGH',
-            title: `CHỐNG CHỈ ĐỊNH DỊ ỨNG: Phản ứng với "${token.toUpperCase()}"`,
-            detail: `Hồ sơ bệnh nhân ghi nhận tiền sử dị ứng "${patientAllergies}". Thuốc "${matchedAllergyDrugs
-              .map((d) => d.ProductName)
-              .join(', ')}" có chứa thành phần liên quan.`,
-            recommendation:
-              'Ngừng cấp phát thuốc này ngay lập tức và đổi sang nhóm hoạt chất thay thế an toàn.',
-          });
-        }
-      }
-    }
+    const safetyResult = evaluateDrugSetSafety(products, patientAllergies);
 
     res.json({
       success: true,
       data: {
         checkedProductsCount: products.length,
-        patientAllergies,
-        isSafe: warnings.length === 0,
-        warnings,
+        patientAllergies: safetyResult.patientAllergies,
+        isSafe: !safetyResult.requiresPharmacistReview,
+        hasCriticalAllergy: safetyResult.hasCriticalAllergy,
+        hasHighRiskWarning: safetyResult.hasHighRiskWarning,
+        requiresPharmacistReview: safetyResult.requiresPharmacistReview,
+        isAdvisoryOnly: safetyResult.isAdvisoryOnly,
+        disclaimer: safetyResult.disclaimer,
+        ruleVersion: safetyResult.ruleVersion,
+        warnings: safetyResult.warnings,
       },
     });
   } catch {

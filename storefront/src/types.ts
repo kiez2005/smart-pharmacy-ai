@@ -1,31 +1,11 @@
-export interface ProductPackaging {
-  PackagingID: number;
-  ProductID: number;
+export interface PublicProductPackaging {
   PackageUnit: string;
-  CartonUnit?: string | null;
-  BoxesPerCarton?: number;
   BlisterUnit?: string | null;
   BlistersPerPackage?: number | null;
   SmallestUnit: string;
   UnitsPerPackage: number;
   UnitsPerBlister?: number | null;
-  LooseUnits: number;
-  ReservedBaseQty?: number;
-  ReservedLooseUnits?: number;
-  Version?: number;
   AllowFractionalSale: boolean;
-  WholesalePrice?: number | null;
-  MinWholesaleQty?: number;
-}
-
-export interface StockLotSummary {
-  LotID: number;
-  ProductID: number;
-  BatchNumber: string;
-  ExpiryDate: string;
-  RemainingQuantity: number;
-  ImportPrice: number;
-  Status: string;
 }
 
 export interface Product {
@@ -33,19 +13,20 @@ export interface Product {
   ProductName: string;
   PathImage: string;
   ProductType: string;
-  Quantity: number;
-  AvailableQuantity?: number;
   Unit: string;
   Price: number;
   Description: string;
   IsRx?: boolean;
-  CreateDate: string;
-  UpdateDate: string;
-  packaging?: ProductPackaging | null;
-  stockLots?: StockLotSummary[];
+  StockStatus?: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+  InStock?: boolean;
+  MaxOrderQty?: number;
+  // Optional fallback fields (not emitted by sanitized catalog endpoint)
+  Quantity?: number;
+  AvailableQuantity?: number;
+  packaging?: PublicProductPackaging | null;
 }
 
-export type UnitMode = 'BASE' | 'BLISTER' | 'PILL' | 'CARTON';
+export type UnitMode = 'BASE' | 'BLISTER' | 'PILL';
 
 export interface CartItem {
   product: Product;
@@ -72,7 +53,7 @@ export interface OnlineOrderItemRecord {
 export interface OnlineOrderRecord {
   OrderID: number;
   OrderCode: string;
-  TrackingToken: string;
+  TrackingToken?: string;
   OrderType: 'RETAIL' | 'WHOLESALE';
   Status:
     | 'PENDING_REVIEW'
@@ -84,11 +65,13 @@ export interface OnlineOrderRecord {
     | 'CANCELLED'
     | 'EXPIRED';
   PaymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'REFUNDED' | 'VOID';
-  PaymentMethod: 'COD' | 'VIETQR' | 'CREDIT';
+  PaymentMethod: 'COD' | 'VIETQR';
   CustomerName: string;
   CustomerPhone: string;
   ShippingAddress: string;
-  ShippingMethod: 'EXPRESS_2H' | 'STANDARD' | 'GDP_TRUCK';
+  ShippingMethod: 'EXPRESS_2H' | 'STANDARD';
+  PatientAllergies?: string | null;
+  PrescriptionFileKey?: string | null;
   SubTotal: number;
   ShippingFee: number;
   VatAmount: number;

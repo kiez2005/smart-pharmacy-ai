@@ -18,17 +18,34 @@ const replySchema = z.object({
 /**
  * LẤY DANH SÁCH LIÊN HỆ TƯ VẤN (GET /api/contacts)
  */
-export const getContacts = async (_req: Request, res: Response): Promise<void> => {
+export const getContacts = async (req: Request, res: Response): Promise<void> => {
   try {
-    const contacts = await prisma.contact.findMany({
-      orderBy: { CreateDate: 'desc' },
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+    const skip = (page - 1) * limit;
+
+    const [total, contacts] = await Promise.all([
+      prisma.contact.count(),
+      prisma.contact.findMany({
+        orderBy: { CreateDate: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+    res.json({
+      success: true,
+      data: contacts,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
     });
-    res.json({ success: true, data: contacts });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
       message: 'Lỗi khi tải danh sách liên hệ tư vấn',
-      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 };
@@ -57,11 +74,10 @@ export const createContact = async (req: Request, res: Response): Promise<void> 
       message: 'Đã gửi yêu cầu tư vấn tới Dược sĩ thành công',
       data: created,
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       success: false,
       message: 'Lỗi khi gửi liên hệ',
-      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 };

@@ -18,10 +18,13 @@ class ProductService {
    * 1 & 6. Phân trang (10-15 item/page) kết hợp Tìm kiếm thông minh (Meilisearch + Fuse.js)
    */
   public async listProducts(params: ProductQueryParams): Promise<PaginatedProductResponse> {
-    const { page, limit, search, type, unit, sortBy, sortOrder } = params;
+    const { page, limit: rawLimit, search, type, unit, sortBy, sortOrder } = params;
+    const limit = Math.min(100, Math.max(1, Number(rawLimit || 20)));
     const startTime = performance.now();
 
-    const baseWhere: Record<string, unknown> = {};
+    const baseWhere: Record<string, unknown> = {
+      OR: [{ packaging: { is: null } }, { packaging: { is: { IsTestOnly: false } } }],
+    };
     if (type && type !== 'ALL') {
       baseWhere.ProductType = type;
     }
@@ -115,11 +118,29 @@ class ProductService {
     });
   }
 
+  private async createOpeningLotAndPackaging(product: Product): Promise<void> {
+    if (product.Quantity > 0) {
+      await prisma.stockLot.create({
+        data: {
+          ProductID: product.ProductID,
+          BatchNumber: `LOT-OPEN-${String(product.ProductID).padStart(4, '0')}`,
+          ExpiryDate: '2028-12-31',
+          InitialQuantity: product.Quantity,
+          RemainingQuantity: product.Quantity,
+          ImportPrice: Math.round(product.Price * 0.72),
+          BranchCode: 'CS1-GPP',
+          Status: 'ACTIVE',
+        },
+      });
+    }
+  }
+
   /**
    * 2. Thêm mới sản phẩm thuốc kèm quy cách đóng gói & giá bán buôn
    */
   public async create(data: ProductInputDTO, packagingInput?: Record<string, any>): Promise<Product> {
     const created = await prisma.product.create({ data });
+    await this.createOpeningLotAndPackaging(created);
     const spec = await packagingService.getOrCreatePackagingSpec(created);
     if (packagingInput && typeof packagingInput === 'object') {
       await prisma.productPackaging.update({
@@ -241,9 +262,11 @@ class ProductService {
         Description: source.Description,
       },
     });
+    await this.createOpeningLotAndPackaging(cloned);
+    await packagingService.getOrCreatePackagingSpec(cloned);
 
     void this.triggerSearchSync();
-    return cloned;
+    return (await this.getById(cloned.ProductID)) || cloned;
   }
 
   /**
@@ -273,6 +296,12 @@ class ProductService {
         })
       )
     );
+    await Promise.all(
+      clonedItems.map(async (item) => {
+        await this.createOpeningLotAndPackaging(item);
+        await packagingService.getOrCreatePackagingSpec(item);
+      })
+    );
 
     void this.triggerSearchSync();
     return clonedItems;
@@ -284,6 +313,12 @@ class ProductService {
   public async importBatch(items: ProductInputDTO[]): Promise<number> {
     const created = await prisma.$transaction(
       items.map((item) => prisma.product.create({ data: item }))
+    );
+    await Promise.all(
+      created.map(async (item) => {
+        await this.createOpeningLotAndPackaging(item);
+        await packagingService.getOrCreatePackagingSpec(item);
+      })
     );
     void this.triggerSearchSync();
     return created.length;

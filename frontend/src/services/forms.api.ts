@@ -8,6 +8,25 @@ import {
   UserProfile,
 } from '../types/forms';
 
+export const CLINICAL_OVERRIDE_REASONS = [
+  {
+    code: 'DOCTOR_CONFIRMED',
+    label: 'Bác sĩ điều trị đã xác nhận giữ đơn và theo dõi sát',
+  },
+  {
+    code: 'PATIENT_TOLERANT',
+    label: 'Bệnh nhân xác nhận đã dung nạp an toàn hoạt chất này trước đây',
+  },
+  {
+    code: 'FALSE_POSITIVE_MATCH',
+    label: 'Dị ứng khai báo không trùng hoạt chất thực tế của chế phẩm',
+  },
+  {
+    code: 'STAGGERED_DOSING',
+    label: 'Đã tư vấn bệnh nhân uống giãn cách tối thiểu 2-4 giờ',
+  },
+] as const;
+
 export const formsApi = {
   // Form Đăng nhập & Đăng ký
   async login(Email: string, Password: string): Promise<{ token: string; user: UserProfile }> {
@@ -40,9 +59,20 @@ export const formsApi = {
     };
   },
 
-  logout(): void {
-    localStorage.removeItem('pharmacore_token');
-    localStorage.removeItem('pharmacore_user');
+  async logout(): Promise<void> {
+    try {
+      await http.post('/auth/logout');
+    } catch {
+      // Vẫn xóa phiên cục bộ nếu token đã hết hạn trên server
+    } finally {
+      localStorage.removeItem('pharmacore_token');
+      localStorage.removeItem('pharmacore_user');
+    }
+  },
+
+  async getMe(): Promise<UserProfile> {
+    const res = await http.get<{ success: boolean; data: UserProfile }>('/auth/me');
+    return res.data.data;
   },
 
   // Form Hóa đơn & Thanh toán
@@ -150,6 +180,8 @@ export const formsApi = {
   async listStaffOnlineOrders(params?: {
     status?: string;
     channel?: string;
+    page?: number;
+    limit?: number;
   }): Promise<OnlineOrderRecord[]> {
     const res = await http.get<{ success: boolean; data: OnlineOrderRecord[] }>('/online-orders', {
       params,
@@ -157,11 +189,36 @@ export const formsApi = {
     return res.data.data;
   },
 
+  async listStaffOnlineOrdersPaged(params?: {
+    status?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    items: OnlineOrderRecord[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> {
+    const res = await http.get<{
+      success: boolean;
+      data: OnlineOrderRecord[];
+      pagination?: { page: number; limit: number; total: number; totalPages: number };
+    }>('/online-orders', { params });
+    return {
+      items: res.data.data,
+      pagination: res.data.pagination || {
+        page: params?.page || 1,
+        limit: params?.limit || res.data.data.length || 40,
+        total: res.data.data.length,
+        totalPages: 1,
+      },
+    };
+  },
+
   async reviewOnlineOrder(
     orderId: number,
     payload: {
       action: 'APPROVE' | 'REJECT';
       clinicalReviewNote?: string;
+      clinicalOverrideCode?: string;
       rejectReason?: string;
     },
     idempotencyKey?: string
@@ -212,5 +269,12 @@ export const formsApi = {
       { ReplyNote }
     );
     return res.data.data;
+  },
+
+  async fetchPrescriptionImageBlobUrl(fileKey: string): Promise<string> {
+    const res = await http.get<Blob>(`/online-orders/prescriptions/${encodeURIComponent(fileKey)}`, {
+      responseType: 'blob',
+    });
+    return URL.createObjectURL(res.data);
   },
 };
