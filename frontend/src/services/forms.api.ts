@@ -102,6 +102,13 @@ export const formsApi = {
   // ============================================================================
   // CUSTOMER PUBLIC ONLINE ORDER (Issue 1, 2, 8)
   // ============================================================================
+  async listPublicCatalog(): Promise<{ items: any[]; total: number }> {
+    const res = await http.get<{ success: boolean; data: { items: any[]; total: number } }>(
+      '/online-orders/catalog'
+    );
+    return res.data.data;
+  },
+
   async createOnlineOrder(
     payload: CreateOnlineOrderPayload,
     idempotencyKey?: string
@@ -162,9 +169,10 @@ export const formsApi = {
     const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
     const res = await http.post<{
       success: boolean;
-      data: { order: OnlineOrderRecord; invoice?: InvoiceRecord };
+      data: OnlineOrderRecord;
     }>(`/online-orders/${orderId}/review`, payload, { headers });
-    return res.data.data;
+    const order = res.data.data;
+    return { order, invoice: order.invoice || undefined };
   },
 
   async updateOnlineOrderStage(

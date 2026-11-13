@@ -8,6 +8,7 @@ const contactSchema = z.object({
   Phone: z.string().trim().min(8, 'Số điện thoại không hợp lệ'),
   Subject: z.string().trim().min(3, 'Vui lòng nhập tiêu đề cần tư vấn'),
   Message: z.string().trim().min(5, 'Vui lòng nhập nội dung triệu chứng / câu hỏi'),
+  Priority: z.enum(['HIGH', 'NORMAL', 'LOW']).optional(),
 });
 
 const replySchema = z.object({

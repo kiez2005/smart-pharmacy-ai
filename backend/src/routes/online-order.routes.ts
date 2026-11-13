@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   createCustomerOnlineOrder,
   customerCancelOnlineOrder,
+  getPublicStorefrontCatalog,
   listOnlineOrdersForStaff,
   pharmacistReviewOnlineOrder,
   trackCustomerOnlineOrder,
@@ -12,8 +13,9 @@ import { authenticateToken, requireRoles } from '../middlewares/auth.middleware'
 const router = Router();
 
 // ============================================================================
-// 1. PUBLIC ENDPOINTS CHO KHÁCH HÀNG (Không yêu cầu JWT Nhân viên — Issue 1 & 8)
+// 1. PUBLIC ENDPOINTS CHO KHÁCH HÀNG (Không yêu cầu JWT Nhân viên — Issue 1, 2 & 8)
 // ============================================================================
+router.get('/catalog', getPublicStorefrontCatalog);
 router.post('/', createCustomerOnlineOrder);
 router.get('/track', trackCustomerOnlineOrder);
 router.post('/:id/customer-cancel', customerCancelOnlineOrder);

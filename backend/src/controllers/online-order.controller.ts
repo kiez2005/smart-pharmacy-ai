@@ -40,6 +40,7 @@ const createOnlineOrderSchema = z.object({
   PaymentMethod: z.enum(['COD', 'VIETQR', 'CREDIT']).optional().default('COD'),
   IncludeVat: z.boolean().optional().default(false),
   PatientAllergies: z.string().trim().optional().default(''),
+  PrescriptionImage: z.string().trim().optional(),
   Note: z.string().trim().optional().default(''),
   idempotencyKey: z.string().trim().optional(),
   items: z.array(onlineOrderItemSchema).min(1, 'Giỏ đặt hàng phải có ít nhất 1 sản phẩm'),
@@ -210,9 +211,14 @@ export const createCustomerOnlineOrder = async (
           Discount: 0,
           TotalAmount: totalAmount,
           PaidAmount: 0,
-          Note: PatientAllergies
-            ? `[Dị ứng KH khai báo: ${PatientAllergies}] ${Note}`.trim()
-            : Note,
+          Note: [
+            PatientAllergies ? `[Dị ứng KH khai báo: ${PatientAllergies}]` : '',
+            parsed.data.PrescriptionImage ? `[Toa thuốc đính kèm: ${parsed.data.PrescriptionImage}]` : '',
+            Note,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .trim(),
           ReservedUntil: reservedUntil,
           ClinicalSafetyStatus: clinicalSafety.status,
           ClinicalWarningsJson: JSON.stringify(clinicalSafety.warnings),
@@ -314,10 +320,11 @@ export const trackCustomerOnlineOrder = async (
     await packagingService.releaseExpiredReservations();
 
     const orderCode = String(req.query.orderCode || '').trim().toUpperCase();
+    const phoneOrToken = String(req.query.phoneOrToken || '').trim();
     const phone = String(req.query.phone || '').trim();
     const trackingToken = String(req.query.trackingToken || '').trim().toUpperCase();
 
-    if (!orderCode || (!phone && !trackingToken)) {
+    if (!orderCode || (!phone && !trackingToken && !phoneOrToken)) {
       res.status(400).json({
         success: false,
         message: 'Vui lòng nhập Mã đơn hàng (ORD-...) kèm Số điện thoại hoặc Mã tra cứu (TRK-...)',
@@ -363,8 +370,12 @@ export const trackCustomerOnlineOrder = async (
       return;
     }
 
-    const phoneMatches = phone && order.CustomerPhone.trim() === phone;
-    const tokenMatches = trackingToken && order.TrackingToken.toUpperCase() === trackingToken;
+    const phoneMatches =
+      (phone && order.CustomerPhone.trim() === phone) ||
+      (phoneOrToken && order.CustomerPhone.trim() === phoneOrToken);
+    const tokenMatches =
+      (trackingToken && order.TrackingToken.toUpperCase() === trackingToken) ||
+      (phoneOrToken && order.TrackingToken.toUpperCase() === phoneOrToken.toUpperCase());
 
     if (!phoneMatches && !tokenMatches) {
       res.status(403).json({
@@ -396,9 +407,10 @@ export const customerCancelOnlineOrder = async (
 ): Promise<void> => {
   try {
     const orderId = Number(req.params.id);
-    const { phone, trackingToken, reason } = req.body as {
+    const { phone, trackingToken, phoneOrToken, reason } = req.body as {
       phone?: string;
       trackingToken?: string;
+      phoneOrToken?: string;
       reason?: string;
     };
 
@@ -412,9 +424,12 @@ export const customerCancelOnlineOrder = async (
         throw new Error('Không tìm thấy đơn hàng');
       }
 
-      const phoneMatches = phone && order.CustomerPhone.trim() === phone.trim();
+      const phoneMatches =
+        (phone && order.CustomerPhone.trim() === phone.trim()) ||
+        (phoneOrToken && order.CustomerPhone.trim() === phoneOrToken.trim());
       const tokenMatches =
-        trackingToken && order.TrackingToken.toUpperCase() === trackingToken.trim().toUpperCase();
+        (trackingToken && order.TrackingToken.toUpperCase() === trackingToken.trim().toUpperCase()) ||
+        (phoneOrToken && order.TrackingToken.toUpperCase() === phoneOrToken.trim().toUpperCase());
 
       if (!phoneMatches && !tokenMatches) {
         const err: any = new Error('Bạn không có quyền hủy đơn hàng của người khác!');
@@ -462,16 +477,110 @@ export const customerCancelOnlineOrder = async (
 };
 
 /**
+ * 0. PUBLIC STOREFRONT CATALOG API (GET /api/online-orders/catalog)
+ * Trả về danh mục thuốc công khai cho Cổng Khách hàng Trực tuyến (Port 5174)
+ * Chỉ trả về tồn kho khả dụng (Physical - Reserved) & quy cách, KHÔNG lộ dữ liệu giá vốn nội bộ
+ */
+export const getPublicStorefrontCatalog = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    await packagingService.releaseExpiredReservations().catch(() => 0);
+
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const type = String(req.query.type || '').trim();
+    const todayIso = new Date().toISOString().slice(0, 10);
+
+    const products = await prisma.product.findMany({
+      where: {
+        ...(type && type !== 'ALL' ? { ProductType: type } : {}),
+      },
+      include: {
+        packaging: true,
+        stockLots: {
+          where: { Status: 'ACTIVE', RemainingQuantity: { gt: 0 }, ExpiryDate: { gte: todayIso } },
+          orderBy: [{ ExpiryDate: 'asc' }, { LotID: 'asc' }],
+          select: {
+            LotID: true,
+            ProductID: true,
+            BatchNumber: true,
+            ExpiryDate: true,
+            RemainingQuantity: true,
+            Status: true,
+          },
+        },
+      },
+      orderBy: { ProductID: 'asc' },
+    });
+
+    const filtered = search
+      ? products.filter(
+          (p) =>
+            p.ProductName.toLowerCase().includes(search) ||
+            p.Description.toLowerCase().includes(search) ||
+            p.ProductType.toLowerCase().includes(search)
+        )
+      : products;
+
+    const sanitized = filtered.map((p) => {
+      const reservedBase = p.packaging?.ReservedBaseQty || 0;
+      const availableQty = Math.max(0, p.Quantity - reservedBase);
+      const isRx =
+        p.ProductType.toLowerCase().includes('kháng sinh') ||
+        p.ProductType.toLowerCase().includes('tim mạch') ||
+        p.ProductType.toLowerCase().includes('thần kinh') ||
+        /augmentin|nexium|lipitor|glucophage|amoxicillin|cefuroxim|azithromycin/i.test(p.ProductName);
+
+      return {
+        ProductID: p.ProductID,
+        ProductName: p.ProductName,
+        PathImage: p.PathImage,
+        ProductType: p.ProductType,
+        Quantity: p.Quantity,
+        AvailableQuantity: availableQty,
+        Unit: p.Unit,
+        Price: p.Price,
+        Description: p.Description,
+        IsRx: isRx,
+        CreateDate: p.CreateDate,
+        UpdateDate: p.UpdateDate,
+        packaging: p.packaging,
+        stockLots: p.stockLots,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        items: sanitized,
+        total: sanitized.length,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Không thể tải danh mục dược phẩm trực tuyến',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
  * 4. STAFF API: DANH SÁCH HÀNG CHỜ ĐƠN ONLINE CHO DƯỢC SĨ & ĐIỀU PHỐI (GET /api/online-orders)
  */
 export const listOnlineOrdersForStaff = async (
-  _req: Request,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
     await packagingService.releaseExpiredReservations();
 
+    const statusFilter = String(req.query.status || '').trim();
     const orders = await prisma.onlineOrder.findMany({
+      where: {
+        ...(statusFilter && statusFilter !== 'ALL' ? { Status: statusFilter } : {}),
+      },
       include: {
         items: { include: { product: true } },
         reservations: true,
@@ -486,9 +595,24 @@ export const listOnlineOrdersForStaff = async (
       orderBy: { CreateDate: 'desc' },
     });
 
+    const formatted = orders.map((o) => {
+      let clinicalWarnings: unknown[] = [];
+      if (o.ClinicalWarningsJson) {
+        try {
+          clinicalWarnings = JSON.parse(o.ClinicalWarningsJson);
+        } catch {
+          clinicalWarnings = [];
+        }
+      }
+      return {
+        ...o,
+        clinicalWarnings,
+      };
+    });
+
     res.json({
       success: true,
-      data: orders,
+      data: formatted,
     });
   } catch (error) {
     res.status(500).json({
@@ -512,12 +636,14 @@ export const pharmacistReviewOnlineOrder = async (
 ): Promise<void> => {
   try {
     const orderId = Number(req.params.id);
-    const { action, reason, clinicalReviewNote, idempotencyKey } = req.body as {
+    const { action, reason, rejectReason, clinicalReviewNote, idempotencyKey } = req.body as {
       action: 'APPROVE' | 'REJECT';
       reason?: string;
+      rejectReason?: string;
       clinicalReviewNote?: string;
       idempotencyKey?: string;
     };
+    const effectiveReason = (reason || rejectReason || '').trim();
 
     if (!['APPROVE', 'REJECT'].includes(action)) {
       res.status(400).json({ success: false, message: 'Hành động duyệt phải là APPROVE hoặc REJECT' });
@@ -532,7 +658,7 @@ export const pharmacistReviewOnlineOrder = async (
       rawIdemKey,
       `REVIEW_ORDER:${orderId}`,
       actorKey,
-      { orderId, action, reason, clinicalReviewNote }
+      { orderId, action, reason: effectiveReason, clinicalReviewNote }
     );
     if (idemCheck.hit && idemCheck.body) {
       res.status(idemCheck.statusCode || 200).json(idemCheck.body);
@@ -566,7 +692,7 @@ export const pharmacistReviewOnlineOrder = async (
 
       // Nhánh 1: TỪ CHỐI ĐƠN HÀNG (REJECT) -> Giải phóng giữ kho 1 lần, không tạo hóa đơn
       if (action === 'REJECT') {
-        if (!reason || reason.trim().length < 5) {
+        if (!effectiveReason || effectiveReason.length < 5) {
           throw new Error('Vui lòng nhập lý do từ chối đơn hàng (tối thiểu 5 ký tự) để thông báo cho khách!');
         }
 
@@ -583,7 +709,7 @@ export const pharmacistReviewOnlineOrder = async (
             Status: 'REJECTED',
             PaymentStatus: 'VOID',
             ClinicalSafetyStatus: 'REJECTED',
-            RejectCancelReason: reason.trim(),
+            RejectCancelReason: effectiveReason,
             ReviewedByUserID: actorUserId,
             ReviewedByName: actorName,
             ReviewedAt: new Date(),
@@ -832,11 +958,17 @@ const ONLINE_ORDER_TRANSITIONS: Record<string, string[]> = {
 export const updateOnlineOrderStage = async (req: Request, res: Response): Promise<void> => {
   try {
     const orderId = Number(req.params.id);
-    const { nextStatus, courierTrackingCode, cancelReason } = req.body as {
-      nextStatus: 'PACKING' | 'SHIPPING' | 'DELIVERED' | 'CANCELLED';
+    const { nextStatus: rawNextStatus, stage, courierTrackingCode, cancelReason } = req.body as {
+      nextStatus?: 'PACKING' | 'SHIPPING' | 'DELIVERED' | 'CANCELLED';
+      stage?: 'PACKING' | 'SHIPPING' | 'DELIVERED' | 'CANCELLED';
       courierTrackingCode?: string;
       cancelReason?: string;
     };
+    const nextStatus = rawNextStatus || stage;
+    if (!nextStatus) {
+      res.status(400).json({ success: false, message: 'Thiếu trạng thái vận đơn cần chuyển' });
+      return;
+    }
 
     const updated = await prisma.$transaction(async (tx) => {
       const order = await tx.onlineOrder.findUnique({

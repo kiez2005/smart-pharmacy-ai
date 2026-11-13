@@ -21,7 +21,6 @@ import {
   Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { productApi } from '../services/product.api';
 import { formsApi } from '../services/forms.api';
 import { Product } from '../types/product';
 import { OnlineOrderRecord } from '../types/forms';
@@ -67,7 +66,7 @@ export const OnlineStorePage: React.FC = () => {
   const loadProducts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await productApi.list({ page: 1, limit: 100 });
+      const res = await formsApi.listPublicCatalog();
       setProducts(res.items);
     } catch {
       toast.error('Không thể tải danh sách sản phẩm thuốc');

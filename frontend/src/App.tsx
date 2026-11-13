@@ -21,6 +21,7 @@ import {
   RefreshCw,
   MapPin,
   Globe,
+  ExternalLink,
 } from 'lucide-react';
 import { DashboardPage } from './pages/DashboardPage';
 import { ProductManagementPage } from './pages/ProductManagementPage';
@@ -413,6 +414,17 @@ export const App: React.FC = () => {
               <MapPin className="h-3.5 w-3.5 text-teal-600" />
               <span>CS1 - Nhà thuốc Trung Tâm (GPP)</span>
             </div>
+
+            <a
+              href="http://localhost:5174"
+              target="_blank"
+              rel="noreferrer"
+              title="Mở trang Web Bán Hàng Độc Lập dành cho khách mua online (localhost:5174)"
+              className="hidden md:inline-flex h-9 items-center gap-1.5 rounded-lg border border-teal-300 bg-teal-600 px-3 text-xs font-semibold text-white hover:bg-teal-700 shadow-2xs transition-colors"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              <span>Mở Web Bán Hàng (:5174)</span>
+            </a>
 
             {/* Trạng thái Liên thông Dược Quốc Gia */}
             <button
