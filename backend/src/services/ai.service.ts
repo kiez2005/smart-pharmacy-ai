@@ -49,6 +49,135 @@ export interface DiagnoseChatResult {
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
 
+const SLIM_AI_PRODUCT_SELECT = {
+  ProductID: true,
+  ProductName: true,
+  ProductType: true,
+  Price: true,
+  Unit: true,
+  Quantity: true,
+  Description: true,
+} as const;
+
+type SlimAiProduct = {
+  ProductID: number;
+  ProductName: string;
+  ProductType: string;
+  Price: number;
+  Unit: string;
+  Quantity: number;
+  Description: string;
+};
+
+interface DraftOcrItem {
+  keyword: string;
+  quantity: number;
+  dosage: string;
+  matchedId: number | null;
+}
+
+function extractSearchTokens(rawText: string, maxTokens = 8): string[] {
+  return Array.from(
+    new Set(
+      rawText
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 2)
+    )
+  ).slice(0, maxTokens);
+}
+
+/**
+ * Truy vấn ứng viên thuốc giới hạn số lượng & chỉ lấy các trường văn bản cần cho AI/OCR
+ * (không tải PathImage, CreateDate, UpdateDate hay bản ghi IsTestOnly).
+ */
+async function loadSlimSearchCandidates(
+  rawQueryText: string,
+  options: { inStockOnly?: boolean; limit: number }
+): Promise<SlimAiProduct[]> {
+  const baseWhere: Record<string, unknown> = {
+    OR: [{ packaging: { is: null } }, { packaging: { is: { IsTestOnly: false } } }],
+  };
+  if (options.inStockOnly) {
+    baseWhere.Quantity = { gt: 0 };
+  }
+
+  const tokens = extractSearchTokens(rawQueryText);
+  let selected: SlimAiProduct[] = [];
+
+  if (tokens.length > 0) {
+    const tokenFilters = tokens.flatMap((token) => [
+      { ProductName: { contains: token } },
+      { Description: { contains: token } },
+      { ProductType: { contains: token } },
+    ]);
+
+    selected = await prisma.product.findMany({
+      where: {
+        AND: [baseWhere, { OR: tokenFilters }],
+      },
+      select: SLIM_AI_PRODUCT_SELECT,
+      take: options.limit,
+      orderBy: [{ Quantity: 'desc' }, { ProductID: 'asc' }],
+    });
+  }
+
+  if (selected.length < options.limit) {
+    const existingIds = selected.map((item) => item.ProductID);
+    const supplement = await prisma.product.findMany({
+      where: {
+        AND: [
+          baseWhere,
+          ...(existingIds.length > 0 ? [{ ProductID: { notIn: existingIds } }] : []),
+        ],
+      },
+      select: SLIM_AI_PRODUCT_SELECT,
+      take: options.limit - selected.length,
+      orderBy: [{ Quantity: 'desc' }, { ProductID: 'asc' }],
+    });
+    selected = [...selected, ...supplement];
+  }
+
+  return selected;
+}
+
+async function hydrateMatchedPrescriptionItems(
+  drafts: DraftOcrItem[]
+): Promise<MatchedPrescriptionItem[]> {
+  const matchedIds = Array.from(
+    new Set(
+      drafts
+        .map((draft) => draft.matchedId)
+        .filter((id): id is number => typeof id === 'number' && id > 0)
+    )
+  );
+  const fullProducts =
+    matchedIds.length > 0
+      ? await prisma.product.findMany({
+          where: { ProductID: { in: matchedIds } },
+        })
+      : [];
+  const productById = new Map(fullProducts.map((p) => [p.ProductID, p]));
+
+  return drafts.map((draft) => {
+    const matchedProd = draft.matchedId ? (productById.get(draft.matchedId) ?? null) : null;
+    return {
+      keyword: draft.keyword,
+      quantity: draft.quantity,
+      dosage: draft.dosage,
+      matchedProduct: matchedProd,
+      inStock: Boolean(matchedProd && matchedProd.Quantity > 0),
+      status: !matchedProd
+        ? 'NOT_FOUND'
+        : matchedProd.Quantity > 0
+          ? 'IN_STOCK'
+          : 'OUT_OF_STOCK',
+    };
+  });
+}
+
 /**
  * AI GATEWAY SERVICE (NODE.JS <-> PYTHON FASTAPI OPENCV & SCIKIT-LEARN)
  * Kết nối trực tiếp sang Python AI Service (Port 8000) và tích hợp cơ chế Auto-Fallback
@@ -64,8 +193,11 @@ class AiGatewayService {
     presetHint = '',
     isDemo = false
   ): Promise<OcrPrescriptionResult> {
-    const allProducts = await prisma.product.findMany();
-    const fuse = new Fuse(allProducts, {
+    const candidateProducts = await loadSlimSearchCandidates(
+      `${presetHint} ${originalName}`,
+      { limit: 250 }
+    );
+    const fuse = new Fuse(candidateProducts, {
       keys: ['ProductName', 'Description', 'ProductType'],
       threshold: 0.45,
     });
@@ -129,16 +261,13 @@ class AiGatewayService {
           detected_items: Array<{ keyword: string; quantity: number; dosage: string }>;
         };
 
-        const matchedItems: MatchedPrescriptionItem[] = pyData.detected_items.map((det) => {
+        const drafts: DraftOcrItem[] = pyData.detected_items.map((det) => {
           const hit = fuse.search(det.keyword)[0];
-          const matchedProd = hit ? hit.item : null;
           return {
             keyword: det.keyword,
             quantity: det.quantity,
             dosage: det.dosage,
-            matchedProduct: matchedProd,
-            inStock: Boolean(matchedProd && matchedProd.Quantity > 0),
-            status: !matchedProd ? 'NOT_FOUND' : matchedProd.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
+            matchedId: hit ? hit.item.ProductID : null,
           };
         });
 
@@ -151,7 +280,7 @@ class AiGatewayService {
             steps: pyData.opencv_preprocessing.steps,
           },
           rawOcrText: pyData.raw_ocr_text,
-          items: matchedItems,
+          items: await hydrateMatchedPrescriptionItems(drafts),
         };
       } else {
         const errJson = (await response.json().catch(() => null)) as { detail?: string } | null;
@@ -168,7 +297,7 @@ class AiGatewayService {
 
     // Fallback & Custom Text Parsing trực tiếp trên Node.js
     const lowerHint = `${originalName} ${presetHint}`.toLowerCase();
-    let fallbackDetected: Array<MatchedPrescriptionItem> = [];
+    let fallbackDrafts: DraftOcrItem[] = [];
 
     if (presetHint && presetHint.includes('\n')) {
       const lines = presetHint
@@ -182,87 +311,51 @@ class AiGatewayService {
         const qty = qtyMatch ? Math.max(1, Number(qtyMatch[1])) : 1;
         const cleanName = line.replace(/^\d+[\.\-\)]\s*/, '').split(/[—–-]/)[0].trim();
 
-        if (hit) {
-          fallbackDetected.push({
-            keyword: hit.item.ProductName,
-            quantity: qty,
-            dosage: line,
-            matchedProduct: hit.item,
-            inStock: hit.item.Quantity > 0,
-            status: hit.item.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
-          });
-        } else {
-          // Thuốc ngoài danh mục
-          fallbackDetected.push({
-            keyword: cleanName || line,
-            quantity: qty,
-            dosage: line,
-            matchedProduct: null,
-            inStock: false,
-            status: 'NOT_FOUND',
-          });
-        }
+        fallbackDrafts.push({
+          keyword: hit ? hit.item.ProductName : cleanName || line,
+          quantity: qty,
+          dosage: line,
+          matchedId: hit ? hit.item.ProductID : null,
+        });
       }
     }
 
-    if (fallbackDetected.length === 0) {
+    if (fallbackDrafts.length === 0) {
       if (isDemo) {
-        if (lowerHint.includes('da-day') || lowerHint.includes('dạ dày')) {
-          const rawItems = [
-            { keyword: 'Phosphalugel', quantity: 1, dosage: 'Uống 1 gói sau ăn hoặc khi đau thượng vị' },
-            { keyword: 'Omeprazol 20mg', quantity: 1, dosage: 'Uống 1 viên trước ăn sáng 30 phút' },
-            { keyword: 'Enterogermina', quantity: 1, dosage: 'Sáng 1 ống, Chiều 1 ống' },
-          ];
-          fallbackDetected = rawItems.map((r) => {
-            const hit = fuse.search(r.keyword)[0];
-            const p = hit ? hit.item : null;
-            return {
-              ...r,
-              matchedProduct: p,
-              inStock: Boolean(p && p.Quantity > 0),
-              status: !p ? 'NOT_FOUND' : p.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
-            };
-          });
-        } else if (lowerHint.includes('khang-sinh') || lowerHint.includes('viêm họng') || lowerHint.includes('amidan')) {
-          const rawItems = [
-            { keyword: 'Augmentin 1g', quantity: 1, dosage: 'Uống 1 viên x 2 lần/ngày sau ăn' },
-            { keyword: 'Efferalgan 500mg', quantity: 1, dosage: 'Pha 1 viên sủi khi sốt > 38.5°C' },
-            { keyword: 'Alpha Choay', quantity: 1, dosage: 'Ngậm dưới lưỡi 2 viên x 2 lần/ngày' },
-          ];
-          fallbackDetected = rawItems.map((r) => {
-            const hit = fuse.search(r.keyword)[0];
-            const p = hit ? hit.item : null;
-            return {
-              ...r,
-              matchedProduct: p,
-              inStock: Boolean(p && p.Quantity > 0),
-              status: !p ? 'NOT_FOUND' : p.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
-            };
-          });
-        } else {
-          const rawItems = [
-            { keyword: 'Panadol Extra', quantity: 1, dosage: 'Uống 1 viên khi sốt > 38.5°C (cách 4-6h)' },
-            { keyword: 'Siro Ho Prospan', quantity: 1, dosage: 'Uống 5ml x 3 lần/ngày sau ăn' },
-            { keyword: 'Strepsils Cool', quantity: 2, dosage: 'Ngậm 1 viên mỗi 3-4 giờ' },
-            { keyword: 'Berocca', quantity: 1, dosage: 'Pha 1 viên sủi uống buổi sáng' },
-          ];
-          fallbackDetected = rawItems.map((r) => {
-            const hit = fuse.search(r.keyword)[0];
-            const p = hit ? hit.item : null;
-            return {
-              ...r,
-              matchedProduct: p,
-              inStock: Boolean(p && p.Quantity > 0),
-              status: !p ? 'NOT_FOUND' : p.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
-            };
-          });
-        }
+        const rawItems =
+          lowerHint.includes('da-day') || lowerHint.includes('dạ dày')
+            ? [
+                { keyword: 'Phosphalugel', quantity: 1, dosage: 'Uống 1 gói sau ăn hoặc khi đau thượng vị' },
+                { keyword: 'Omeprazol 20mg', quantity: 1, dosage: 'Uống 1 viên trước ăn sáng 30 phút' },
+                { keyword: 'Enterogermina', quantity: 1, dosage: 'Sáng 1 ống, Chiều 1 ống' },
+              ]
+            : lowerHint.includes('khang-sinh') || lowerHint.includes('viêm họng') || lowerHint.includes('amidan')
+              ? [
+                  { keyword: 'Augmentin 1g', quantity: 1, dosage: 'Uống 1 viên x 2 lần/ngày sau ăn' },
+                  { keyword: 'Efferalgan 500mg', quantity: 1, dosage: 'Pha 1 viên sủi khi sốt > 38.5°C' },
+                  { keyword: 'Alpha Choay', quantity: 1, dosage: 'Ngậm dưới lưỡi 2 viên x 2 lần/ngày' },
+                ]
+              : [
+                  { keyword: 'Panadol Extra', quantity: 1, dosage: 'Uống 1 viên khi sốt > 38.5°C (cách 4-6h)' },
+                  { keyword: 'Siro Ho Prospan', quantity: 1, dosage: 'Uống 5ml x 3 lần/ngày sau ăn' },
+                  { keyword: 'Strepsils Cool', quantity: 2, dosage: 'Ngậm 1 viên mỗi 3-4 giờ' },
+                  { keyword: 'Berocca', quantity: 1, dosage: 'Pha 1 viên sủi uống buổi sáng' },
+                ];
+
+        fallbackDrafts = rawItems.map((r) => {
+          const hit = fuse.search(r.keyword)[0];
+          return {
+            ...r,
+            matchedId: hit ? hit.item.ProductID : null,
+          };
+        });
       } else {
         // Ảnh thật nhưng không đọc được dòng thuốc nào
         throw new Error('Không nhận dạng được dòng thuốc nào từ hình ảnh này. Vui lòng chụp rõ nét đơn thuốc của bác sĩ hoặc nhập trực tiếp tên thuốc.');
       }
     }
 
+    const hydratedItems = await hydrateMatchedPrescriptionItems(fallbackDrafts);
     const b64Preview = `data:image/png;base64,${fileBuffer.toString('base64')}`;
 
     return {
@@ -279,10 +372,10 @@ class AiGatewayService {
       },
       rawOcrText:
         'BỆNH VIỆN ĐẠI HỌC Y - ĐƠN THUỐC NGOẠI TRÚ\n' +
-        fallbackDetected
+        hydratedItems
           .map((d, i) => `${i + 1}. ${d.keyword} — SL: ${d.quantity} (${d.dosage})`)
           .join('\n'),
-      items: fallbackDetected,
+      items: hydratedItems,
     };
   }
 
@@ -290,8 +383,9 @@ class AiGatewayService {
    * 2. Chẩn đoán Y tế sơ bộ & Tư vấn Dược phẩm RAG (Gợi ý AI #2, #3, #5)
    */
   public async diagnoseAndRecommend(message: string): Promise<DiagnoseChatResult> {
-    const allProducts = await prisma.product.findMany({
-      where: { Quantity: { gt: 0 } },
+    const candidateProducts = await loadSlimSearchCandidates(message, {
+      inStockOnly: true,
+      limit: 60,
     });
 
     // 1. Thử gọi sang Python Scikit-learn TF-IDF + Cosine Similarity Service (Port 8000)
@@ -304,7 +398,7 @@ class AiGatewayService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message,
-          products: allProducts,
+          products: candidateProducts,
         }),
         signal: controller.signal,
       });

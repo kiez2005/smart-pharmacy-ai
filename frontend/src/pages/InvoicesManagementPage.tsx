@@ -680,6 +680,28 @@ export const InvoicesManagementPage: React.FC = () => {
                       {selectedInvoice.Note || 'Uống đúng liều chỉ định'}
                     </span>
                   </div>
+                  {selectedInvoice.PrescriptionFileKey && (
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-200/80">
+                      <span className="text-slate-500">Chứng từ toa thuốc (Rx):</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const url = await formsApi.fetchInvoicePrescriptionBlobUrl(
+                              selectedInvoice.PrescriptionFileKey as string
+                            );
+                            window.open(url, '_blank', 'noopener,noreferrer');
+                          } catch {
+                            toast.error('Không thể tải ảnh toa thuốc (yêu cầu quyền Dược sĩ / Admin)');
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md bg-rose-50 border border-rose-200 px-2 py-0.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-100"
+                      >
+                        <Eye className="h-3 w-3" />
+                        Đã lưu ảnh toa — Xem toa thuốc
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Danh sách thuốc xuất trong đơn */}

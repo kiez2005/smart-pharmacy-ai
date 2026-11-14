@@ -10,6 +10,45 @@ interface ProductFormModalProps {
   onSubmit: (values: ProductFormValues) => Promise<void>;
 }
 
+const SUSPECTED_RX_TYPE_KEYWORDS = [
+  'kháng sinh',
+  'khang sinh',
+  'tim mạch',
+  'tiểu đường',
+  'huyết áp',
+  'thần kinh',
+  'điều trị',
+  'kê đơn',
+];
+
+const SUSPECTED_RX_TEXT_KEYWORDS = [
+  'amoxicillin',
+  'augmentin',
+  'cefixime',
+  'cefuroxime',
+  'azithromycin',
+  'ciprofloxacin',
+  'levofloxacin',
+  'metformin',
+  'atorvastatin',
+  'rosuvastatin',
+  'amlodipine',
+  'losartan',
+  'omeprazol',
+  'prednisolon',
+  'medrol',
+  'kê đơn',
+  'bán theo đơn',
+];
+
+function isSuspectedRxProduct(name: string, type: string, description: string): boolean {
+  const lowerType = (type || '').toLowerCase();
+  const lowerText = `${name || ''} ${description || ''}`.toLowerCase();
+  if (SUSPECTED_RX_TYPE_KEYWORDS.some((kw) => lowerType.includes(kw))) return true;
+  if (SUSPECTED_RX_TEXT_KEYWORDS.some((kw) => lowerText.includes(kw))) return true;
+  return /\(rx\)|\[rx\]/i.test(lowerText);
+}
+
 const DEFAULT_VALUES: ProductFormValues = {
   ProductName: '',
   PathImage: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400&auto=format&fit=crop&q=80',
@@ -29,7 +68,8 @@ const DEFAULT_VALUES: ProductFormValues = {
     BlistersPerPackage: 10,
     UnitsPerPackage: 100,
     AllowFractionalSale: true,
-    IsRx: false,
+    IsRx: undefined,
+    confirmOtcOverride: false,
     WholesalePrice: 44000,
     MinWholesaleQty: 10,
   },
@@ -85,7 +125,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
           BlistersPerPackage: pkg?.BlistersPerPackage ?? (isTabletBox ? 10 : null),
           UnitsPerPackage: pkg?.UnitsPerPackage ?? (isTabletBox ? 100 : 1),
           AllowFractionalSale: pkg?.AllowFractionalSale ?? isTabletBox,
-          IsRx: Boolean(pkg?.IsRx),
+          IsRx: typeof pkg?.IsRx === 'boolean' ? pkg.IsRx : undefined,
+          confirmOtcOverride: false,
           WholesalePrice: pkg?.WholesalePrice ?? Math.round((editingProduct.Price * 0.88) / 500) * 500,
           MinWholesaleQty: pkg?.MinWholesaleQty ?? 10,
         },
@@ -127,6 +168,23 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     if (e) e.preventDefault();
     if (!values.ProductName.trim()) {
       setFormError('Vui lòng nhập tên dược phẩm.');
+      return;
+    }
+
+    if (typeof values.packaging?.IsRx !== 'boolean') {
+      setFormError('Vui lòng chọn rõ phân loại Thuốc không kê đơn (OTC) hoặc Thuốc kê đơn (Rx) trước khi lưu.');
+      return;
+    }
+
+    const suspectedRx = isSuspectedRxProduct(
+      values.ProductName,
+      values.ProductType,
+      values.Description
+    );
+    if (values.packaging.IsRx === false && suspectedRx && !values.packaging.confirmOtcOverride) {
+      setFormError(
+        'Tên hoặc nhóm thuốc có dấu hiệu thuộc danh mục kê đơn (Rx). Vui lòng chọn Rx hoặc tích xác nhận ngoại lệ OTC.'
+      );
       return;
     }
 
@@ -363,23 +421,101 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                       />
                       <span>Cho phép bán lẻ Vỉ/Viên</span>
                     </label>
-                    <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(values.packaging?.IsRx)}
-                        onChange={(e) =>
-                          setValues({
-                            ...values,
-                            packaging: {
-                              ...values.packaging,
-                              IsRx: e.target.checked,
-                            },
-                          })
-                        }
-                        className="rounded border-rose-300 text-rose-600 focus:ring-rose-500"
-                      />
-                      <span>Thuốc kê đơn (Rx - bắt buộc toa)</span>
-                    </label>
+                  </div>
+
+                  {/* Phân loại kê đơn (Rx / OTC) — Bắt buộc chọn tường minh, không mặc định false */}
+                  <div className="mt-2 rounded-lg border border-rose-200/80 bg-white/80 p-2.5 space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-[11px] font-bold text-slate-800">
+                        Phân loại kiểm soát kê đơn <span className="text-rose-500">*</span>
+                      </span>
+                      {typeof values.packaging?.IsRx !== 'boolean' && (
+                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                          Chưa chọn OTC / Rx
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <label
+                        className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-semibold cursor-pointer transition-colors ${
+                          values.packaging?.IsRx === false
+                            ? 'border-emerald-500 bg-emerald-50 text-emerald-900'
+                            : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="product-rx-classification"
+                          checked={values.packaging?.IsRx === false}
+                          onChange={() =>
+                            setValues({
+                              ...values,
+                              packaging: {
+                                ...values.packaging,
+                                IsRx: false,
+                                confirmOtcOverride: false,
+                              },
+                            })
+                          }
+                          className="text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span>Không kê đơn (OTC)</span>
+                      </label>
+                      <label
+                        className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-semibold cursor-pointer transition-colors ${
+                          values.packaging?.IsRx === true
+                            ? 'border-rose-500 bg-rose-50 text-rose-900'
+                            : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="product-rx-classification"
+                          checked={values.packaging?.IsRx === true}
+                          onChange={() =>
+                            setValues({
+                              ...values,
+                              packaging: {
+                                ...values.packaging,
+                                IsRx: true,
+                                confirmOtcOverride: false,
+                              },
+                            })
+                          }
+                          className="text-rose-600 focus:ring-rose-500"
+                        />
+                        <span>Thuốc kê đơn (Rx — bắt buộc toa)</span>
+                      </label>
+                    </div>
+                    {isSuspectedRxProduct(values.ProductName, values.ProductType, values.Description) &&
+                      values.packaging?.IsRx !== true && (
+                        <div className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-900 space-y-1.5">
+                          <div className="font-semibold">
+                            Gợi ý: Tên hoặc nhóm thuốc này có dấu hiệu là thuốc kê đơn (Rx).
+                          </div>
+                          {values.packaging?.IsRx === false && (
+                            <label className="flex items-start gap-2 font-semibold text-amber-950 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(values.packaging?.confirmOtcOverride)}
+                                onChange={(e) =>
+                                  setValues({
+                                    ...values,
+                                    packaging: {
+                                      ...values.packaging,
+                                      confirmOtcOverride: e.target.checked,
+                                    },
+                                  })
+                                }
+                                className="mt-0.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                              />
+                              <span>
+                                Xác nhận Dược sĩ: sản phẩm này thực sự là thuốc không kê đơn (OTC)
+                              </span>
+                            </label>
+                          )}
+                        </div>
+                      )}
                   </div>
                 </div>
 

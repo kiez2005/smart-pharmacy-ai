@@ -135,16 +135,31 @@ export const updateProduct = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const updated = await productService.update(id, parsed.data, req.body?.packaging);
+    const updated = await productService.update(
+      id,
+      parsed.data,
+      parsed.data.packaging ?? req.body?.packaging
+    );
     res.json({
       success: true,
       message: `Cập nhật thuốc #${id} thành công`,
       data: updated,
     });
   } catch (error) {
-    res.status(500).json({
+    const errAny = error as { statusCode?: number; code?: string };
+    const status =
+      errAny?.code === 'P2025'
+        ? 404
+        : errAny?.statusCode && errAny.statusCode < 500
+          ? errAny.statusCode
+          : 500;
+    res.status(status).json({
       success: false,
-      message: 'Lỗi khi cập nhật sản phẩm thuốc',
+      code: errAny?.code,
+      message:
+        status < 500 && error instanceof Error
+          ? error.message
+          : 'Lỗi khi cập nhật sản phẩm thuốc',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }

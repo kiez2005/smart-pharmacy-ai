@@ -89,6 +89,27 @@ export const formsApi = {
     return res.data.data;
   },
 
+  async uploadInvoicePrescription(
+    file: File
+  ): Promise<{ fileKey: string; mime: string; sizeBytes: number }> {
+    const formData = new FormData();
+    formData.append('prescription', file);
+    const res = await http.post<{
+      success: boolean;
+      data: { fileKey: string; mime: string; sizeBytes: number };
+    }>('/invoices/prescriptions', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data.data;
+  },
+
+  async fetchInvoicePrescriptionBlobUrl(fileKey: string): Promise<string> {
+    const res = await http.get<Blob>(`/invoices/prescriptions/${encodeURIComponent(fileKey)}`, {
+      responseType: 'blob',
+    });
+    return URL.createObjectURL(res.data);
+  },
+
   async cancelInvoice(
     invoiceId: number,
     cancelReason?: string,

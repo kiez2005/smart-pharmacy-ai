@@ -233,6 +233,8 @@ model Invoice {
   CancelReason         String?
   ClinicalOverrideCode String?
   ClinicalOverrideNote String?
+  PrescriptionFileKey  String?
+  PrescriptionFileMime String?
   CreatedByName        String?
   ApprovedByUserID     Int?
   ApprovedByName       String?

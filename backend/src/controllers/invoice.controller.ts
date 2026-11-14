@@ -12,6 +12,14 @@ import {
   isValidOverrideReasonCode,
   recordClinicalAuditLogTx,
 } from '../services/clinical-safety.service';
+import {
+  handlePrescriptionDownloadHttp,
+  handlePrescriptionUploadHttp,
+  validatePrescriptionForProducts,
+} from '../services/prescription-storage.service';
+
+export const uploadInvoicePrescription = handlePrescriptionUploadHttp;
+export const downloadInvoicePrescription = handlePrescriptionDownloadHttp;
 
 const invoiceItemSchema = z.object({
   ProductID: z.coerce.number().int().positive(),
@@ -37,6 +45,8 @@ const createInvoiceSchema = z.object({
   ClinicalOverrideCode: z.string().trim().optional().default(''),
   ClinicalOverrideNote: z.string().trim().optional().default(''),
   PatientAllergies: z.string().trim().optional().default(''),
+  PrescriptionFileKey: z.string().trim().optional(),
+  PrescriptionImage: z.string().trim().optional(),
   PaymentMethod: z.enum(['CASH', 'VIETQR', 'CARD', 'CREDIT', 'COD']).optional().default('VIETQR'),
   idempotencyKey: z.string().trim().optional(),
   items: z.array(invoiceItemSchema).min(1, 'Hóa đơn phải có ít nhất 1 sản phẩm thuốc'),
@@ -159,9 +169,29 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       ClinicalOverrideCode,
       ClinicalOverrideNote,
       PatientAllergies,
+      PrescriptionFileKey,
+      PrescriptionImage,
       PaymentMethod,
       items,
     } = parsed.data;
+
+    // Kiểm tra bắt buộc phân quyền Dược sĩ + ảnh toa thuốc cho mọi thuốc kê đơn (Rx) tại POS
+    const rxValidation = await validatePrescriptionForProducts({
+      productIds: items.map((i) => i.ProductID),
+      prescriptionFileKey: PrescriptionFileKey,
+      inlineImage: PrescriptionImage,
+      note: Note,
+      enforcePharmacistRole: true,
+      canDispenseRx: canRoleOverrideClinicalSafety(req.user?.Role),
+    });
+    if (!rxValidation.ok) {
+      res.status(rxValidation.status).json({
+        success: false,
+        code: rxValidation.code,
+        message: rxValidation.message,
+      });
+      return;
+    }
 
     // Kiểm tra an toàn dược lâm sàng (S1: Phân quyền Override + Mã lý do có cấu trúc)
     const clinicalSafety = await evaluateClinicalSafetyServerSide({
@@ -377,6 +407,8 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           ApprovedAt: new Date(),
           ClinicalOverrideCode: requiresClinicalOverride ? ClinicalOverrideCode : null,
           ClinicalOverrideNote: ClinicalOverrideNote || null,
+          PrescriptionFileKey: rxValidation.fileKey,
+          PrescriptionFileMime: rxValidation.fileMime,
           ShippingAddress,
           ShippingMethod,
           ShippingFee: serverShippingFee,

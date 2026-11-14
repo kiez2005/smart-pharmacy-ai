@@ -19,8 +19,10 @@ import {
   recordClinicalAuditLogTx,
 } from '../services/clinical-safety.service';
 import {
+  handlePrescriptionDownloadHttp,
+  handlePrescriptionUploadHttp,
   resolveSafePrescriptionFilePath,
-  saveValidatedPrescriptionFile,
+  validatePrescriptionForProducts,
 } from '../services/prescription-storage.service';
 import { TRACKING_TOKEN_TTL_DAYS } from '../config/env';
 import { calculateServerShippingFee } from './invoice.controller';
@@ -41,68 +43,12 @@ function timingSafeTokenMatch(rawToken: string, storedHash?: string | null): boo
 /**
  * 0a. UPLOAD ẢNH ĐƠN THUỐC RIÊNG TƯ (POST /api/online-orders/prescriptions) - A5
  */
-export const uploadPrescriptionImage = async (req: Request, res: Response): Promise<void> => {
-  try {
-    if (!req.file || !req.file.buffer) {
-      res.status(400).json({
-        success: false,
-        code: 'MISSING_FILE',
-        message: 'Vui lòng chọn ảnh đơn thuốc hợp lệ (PNG, JPG hoặc WEBP <= 3MB).',
-      });
-      return;
-    }
-
-    const saved = saveValidatedPrescriptionFile(req.file.buffer);
-    res.status(201).json({
-      success: true,
-      data: saved,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === 'INVALID_PRESCRIPTION_IMAGE') {
-      res.status(400).json({
-        success: false,
-        code: 'INVALID_FILE_TYPE',
-        message: 'Tệp không phải ảnh hợp lệ (chỉ chấp nhận JPEG, PNG, WEBP tối đa 3MB).',
-      });
-      return;
-    }
-    if (error instanceof Error && error.message === 'PRESCRIPTION_STORAGE_QUOTA_EXCEEDED') {
-      res.status(507).json({
-        success: false,
-        code: 'PRESCRIPTION_STORAGE_QUOTA_EXCEEDED',
-        message: 'Dung lượng lưu trữ toa thuốc đã đạt giới hạn tối đa. Vui lòng thử lại sau.',
-      });
-      return;
-    }
-    res.status(500).json({
-      success: false,
-      code: 'UPLOAD_FAILED',
-      message: 'Không thể lưu ảnh đơn thuốc.',
-    });
-  }
-};
+export const uploadPrescriptionImage = handlePrescriptionUploadHttp;
 
 /**
  * 0b. DƯỢC SĨ / ADMIN TẢI ẢNH ĐƠN THUỐC PRIVATE (GET /api/online-orders/prescriptions/:fileKey) - A5
  */
-export const downloadPrescriptionImage = async (req: Request, res: Response): Promise<void> => {
-  const fileKey = String(req.params.fileKey || '').trim();
-  const safePath = resolveSafePrescriptionFilePath(fileKey);
-  if (!safePath) {
-    res.status(404).json({
-      success: false,
-      code: 'PRESCRIPTION_NOT_FOUND',
-      message: 'Không tìm thấy tệp đơn thuốc hợp lệ.',
-    });
-    return;
-  }
-
-  const ext = fileKey.split('.').pop()?.toLowerCase();
-  const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-  res.setHeader('Content-Type', mime);
-  res.setHeader('Content-Disposition', `inline; filename="${fileKey}"`);
-  res.sendFile(safePath);
-};
+export const downloadPrescriptionImage = handlePrescriptionDownloadHttp;
 
 const onlineOrderItemSchema = z.object({
   ProductID: z.coerce.number().int().positive(),
@@ -198,54 +144,22 @@ export const createCustomerOnlineOrder = async (
       return;
     }
 
-    // A5 FIX: Cấm nhúng ảnh Base64 vào JSON/Note; chỉ chấp nhận fileKey đã upload qua multipart endpoint
-    if (
-      (PrescriptionImage && /^data:image\//i.test(PrescriptionImage)) ||
-      /data:image\//i.test(Note)
-    ) {
-      res.status(400).json({
-        success: false,
-        code: 'BASE64_INLINE_FORBIDDEN',
-        message: 'Không nhúng ảnh Base64 trực tiếp vào đơn hàng. Vui lòng tải ảnh qua API tải đơn thuốc.',
-      });
-      return;
-    }
-
-    let validatedFileKey: string | null = null;
-    let validatedFileMime: string | null = null;
-    if (PrescriptionFileKey) {
-      const resolvedPath = resolveSafePrescriptionFilePath(PrescriptionFileKey);
-      if (!resolvedPath) {
-        res.status(400).json({
-          success: false,
-          code: 'INVALID_PRESCRIPTION_FILE_KEY',
-          message: 'Mã tệp ảnh đơn thuốc không tồn tại hoặc không hợp lệ.',
-        });
-        return;
-      }
-      validatedFileKey = PrescriptionFileKey;
-      const ext = PrescriptionFileKey.split('.').pop()?.toLowerCase();
-      validatedFileMime =
-        ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-    }
-
-    const uniqueProductIds = Array.from(new Set(items.map((i) => i.ProductID)));
-    const orderedProducts = await prisma.product.findMany({
-      where: { ProductID: { in: uniqueProductIds } },
-      include: { packaging: true },
+    const rxValidation = await validatePrescriptionForProducts({
+      productIds: items.map((i) => i.ProductID),
+      prescriptionFileKey: PrescriptionFileKey,
+      inlineImage: PrescriptionImage,
+      note: Note,
     });
-    const requiresPrescription = orderedProducts.some((p) =>
-      p.packaging ? Boolean(p.packaging.IsRx) : deriveIsRxClassification(p)
-    );
-    if (requiresPrescription && !validatedFileKey) {
-      res.status(400).json({
+    if (!rxValidation.ok) {
+      res.status(rxValidation.status).json({
         success: false,
-        code: 'PRESCRIPTION_REQUIRED',
-        message:
-          'Đơn hàng chứa thuốc kê đơn (Rx). Vui lòng tải lên ảnh toa thuốc bác sĩ hợp lệ trước khi đặt hàng.',
+        code: rxValidation.code,
+        message: rxValidation.message,
       });
       return;
     }
+    const validatedFileKey = rxValidation.fileKey;
+    const validatedFileMime = rxValidation.fileMime;
 
     const structuredAllergies = mergePatientAllergies(PatientAllergies);
     const rawIdemKey =

@@ -22,30 +22,55 @@ export const productInputBaseSchema = z.object({
   InitialExpiryDate: z.string().trim().optional(),
 });
 
-export const productInputSchema = productInputBaseSchema.superRefine((data, ctx) => {
-  if (data.Quantity > 0) {
-    if (!data.InitialBatchNumber || data.InitialBatchNumber.trim().length < 2) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['InitialBatchNumber'],
-        message:
-          'Khi tạo mới sản phẩm có tồn kho > 0, bắt buộc nhập Số lô sản xuất thật (tối thiểu 2 ký tự) hoặc đặt Số lượng = 0 để nhập qua Phiếu nhập kho.',
-      });
-    }
-    if (!isValidFutureIsoDate(data.InitialExpiryDate)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['InitialExpiryDate'],
-        message:
-          'Khi tạo mới sản phẩm có tồn kho > 0, bắt buộc nhập Hạn sử dụng hợp lệ còn hạn (YYYY-MM-DD).',
-      });
-    }
-  }
+export const productPackagingInputSchema = z.object({
+  PackageUnit: z.string().trim().optional(),
+  CartonUnit: z.string().trim().nullable().optional(),
+  BoxesPerCarton: z.coerce.number().int().min(1).optional(),
+  BlisterUnit: z.string().trim().nullable().optional(),
+  BlistersPerPackage: z.coerce.number().int().min(1).nullable().optional(),
+  SmallestUnit: z.string().trim().optional(),
+  UnitsPerPackage: z.coerce.number().int().min(1).optional(),
+  UnitsPerBlister: z.coerce.number().int().min(1).nullable().optional(),
+  WholesalePrice: z.coerce.number().min(0).nullable().optional(),
+  MinWholesaleQty: z.coerce.number().int().min(1).optional(),
+  AllowFractionalSale: z.boolean().optional(),
+  IsRx: z.boolean(),
+  confirmOtcOverride: z.boolean().optional(),
 });
+
+export type ProductPackagingInputDTO = z.infer<typeof productPackagingInputSchema>;
+
+export const productInputSchema = productInputBaseSchema
+  .extend({
+    packaging: productPackagingInputSchema,
+  })
+  .superRefine((data, ctx) => {
+    if (data.Quantity > 0) {
+      if (!data.InitialBatchNumber || data.InitialBatchNumber.trim().length < 2) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['InitialBatchNumber'],
+          message:
+            'Khi tạo mới sản phẩm có tồn kho > 0, bắt buộc nhập Số lô sản xuất thật (tối thiểu 2 ký tự) hoặc đặt Số lượng = 0 để nhập qua Phiếu nhập kho.',
+        });
+      }
+      if (!isValidFutureIsoDate(data.InitialExpiryDate)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['InitialExpiryDate'],
+          message:
+            'Khi tạo mới sản phẩm có tồn kho > 0, bắt buộc nhập Hạn sử dụng hợp lệ còn hạn (YYYY-MM-DD).',
+        });
+      }
+    }
+  });
 
 export const productUpdateSchema = productInputBaseSchema
   .omit({ InitialBatchNumber: true, InitialExpiryDate: true })
-  .partial();
+  .partial()
+  .extend({
+    packaging: productPackagingInputSchema.optional(),
+  });
 
 export const bulkIdsSchema = z.object({
   ids: z
@@ -54,7 +79,7 @@ export const bulkIdsSchema = z.object({
 });
 
 export type ProductInputDTO = z.infer<typeof productInputSchema>;
-export type ProductUpdateDTO = Partial<ProductInputDTO>;
+export type ProductUpdateDTO = z.infer<typeof productUpdateSchema>;
 
 export type ExportFormat = 'xlsx' | 'json' | 'xml';
 

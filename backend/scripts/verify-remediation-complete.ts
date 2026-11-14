@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import http from 'http';
 import assert from 'assert';
+import { execSync } from 'child_process';
 import bcrypt from 'bcryptjs';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -68,8 +69,10 @@ async function run() {
   const { prisma } = await import('../src/config/prisma');
   const { productService } = await import('../src/services/product.service');
   const { packagingService } = await import('../src/services/packaging.service');
+  const { aiGatewayService } = await import('../src/services/ai.service');
   const {
     cleanupPrescriptionFiles,
+    getPrescriptionRetentionPolicy,
     resolveSafePrescriptionFilePath,
     saveValidatedPrescriptionFile,
   } = await import('../src/services/prescription-storage.service');
@@ -692,6 +695,7 @@ async function run() {
         Unit: 'Hộp',
         Price: 80000,
         Description: 'Missing lot test',
+        packaging: { IsRx: false },
       },
     });
     const prodPastExpRes = await httpReq(baseUrl, 'POST', '/products', {
@@ -705,6 +709,7 @@ async function run() {
         Description: 'Past expiry test',
         InitialBatchNumber: `LOT-EXP-${ts}`,
         InitialExpiryDate: '2020-01-01',
+        packaging: { IsRx: false },
       },
     });
     const prodRealLotRes = await httpReq(baseUrl, 'POST', '/products', {
@@ -954,7 +959,7 @@ async function run() {
     const prematureCleanup = await cleanupPrescriptionFiles();
     const stillExistsBeforeTtl = Boolean(resolveSafePrescriptionFilePath(savedOrphan.fileKey));
     const cleanupRes = await cleanupPrescriptionFiles({
-      nowMs: Date.now() + 65 * 60 * 1000,
+      nowMs: Date.now() + 25 * 60 * 60 * 1000,
     });
     const orphanExistsAfter = Boolean(resolveSafePrescriptionFilePath(savedOrphan.fileKey));
 
@@ -1042,6 +1047,294 @@ async function run() {
       'A4-RateLimit',
       rateLimitStatus === 429,
       `Triggered HTTP=${rateLimitStatus}, code=${rateLimitCode ?? 'none'}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST RX-CREATE-POS: Explicit Product IsRx + POS Cashier Rx Block + Pharmacist Rx Attachment
+    // -------------------------------------------------------------------------
+    const prodNoPkgRes = await httpReq(baseUrl, 'POST', '/products', {
+      token: pharmToken,
+      body: {
+        ProductName: `Thuốc Thiếu Phân Loại ${ts}`,
+        ProductType: 'Giảm đau - Hạ sốt',
+        Quantity: 0,
+        Unit: 'Hộp',
+        Price: 45000,
+        Description: 'Omitted packaging test',
+      },
+    });
+
+    const prodUnconfirmedOtcAbxRes = await httpReq(baseUrl, 'POST', '/products', {
+      token: pharmToken,
+      body: {
+        ProductName: `Amoxicillin Unconfirmed OTC ${ts}`,
+        ProductType: 'Kháng sinh',
+        Quantity: 0,
+        Unit: 'Hộp',
+        Price: 95000,
+        Description: 'Should reject unconfirmed OTC override for antibiotic',
+        packaging: { IsRx: false },
+      },
+    });
+
+    let posRxChecksOk = false;
+    if (structuredRxProd?.ProductID) {
+      const posCashierBlocked = await httpReq(baseUrl, 'POST', '/invoices', {
+        token: freshCashierToken,
+        body: {
+          CustomerName: 'Khách POS Rx Cashier Test',
+          OrderType: 'RETAIL',
+          Channel: 'POS',
+          PaymentMethod: 'CASH',
+          items: [{ ProductID: structuredRxProd.ProductID, Quantity: 1, Unit: 'Hộp' }],
+        },
+      });
+
+      const posPharmMissingRx = await httpReq(baseUrl, 'POST', '/invoices', {
+        token: pharmToken,
+        body: {
+          CustomerName: 'Khách POS Rx Missing File Test',
+          OrderType: 'RETAIL',
+          Channel: 'POS',
+          PaymentMethod: 'CASH',
+          items: [{ ProductID: structuredRxProd.ProductID, Quantity: 1, Unit: 'Hộp' }],
+        },
+      });
+
+      const posUploadFormCashier = new FormData();
+      posUploadFormCashier.append(
+        'prescription',
+        new Blob([validPngBytes], { type: 'image/png' }),
+        'cashier-pos-rx.png'
+      );
+      const posCashierUploadBlocked = await httpReq(baseUrl, 'POST', '/invoices/prescriptions', {
+        token: freshCashierToken,
+        body: posUploadFormCashier,
+      });
+
+      const posUploadForm = new FormData();
+      posUploadForm.append(
+        'prescription',
+        new Blob([validPngBytes], { type: 'image/png' }),
+        'pharm-pos-rx.png'
+      );
+      const posUploadOk = await httpReq(baseUrl, 'POST', '/invoices/prescriptions', {
+        token: pharmToken,
+        body: posUploadForm,
+      });
+      const posFileKey: string | undefined = posUploadOk.json?.data?.fileKey;
+      if (posFileKey) {
+        uploadedFilesToClean.push(
+          path.resolve(__dirname, '..', 'uploads', 'prescriptions', posFileKey)
+        );
+      }
+
+      const posPharmOk = posFileKey
+        ? await httpReq(baseUrl, 'POST', '/invoices', {
+            token: pharmToken,
+            body: {
+              CustomerName: 'Khách POS Rx Hợp Lệ',
+              OrderType: 'RETAIL',
+              Channel: 'POS',
+              PaymentMethod: 'CASH',
+              PrescriptionFileKey: posFileKey,
+              items: [{ ProductID: structuredRxProd.ProductID, Quantity: 1, Unit: 'Hộp' }],
+            },
+          })
+        : { status: 0, json: null };
+
+      const posInvId = posPharmOk.json?.data?.InvoiceID;
+      const posInvDb = posInvId
+        ? await prisma.invoice.findUnique({ where: { InvoiceID: posInvId } })
+        : null;
+
+      // Linked invoice Rx file must remain protected against orphan & early closed-order cleanup
+      await cleanupPrescriptionFiles({
+        nowMs: Date.now() + 72 * 60 * 60 * 1000,
+        orphanTtlMs: 24 * 60 * 60 * 1000,
+        closedOrderTtlMs: 24 * 60 * 60 * 1000,
+      });
+      const posFileProtected = Boolean(posFileKey && resolveSafePrescriptionFilePath(posFileKey));
+
+      const dlPosCashier = posFileKey
+        ? await httpReq(baseUrl, 'GET', `/invoices/prescriptions/${posFileKey}`, {
+            token: freshCashierToken,
+          })
+        : { status: 0 };
+      const dlPosPharm = posFileKey
+        ? await httpReq(baseUrl, 'GET', `/invoices/prescriptions/${posFileKey}`, {
+            token: pharmToken,
+          })
+        : { status: 0 };
+
+      posRxChecksOk =
+        posCashierBlocked.status === 403 &&
+        posCashierBlocked.json?.code === 'RX_PHARMACIST_ROLE_REQUIRED' &&
+        posPharmMissingRx.status === 400 &&
+        posPharmMissingRx.json?.code === 'PRESCRIPTION_REQUIRED' &&
+        posCashierUploadBlocked.status === 403 &&
+        posUploadOk.status === 201 &&
+        posPharmOk.status === 201 &&
+        posInvDb?.PrescriptionFileKey === posFileKey &&
+        posFileProtected &&
+        dlPosCashier.status === 403 &&
+        dlPosPharm.status === 200;
+    }
+
+    record(
+      'RX-CREATE-POS',
+      prodNoPkgRes.status === 400 &&
+        prodUnconfirmedOtcAbxRes.status === 400 &&
+        prodUnconfirmedOtcAbxRes.json?.code === 'RX_CLASSIFICATION_CONFIRMATION_REQUIRED' &&
+        posRxChecksOk,
+      `noPkg=${prodNoPkgRes.status}, unconfirmedAbxOtc=${prodUnconfirmedOtcAbxRes.status}/${prodUnconfirmedOtcAbxRes.json?.code}, posRxChecks=${posRxChecksOk}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST SEARCH-SLIM: Bounded Search Candidates & Slim AI Payload
+    // -------------------------------------------------------------------------
+    const exactSearch = await productService.listProducts({
+      page: 1,
+      limit: 50,
+      type: 'ALL',
+      unit: 'ALL',
+      sortBy: 'ProductID',
+      sortOrder: 'asc',
+      search: `Paracetamol Alpha Test ${ts}`,
+    });
+    const typoSearch = await productService.listProducts({
+      page: 1,
+      limit: 50,
+      type: 'ALL',
+      unit: 'ALL',
+      sortBy: 'ProductID',
+      sortOrder: 'asc',
+      search: `paracetamon alpha ${ts}`,
+    });
+    const aiDiagnoseSlim = await aiGatewayService.diagnoseAndRecommend('Sốt nhẹ đau đầu cảm');
+
+    record(
+      'SEARCH-SLIM',
+      exactSearch.items.some((p) => p.ProductID === paraA.ProductID) &&
+        typoSearch.items.some((p) => p.ProductID === paraA.ProductID) &&
+        aiDiagnoseSlim.engine === 'pharmacist-handoff' &&
+        aiDiagnoseSlim.requiresPharmacistConsultation === true,
+      `exactHits=${exactSearch.items.length}, typoHits=${typoSearch.items.length}, aiEngine=${aiDiagnoseSlim.engine}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST RX-POLICY: Configurable Prescription Retention Policy
+    // -------------------------------------------------------------------------
+    const defaultPolicy = getPrescriptionRetentionPolicy();
+    const prevEnvPolicy = {
+      orphan: process.env.PRESCRIPTION_ORPHAN_TTL_HOURS,
+      closed: process.env.PRESCRIPTION_CLOSED_ORDER_TTL_HOURS,
+      retention: process.env.PRESCRIPTION_RETENTION_DAYS,
+    };
+    process.env.PRESCRIPTION_ORPHAN_TTL_HOURS = '12';
+    process.env.PRESCRIPTION_CLOSED_ORDER_TTL_HOURS = '48';
+    process.env.PRESCRIPTION_RETENTION_DAYS = '365';
+    const customPolicy = getPrescriptionRetentionPolicy();
+    if (prevEnvPolicy.orphan === undefined) delete process.env.PRESCRIPTION_ORPHAN_TTL_HOURS;
+    else process.env.PRESCRIPTION_ORPHAN_TTL_HOURS = prevEnvPolicy.orphan;
+    if (prevEnvPolicy.closed === undefined) delete process.env.PRESCRIPTION_CLOSED_ORDER_TTL_HOURS;
+    else process.env.PRESCRIPTION_CLOSED_ORDER_TTL_HOURS = prevEnvPolicy.closed;
+    if (prevEnvPolicy.retention === undefined) delete process.env.PRESCRIPTION_RETENTION_DAYS;
+    else process.env.PRESCRIPTION_RETENTION_DAYS = prevEnvPolicy.retention;
+
+    record(
+      'RX-POLICY',
+      defaultPolicy.orphanTtlMs === 24 * 60 * 60 * 1000 &&
+        defaultPolicy.closedOrderTtlMs === null &&
+        defaultPolicy.maxRetentionMs === 730 * 24 * 60 * 60 * 1000 &&
+        customPolicy.orphanTtlMs === 12 * 60 * 60 * 1000 &&
+        customPolicy.closedOrderTtlMs === 48 * 60 * 60 * 1000 &&
+        customPolicy.maxRetentionMs === 365 * 24 * 60 * 60 * 1000,
+      `default(orphan=${defaultPolicy.source.orphanHours}h,closed=${defaultPolicy.source.closedOrderHours}h,ret=${defaultPolicy.source.retentionDays}d), custom(${customPolicy.source.orphanHours}h/${customPolicy.source.closedOrderHours}h/${customPolicy.source.retentionDays}d)`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST RECONCILE-SAFE: No Auto-Delete by ID >= 38 + Dry-Run Preview + Backup Before Apply
+    // -------------------------------------------------------------------------
+    const highIdRealProd = await prisma.product.create({
+      data: {
+        ProductName: `Thuốc Thật ID Cao ${ts}`,
+        ProductType: 'Vitamin & Khoáng chất',
+        Quantity: 0,
+        Unit: 'Hộp',
+        Price: 65000,
+        Description: 'Real product that must never be deleted by reconcile script',
+      },
+    });
+    await prisma.productPackaging.create({
+      data: {
+        ProductID: highIdRealProd.ProductID,
+        PackageUnit: 'Hộp',
+        SmallestUnit: 'Viên',
+        UnitsPerPackage: 10,
+        IsRx: false,
+        IsPublished: true,
+        IsTestOnly: false,
+      },
+    });
+
+    const highIdTestProd = await prisma.product.create({
+      data: {
+        ProductName: `Test Flag Only ${ts}`,
+        ProductType: 'Vitamin & Khoáng chất',
+        Quantity: 0,
+        Unit: 'Hộp',
+        Price: 10000,
+        Description: 'Marked IsTestOnly: true for reconcile dry-run/apply check',
+      },
+    });
+    await prisma.productPackaging.create({
+      data: {
+        ProductID: highIdTestProd.ProductID,
+        PackageUnit: 'Hộp',
+        SmallestUnit: 'Viên',
+        UnitsPerPackage: 10,
+        IsRx: false,
+        IsPublished: false,
+        IsTestOnly: true,
+      },
+    });
+
+    const backendRoot = path.resolve(__dirname, '..');
+    const dryRunOut = execSync('npx tsx scripts/reconcile-data.ts --cleanup-tests', {
+      cwd: backendRoot,
+      encoding: 'utf-8',
+    });
+    const dryRunJson = JSON.parse(dryRunOut.slice(dryRunOut.indexOf('{')));
+
+    const applyOut = execSync('npx tsx scripts/reconcile-data.ts --cleanup-tests --apply', {
+      cwd: backendRoot,
+      encoding: 'utf-8',
+    });
+    const applyJson = JSON.parse(applyOut.slice(applyOut.indexOf('{')));
+    if (applyJson?.backupPath && fs.existsSync(applyJson.backupPath)) {
+      uploadedFilesToClean.push(applyJson.backupPath);
+    }
+
+    const realAfterApply = await prisma.product.findUnique({
+      where: { ProductID: highIdRealProd.ProductID },
+      include: { packaging: true },
+    });
+    const testAfterApply = await prisma.product.findUnique({
+      where: { ProductID: highIdTestProd.ProductID },
+    });
+
+    record(
+      'RECONCILE-SAFE',
+      dryRunJson?.mode === 'DRY_RUN_PREVIEW' &&
+        Array.isArray(dryRunJson?.candidates) &&
+        !dryRunJson.candidates.some((c: any) => c.ProductID === highIdRealProd.ProductID) &&
+        dryRunJson.candidates.some((c: any) => c.ProductID === highIdTestProd.ProductID) &&
+        applyJson?.mode === 'CLEANUP_APPLIED' &&
+        Boolean(applyJson?.backupPath && fs.existsSync(applyJson.backupPath)) &&
+        Boolean(realAfterApply && realAfterApply.packaging?.IsPublished === true) &&
+        testAfterApply === null,
+      `dryRunCandidates=${dryRunJson?.candidatesCount}, realPreserved=${Boolean(realAfterApply)}, testDeleted=${testAfterApply === null}, backupCreated=${Boolean(applyJson?.backupPath)}`
     );
   } finally {
     for (const f of uploadedFilesToClean) {

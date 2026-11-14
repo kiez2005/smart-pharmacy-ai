@@ -2,7 +2,19 @@ import ExcelJS from 'exceljs';
 import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import path from 'path';
 import { Product } from '@prisma/client';
+import { deriveIsRxClassification } from './packaging.service';
 import { ProductInputDTO, productInputSchema } from '../types/product.types';
+
+const parseOptionalRxFlag = (value: unknown): boolean | undefined => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1 ? true : value === 0 ? false : undefined;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y', 'rx', 'ke don', 'kê đơn'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n', 'otc', 'khong ke don', 'không kê đơn'].includes(normalized)) return false;
+  }
+  return undefined;
+};
 
 /**
  * SERVICE IMPORT & EXPORT ĐA ĐỊNH DẠNG (Yêu cầu #9 trong Sheet: Excel .xlsx, JSON .json, XML .xml)
@@ -145,7 +157,7 @@ class ImportExportService {
     const validationErrors: string[] = [];
     for (let idx = 0; idx < rawRecords.length; idx += 1) {
       const raw = rawRecords[idx];
-      const normalized = {
+      const baseNormalized = {
         ProductName: String(raw.ProductName ?? raw.productName ?? raw['Tên thuốc'] ?? '').trim(),
         PathImage: String(
           raw.PathImage ??
@@ -172,6 +184,22 @@ class ImportExportService {
                   raw['Hạn sử dụng']
               ).trim()
             : undefined,
+      };
+
+      const explicitRx = parseOptionalRxFlag(
+        raw.IsRx ??
+          raw.isRx ??
+          raw['Kê đơn'] ??
+          raw['Kê đơn (Rx)'] ??
+          (raw.packaging as Record<string, unknown> | undefined)?.IsRx
+      );
+
+      const normalized = {
+        ...baseNormalized,
+        packaging: {
+          IsRx: explicitRx ?? deriveIsRxClassification(baseNormalized),
+          ...(explicitRx === false ? { confirmOtcOverride: true } : {}),
+        },
       };
 
       const check = productInputSchema.safeParse(normalized);

@@ -2,6 +2,11 @@ import { MeiliSearch } from 'meilisearch';
 import Fuse from 'fuse.js';
 import { Product } from '@prisma/client';
 
+export type SearchableProductCandidate = Pick<
+  Product,
+  'ProductID' | 'ProductName' | 'Description' | 'ProductType' | 'Unit'
+>;
+
 /**
  * SERVICE TÌM KIẾM THÔNG MINH (Yêu cầu #6 & Gợi ý AI #8: Meilisearch + Fuzzy Search)
  * - Ưu tiên kết nối tới Meilisearch Server (nếu đang chạy ở cổng 7700).
@@ -47,11 +52,39 @@ class SearchService {
   }
 
   /**
+   * Tìm ID trực tiếp qua Meilisearch trước khi chạm DB (tránh load bảng Product nếu Meili khả dụng)
+   */
+  public async searchMeilisearchIds(
+    keyword: string,
+    limit = 100
+  ): Promise<{ matchedIds: number[]; processingTimeMs: number } | null> {
+    if (!this.meiliClient || !this.isMeiliAvailable) {
+      return null;
+    }
+
+    const startTime = performance.now();
+    try {
+      const index = this.meiliClient.index(this.indexName);
+      const result = await index.search(keyword, { limit });
+      if (result.hits.length > 0) {
+        return {
+          matchedIds: result.hits.map((hit) => Number(hit.ProductID)),
+          processingTimeMs: Math.round(performance.now() - startTime),
+        };
+      }
+      return null;
+    } catch {
+      this.isMeiliAvailable = false;
+      return null;
+    }
+  }
+
+  /**
    * Thực hiện tìm kiếm thông minh chịu lỗi chính tả (Typo-Tolerant Search)
    */
   public async searchProducts(
     keyword: string,
-    allProducts: Product[]
+    candidateProducts: SearchableProductCandidate[]
   ): Promise<{
     matchedIds: number[];
     engine: 'meilisearch' | 'fuse-fuzzy';
@@ -60,24 +93,17 @@ class SearchService {
     const startTime = performance.now();
 
     // 1. Thử tìm bằng Meilisearch trước
-    if (this.meiliClient && this.isMeiliAvailable) {
-      try {
-        const index = this.meiliClient.index(this.indexName);
-        const result = await index.search(keyword, { limit: 100 });
-        if (result.hits.length > 0) {
-          return {
-            matchedIds: result.hits.map((hit) => Number(hit.ProductID)),
-            engine: 'meilisearch',
-            processingTimeMs: Math.round(performance.now() - startTime),
-          };
-        }
-      } catch {
-        this.isMeiliAvailable = false;
-      }
+    const meiliResult = await this.searchMeilisearchIds(keyword, 100);
+    if (meiliResult) {
+      return {
+        matchedIds: meiliResult.matchedIds,
+        engine: 'meilisearch',
+        processingTimeMs: meiliResult.processingTimeMs,
+      };
     }
 
-    // 2. Auto-Fallback sang Fuse.js (Fuzzy Search chịu lỗi gõ sai chính tả hoặc không dấu)
-    const fuse = new Fuse(allProducts, {
+    // 2. Auto-Fallback sang Fuse.js trên tập ứng viên rút gọn (không tải PathImage)
+    const fuse = new Fuse(candidateProducts, {
       keys: [
         { name: 'ProductName', weight: 0.5 },
         { name: 'Description', weight: 0.3 },
@@ -95,7 +121,7 @@ class SearchService {
     // Nếu người dùng nhập trực tiếp mã số ProductID
     const numericKeyword = Number(keyword);
     if (Number.isInteger(numericKeyword) && numericKeyword > 0 && !matchedIds.includes(numericKeyword)) {
-      const exactIdMatch = allProducts.find((p) => p.ProductID === numericKeyword);
+      const exactIdMatch = candidateProducts.find((p) => p.ProductID === numericKeyword);
       if (exactIdMatch) {
         matchedIds.unshift(exactIdMatch.ProductID);
       }

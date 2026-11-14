@@ -1,17 +1,62 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import type { Request, Response } from 'express';
 import multer from 'multer';
 import { prisma } from '../config/prisma';
+import { deriveIsRxClassification } from './packaging.service';
 
 const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads', 'prescriptions');
 
 const DEFAULT_QUOTA_MB = 200;
-export const PRESCRIPTION_ORPHAN_TTL_MS = 60 * 60 * 1000; // 1 hour for abandoned uploads
-export const PRESCRIPTION_CLOSED_ORDER_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours after close
-export const PRESCRIPTION_RETENTION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days max retention
+const DEFAULT_ORPHAN_TTL_HOURS = 24;
+const DEFAULT_CLOSED_ORDER_TTL_HOURS = 0; // 0 = disabled by default so dispensed/closed orders follow long-term archive policy
+const DEFAULT_RETENTION_DAYS = 730; // 2 years per Vietnam pharmacy prescription archive SOP
 const SAFE_RX_FILE_KEY_REGEX = /^rx-[a-f0-9]{32}\.(jpg|png|webp)$/i;
 const CLOSED_ORDER_STATUSES = new Set(['REJECTED', 'CANCELLED', 'EXPIRED', 'DELIVERED']);
+
+export interface PrescriptionRetentionPolicy {
+  orphanTtlMs: number | null;
+  closedOrderTtlMs: number | null;
+  maxRetentionMs: number | null;
+  source: {
+    orphanHours: number;
+    closedOrderHours: number;
+    retentionDays: number;
+  };
+}
+
+function parseNonNegativeNumber(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+export function getPrescriptionRetentionPolicy(): PrescriptionRetentionPolicy {
+  const orphanHours = parseNonNegativeNumber(
+    process.env.PRESCRIPTION_ORPHAN_TTL_HOURS,
+    DEFAULT_ORPHAN_TTL_HOURS
+  );
+  const closedOrderHours = parseNonNegativeNumber(
+    process.env.PRESCRIPTION_CLOSED_ORDER_TTL_HOURS,
+    DEFAULT_CLOSED_ORDER_TTL_HOURS
+  );
+  const retentionDays = parseNonNegativeNumber(
+    process.env.PRESCRIPTION_RETENTION_DAYS,
+    DEFAULT_RETENTION_DAYS
+  );
+
+  return {
+    orphanTtlMs: orphanHours > 0 ? orphanHours * 60 * 60 * 1000 : null,
+    closedOrderTtlMs: closedOrderHours > 0 ? closedOrderHours * 60 * 60 * 1000 : null,
+    maxRetentionMs: retentionDays > 0 ? retentionDays * 24 * 60 * 60 * 1000 : null,
+    source: {
+      orphanHours,
+      closedOrderHours,
+      retentionDays,
+    },
+  };
+}
 
 export function getPrescriptionStorageQuotaBytes(): number {
   const rawMb = Number(process.env.PRESCRIPTION_STORAGE_QUOTA_MB ?? DEFAULT_QUOTA_MB);
@@ -74,12 +119,13 @@ export interface PrescriptionStorageStats {
   fileCount: number;
   totalBytes: number;
   quotaBytes: number;
+  retentionPolicy: PrescriptionRetentionPolicy;
 }
 
 export interface PrescriptionCleanupOptions {
-  orphanTtlMs?: number;
-  closedOrderTtlMs?: number;
-  maxRetentionMs?: number;
+  orphanTtlMs?: number | null;
+  closedOrderTtlMs?: number | null;
+  maxRetentionMs?: number | null;
   nowMs?: number;
 }
 
@@ -93,6 +139,7 @@ export interface PrescriptionCleanupResult {
 export function getPrescriptionStorageStats(): PrescriptionStorageStats {
   ensureUploadRoot();
   const quotaBytes = getPrescriptionStorageQuotaBytes();
+  const retentionPolicy = getPrescriptionRetentionPolicy();
   let fileCount = 0;
   let totalBytes = 0;
 
@@ -107,7 +154,73 @@ export function getPrescriptionStorageStats(): PrescriptionStorageStats {
     }
   }
 
-  return { fileCount, totalBytes, quotaBytes };
+  return { fileCount, totalBytes, quotaBytes, retentionPolicy };
+}
+
+export function detectPrescriptionMimeFromKey(fileKey: string): string {
+  const ext = fileKey.split('.').pop()?.toLowerCase();
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  return 'image/jpeg';
+}
+
+export async function handlePrescriptionUploadHttp(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.file || !req.file.buffer) {
+      res.status(400).json({
+        success: false,
+        code: 'MISSING_FILE',
+        message: 'Vui lòng chọn ảnh đơn thuốc hợp lệ (PNG, JPG hoặc WEBP <= 3MB).',
+      });
+      return;
+    }
+
+    const saved = saveValidatedPrescriptionFile(req.file.buffer);
+    res.status(201).json({
+      success: true,
+      data: saved,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'INVALID_PRESCRIPTION_IMAGE') {
+      res.status(400).json({
+        success: false,
+        code: 'INVALID_FILE_TYPE',
+        message: 'Tệp không phải ảnh hợp lệ (chỉ chấp nhận JPEG, PNG, WEBP tối đa 3MB).',
+      });
+      return;
+    }
+    if (error instanceof Error && error.message === 'PRESCRIPTION_STORAGE_QUOTA_EXCEEDED') {
+      res.status(507).json({
+        success: false,
+        code: 'PRESCRIPTION_STORAGE_QUOTA_EXCEEDED',
+        message: 'Dung lượng lưu trữ toa thuốc đã đạt giới hạn tối đa. Vui lòng thử lại sau.',
+      });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      code: 'UPLOAD_FAILED',
+      message: 'Không thể lưu ảnh đơn thuốc.',
+    });
+  }
+}
+
+export async function handlePrescriptionDownloadHttp(req: Request, res: Response): Promise<void> {
+  const fileKey = String(req.params.fileKey || '').trim();
+  const safePath = resolveSafePrescriptionFilePath(fileKey);
+  if (!safePath) {
+    res.status(404).json({
+      success: false,
+      code: 'PRESCRIPTION_NOT_FOUND',
+      message: 'Không tìm thấy tệp đơn thuốc hợp lệ.',
+    });
+    return;
+  }
+
+  const mime = detectPrescriptionMimeFromKey(fileKey);
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Disposition', `inline; filename="${fileKey}"`);
+  res.sendFile(safePath);
 }
 
 export function saveValidatedPrescriptionFile(buffer: Buffer): {
@@ -165,10 +278,14 @@ export async function cleanupPrescriptionFiles(
     return result;
   }
 
+  const policy = getPrescriptionRetentionPolicy();
   const nowMs = options.nowMs ?? Date.now();
-  const orphanTtlMs = options.orphanTtlMs ?? PRESCRIPTION_ORPHAN_TTL_MS;
-  const closedOrderTtlMs = options.closedOrderTtlMs ?? PRESCRIPTION_CLOSED_ORDER_TTL_MS;
-  const maxRetentionMs = options.maxRetentionMs ?? PRESCRIPTION_RETENTION_TTL_MS;
+  const orphanTtlMs =
+    options.orphanTtlMs !== undefined ? options.orphanTtlMs : policy.orphanTtlMs;
+  const closedOrderTtlMs =
+    options.closedOrderTtlMs !== undefined ? options.closedOrderTtlMs : policy.closedOrderTtlMs;
+  const maxRetentionMs =
+    options.maxRetentionMs !== undefined ? options.maxRetentionMs : policy.maxRetentionMs;
 
   const candidateFiles = fs
     .readdirSync(UPLOAD_ROOT, { withFileTypes: true })
@@ -179,21 +296,37 @@ export async function cleanupPrescriptionFiles(
     return result;
   }
 
-  const linkedOrders = await prisma.onlineOrder.findMany({
-    where: {
-      PrescriptionFileKey: {
-        in: candidateFiles,
+  const [linkedOrders, linkedInvoices] = await Promise.all([
+    prisma.onlineOrder.findMany({
+      where: {
+        PrescriptionFileKey: {
+          in: candidateFiles,
+        },
       },
-    },
-    select: {
-      OrderID: true,
-      PrescriptionFileKey: true,
-      Status: true,
-      CreateDate: true,
-      UpdateDate: true,
-      ReviewedAt: true,
-    },
-  });
+      select: {
+        OrderID: true,
+        PrescriptionFileKey: true,
+        Status: true,
+        CreateDate: true,
+        UpdateDate: true,
+        ReviewedAt: true,
+      },
+    }),
+    prisma.invoice.findMany({
+      where: {
+        PrescriptionFileKey: {
+          in: candidateFiles,
+        },
+      },
+      select: {
+        InvoiceID: true,
+        PrescriptionFileKey: true,
+        Status: true,
+        CreateDate: true,
+        UpdateDate: true,
+      },
+    }),
+  ]);
 
   const ordersByFileKey = new Map<string, typeof linkedOrders>();
   for (const order of linkedOrders) {
@@ -203,7 +336,16 @@ export async function cleanupPrescriptionFiles(
     ordersByFileKey.set(order.PrescriptionFileKey, list);
   }
 
-  const cleanedKeys: string[] = [];
+  const invoicesByFileKey = new Map<string, typeof linkedInvoices>();
+  for (const invoice of linkedInvoices) {
+    if (!invoice.PrescriptionFileKey) continue;
+    const list = invoicesByFileKey.get(invoice.PrescriptionFileKey) ?? [];
+    list.push(invoice);
+    invoicesByFileKey.set(invoice.PrescriptionFileKey, list);
+  }
+
+  const cleanedOrderKeys: string[] = [];
+  const cleanedInvoiceKeys: string[] = [];
 
   for (const fileKey of candidateFiles) {
     const fullPath = path.join(UPLOAD_ROOT, fileKey);
@@ -216,20 +358,25 @@ export async function cleanupPrescriptionFiles(
 
     const fileMtimeMs = Math.floor(stat.mtimeMs);
     const orders = ordersByFileKey.get(fileKey) ?? [];
+    const invoices = invoicesByFileKey.get(fileKey) ?? [];
     let deleteReason: 'orphan' | 'closed' | 'retention' | null = null;
 
-    if (orders.length === 0) {
-      if (orphanTtlMs <= 0 || nowMs - fileMtimeMs >= orphanTtlMs) {
+    if (orders.length === 0 && invoices.length === 0) {
+      if (orphanTtlMs !== null && (orphanTtlMs <= 0 || nowMs - fileMtimeMs >= orphanTtlMs)) {
         deleteReason = 'orphan';
       }
     } else {
       const oldestCreatedMs = Math.min(
         fileMtimeMs,
-        ...orders.map((o) => o.CreateDate.getTime())
+        ...orders.map((o) => o.CreateDate.getTime()),
+        ...invoices.map((inv) => inv.CreateDate.getTime())
       );
-      if (maxRetentionMs <= 0 || nowMs - oldestCreatedMs >= maxRetentionMs) {
+      if (
+        maxRetentionMs !== null &&
+        (maxRetentionMs <= 0 || nowMs - oldestCreatedMs >= maxRetentionMs)
+      ) {
         deleteReason = 'retention';
-      } else {
+      } else if (closedOrderTtlMs !== null && invoices.length === 0 && orders.length > 0) {
         const allClosedExpired = orders.every((o) => {
           if (!CLOSED_ORDER_STATUSES.has(o.Status)) return false;
           const closedAtMs = Math.max(
@@ -255,26 +402,141 @@ export async function cleanupPrescriptionFiles(
       if (deleteReason === 'closed') result.deletedClosedOrders += 1;
       if (deleteReason === 'retention') result.deletedExpiredRetention += 1;
       if (orders.length > 0) {
-        cleanedKeys.push(fileKey);
+        cleanedOrderKeys.push(fileKey);
+      }
+      if (invoices.length > 0) {
+        cleanedInvoiceKeys.push(fileKey);
       }
     } catch {
       // Ignore concurrent unlink error
     }
   }
 
-  if (cleanedKeys.length > 0) {
-    await prisma.onlineOrder.updateMany({
-      where: {
-        PrescriptionFileKey: {
-          in: cleanedKeys,
-        },
-      },
-      data: {
-        PrescriptionFileKey: null,
-        PrescriptionFileMime: null,
-      },
-    });
-  }
+  await Promise.all([
+    cleanedOrderKeys.length > 0
+      ? prisma.onlineOrder.updateMany({
+          where: {
+            PrescriptionFileKey: {
+              in: cleanedOrderKeys,
+            },
+          },
+          data: {
+            PrescriptionFileKey: null,
+            PrescriptionFileMime: null,
+          },
+        })
+      : Promise.resolve(),
+    cleanedInvoiceKeys.length > 0
+      ? prisma.invoice.updateMany({
+          where: {
+            PrescriptionFileKey: {
+              in: cleanedInvoiceKeys,
+            },
+          },
+          data: {
+            PrescriptionFileKey: null,
+            PrescriptionFileMime: null,
+          },
+        })
+      : Promise.resolve(),
+  ]);
 
   return result;
+}
+
+export type ValidatePrescriptionResult =
+  | {
+      ok: true;
+      requiresPrescription: boolean;
+      fileKey: string | null;
+      fileMime: string | null;
+    }
+  | {
+      ok: false;
+      status: number;
+      code: string;
+      message: string;
+    };
+
+/**
+ * Shared server-side validator used by both Online Checkout and POS Invoice flows:
+ * forbids inline Base64 data URIs, verifies uploaded fileKey integrity, and enforces
+ * a valid prescription file whenever any cart product is classified as Rx.
+ */
+export async function validatePrescriptionForProducts(params: {
+  productIds: number[];
+  prescriptionFileKey?: string | null;
+  inlineImage?: string | null;
+  note?: string | null;
+  enforcePharmacistRole?: boolean;
+  canDispenseRx?: boolean;
+}): Promise<ValidatePrescriptionResult> {
+  if (
+    (params.inlineImage && /^data:image\//i.test(params.inlineImage)) ||
+    (params.note && /data:image\//i.test(params.note))
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'BASE64_INLINE_FORBIDDEN',
+      message: 'Không nhúng ảnh Base64 trực tiếp vào đơn hàng. Vui lòng tải ảnh qua API tải đơn thuốc.',
+    };
+  }
+
+  const uniqueProductIds = Array.from(new Set(params.productIds));
+  const orderedProducts =
+    uniqueProductIds.length > 0
+      ? await prisma.product.findMany({
+          where: { ProductID: { in: uniqueProductIds } },
+          include: { packaging: true },
+        })
+      : [];
+
+  const requiresPrescription = orderedProducts.some((p) =>
+    p.packaging ? Boolean(p.packaging.IsRx) : deriveIsRxClassification(p)
+  );
+
+  if (requiresPrescription && params.enforcePharmacistRole && !params.canDispenseRx) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'RX_PHARMACIST_ROLE_REQUIRED',
+      message:
+        'Thuốc kê đơn (Rx) chỉ được phép bán và duyệt đơn bởi Dược sĩ hoặc Quản trị viên. Thu ngân (CASHIER) không được phép xuất bán thuốc Rx.',
+    };
+  }
+
+  let validatedFileKey: string | null = null;
+  let validatedFileMime: string | null = null;
+  const trimmedKey = params.prescriptionFileKey?.trim() || '';
+  if (trimmedKey) {
+    const resolvedPath = resolveSafePrescriptionFilePath(trimmedKey);
+    if (!resolvedPath) {
+      return {
+        ok: false,
+        status: 400,
+        code: 'INVALID_PRESCRIPTION_FILE_KEY',
+        message: 'Mã tệp ảnh đơn thuốc không tồn tại hoặc không hợp lệ.',
+      };
+    }
+    validatedFileKey = trimmedKey;
+    validatedFileMime = detectPrescriptionMimeFromKey(trimmedKey);
+  }
+
+  if (requiresPrescription && !validatedFileKey) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'PRESCRIPTION_REQUIRED',
+      message:
+        'Đơn hàng chứa thuốc kê đơn (Rx). Vui lòng tải lên ảnh toa thuốc bác sĩ hợp lệ trước khi tiếp tục.',
+    };
+  }
+
+  return {
+    ok: true,
+    requiresPrescription,
+    fileKey: validatedFileKey,
+    fileMime: validatedFileMime,
+  };
 }

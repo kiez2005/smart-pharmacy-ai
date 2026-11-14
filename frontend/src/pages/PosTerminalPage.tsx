@@ -19,6 +19,8 @@ import {
   PackageCheck,
   FileSpreadsheet,
   Lock,
+  Upload,
+  FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { productApi } from '../services/product.api';
@@ -74,7 +76,22 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   const [clinicalOverrideCode, setClinicalOverrideCode] = useState<string>('');
   const [clinicalOverrideNote, setClinicalOverrideNote] = useState<string>('');
   const [walkInAllergies, setWalkInAllergies] = useState<string>('');
+  const [prescriptionFileKey, setPrescriptionFileKey] = useState<string>('');
+  const [prescriptionFileName, setPrescriptionFileName] = useState<string>('');
+  const [prescriptionUploading, setPrescriptionUploading] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
+
+  const hasRxInCart = useMemo(
+    () => cart.some((item) => Boolean(item.product.packaging?.IsRx)),
+    [cart]
+  );
+
+  useEffect(() => {
+    if (!hasRxInCart) {
+      setPrescriptionFileKey('');
+      setPrescriptionFileName('');
+    }
+  }, [hasRxInCart]);
 
   const canOverrideClinical = useMemo(() => {
     try {
@@ -449,6 +466,19 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       return;
     }
 
+    if (hasRxInCart && !canOverrideClinical) {
+      toast.error(
+        'Giỏ hàng có thuốc kê đơn (Rx). Tài khoản Thu ngân (CASHIER) không được phép xuất bán thuốc Rx — vui lòng mời Dược sĩ hoặc Admin!'
+      );
+      return;
+    }
+    if (hasRxInCart && !prescriptionFileKey) {
+      toast.error(
+        'Giỏ hàng có thuốc kê đơn (Rx). Bắt buộc tải ảnh toa thuốc bác sĩ trước khi hoàn tất hóa đơn!'
+      );
+      return;
+    }
+
     const hasCriticalWarnings = Boolean(
       interactionCheck?.warnings &&
         interactionCheck.warnings.some(
@@ -506,6 +536,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
           PatientAllergies: (selectedCustomer?.Allergies || walkInAllergies.trim() || undefined),
           ClinicalOverrideCode: clinicalOverrideCode || undefined,
           ClinicalOverrideNote: clinicalOverrideNote.trim() || undefined,
+          PrescriptionFileKey: prescriptionFileKey || undefined,
           items: cart.map((i) => ({
             ProductID: i.product.ProductID,
             Quantity: i.quantity,
@@ -523,6 +554,8 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       setClinicalOverrideCode('');
       setClinicalOverrideNote('');
       setWalkInAllergies('');
+      setPrescriptionFileKey('');
+      setPrescriptionFileName('');
       toast.success(
         orderType === 'WHOLESALE'
           ? `Đã xuất Hóa đơn Bán buôn B2B ${created.InvoiceCode} và trừ kho theo Thùng/Hộp!`
@@ -1061,6 +1094,89 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
             </div>
           ) : null}
 
+          {/* Kiểm soát thuốc kê đơn (Rx) tại POS — Phân quyền Dược sĩ + Đính kèm toa thuốc */}
+          {hasRxInCart && (
+            <div
+              className={`rounded-xl border p-3 text-xs space-y-2 ${
+                !canOverrideClinical
+                  ? 'border-rose-300 bg-rose-50/90 text-rose-900'
+                  : prescriptionFileKey
+                    ? 'border-emerald-300 bg-emerald-50/80 text-emerald-900'
+                    : 'border-amber-300 bg-amber-50/90 text-amber-950'
+              }`}
+            >
+              {!canOverrideClinical ? (
+                <div className="flex items-start gap-2 font-semibold">
+                  <Lock className="h-4 w-4 text-rose-700 shrink-0 mt-0.5" />
+                  <span>
+                    Giỏ hàng chứa thuốc kê đơn (Rx): Tài khoản Thu ngân (CASHIER) không có quyền xuất bán thuốc Rx. Vui lòng chuyển Dược sĩ hoặc Quản trị viên!
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 font-bold">
+                      <FileText className="h-4 w-4 text-rose-600 shrink-0" />
+                      <span>Đơn có thuốc kê đơn (Rx) — Bắt buộc đính kèm ảnh toa</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-50 cursor-pointer shadow-xs">
+                      <Upload className="h-3.5 w-3.5 text-teal-600" />
+                      <span>
+                        {prescriptionUploading
+                          ? 'Đang tải ảnh toa...'
+                          : prescriptionFileKey
+                            ? 'Thay ảnh toa khác'
+                            : 'Tải lên ảnh toa (PNG/JPG/WEBP)'}
+                      </span>
+                      <input
+                        id="pos-rx-file-input"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="sr-only"
+                        disabled={prescriptionUploading}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!file) return;
+                          if (file.size > 3 * 1024 * 1024) {
+                            toast.error('Ảnh toa thuốc không được vượt quá 3MB');
+                            return;
+                          }
+                          setPrescriptionUploading(true);
+                          try {
+                            const uploaded = await formsApi.uploadInvoicePrescription(file);
+                            setPrescriptionFileKey(uploaded.fileKey);
+                            setPrescriptionFileName(file.name);
+                            toast.success(`Đã đính kèm ảnh toa "${file.name}"`);
+                          } catch (err: unknown) {
+                            const msg =
+                              (err as { response?: { data?: { message?: string } } })?.response?.data
+                                ?.message || 'Không thể tải ảnh toa thuốc lên máy chủ';
+                            toast.error(msg);
+                          } finally {
+                            setPrescriptionUploading(false);
+                          }
+                        }}
+                      />
+                    </label>
+                    {prescriptionFileKey ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" />
+                        Đã lưu toa: {prescriptionFileName || prescriptionFileKey}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-medium text-amber-800">
+                        Chưa đính kèm ảnh toa thuốc hợp lệ
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Danh sách thuốc trong giỏ hỗ trợ chuyển đổi Hộp / Vỉ / Viên */}
           <div className="space-y-3 max-h-72 overflow-y-auto pr-1 divide-y divide-slate-100">
             {cart.map((item) => {
@@ -1109,8 +1225,15 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                 <div key={item.product.ProductID} className="pt-3 first:pt-0 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="text-xs font-bold text-slate-900 truncate">
-                        {item.product.ProductName}
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-xs font-bold text-slate-900 truncate">
+                          {item.product.ProductName}
+                        </span>
+                        {item.product.packaging?.IsRx && (
+                          <span className="shrink-0 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
+                            Rx
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                         <span className="text-[11px] font-bold text-teal-700 tabular-nums">
@@ -1414,7 +1537,9 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
             type="submit"
             disabled={
               submitting ||
+              prescriptionUploading ||
               cart.length === 0 ||
+              (hasRxInCart && (!canOverrideClinical || !prescriptionFileKey)) ||
               discount < 0 ||
               discount > maxAllowedCashDiscount ||
               Boolean(selectedCustomer && usedPoints > (selectedCustomer.LoyaltyPoints || 0))

@@ -15,6 +15,7 @@ export interface ProductPackaging {
   Version?: number;
   AllowFractionalSale: boolean;
   IsRx?: boolean;
+  confirmOtcOverride?: boolean;
   WholesalePrice?: number | null;
   MinWholesaleQty?: number;
 }

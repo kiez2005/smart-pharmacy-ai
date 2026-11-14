@@ -99,6 +99,8 @@ export interface InvoiceRecord {
   CancelReason?: string;
   ClinicalOverrideCode?: string;
   ClinicalOverrideNote?: string;
+  PrescriptionFileKey?: string | null;
+  PrescriptionFileMime?: string | null;
   ApprovedByUserID?: number | null;
   ApprovedByName?: string | null;
   ApprovedAt?: string | null;
@@ -230,6 +232,7 @@ export interface CreateInvoicePayload {
   ClinicalOverrideCode?: string;
   ClinicalOverrideNote?: string;
   PatientAllergies?: string;
+  PrescriptionFileKey?: string;
   PaymentMethod: 'CASH' | 'VIETQR' | 'CARD' | 'CREDIT' | 'COD';
   items: Array<{
     ProductID: number;

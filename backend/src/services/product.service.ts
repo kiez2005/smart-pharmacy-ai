@@ -38,18 +38,81 @@ class ProductService {
       processingTimeMs: 0,
     };
 
-    // Nếu có từ khóa tìm kiếm -> Kích hoạt Meilisearch / Fuse.js (Gợi ý AI #8)
+    // Nếu có từ khóa tìm kiếm -> Ưu tiên Meilisearch IDs, hoặc fallback truy vấn cột rút gọn giới hạn kích thước
     if (search) {
-      const candidateProducts = await prisma.product.findMany({
-        where: baseWhere,
-      });
+      const meiliHit = await searchService.searchMeilisearchIds(search, 100);
+      if (meiliHit) {
+        baseWhere.ProductID = { in: meiliHit.matchedIds };
+        searchMeta = {
+          engine: 'meilisearch',
+          processingTimeMs: meiliHit.processingTimeMs,
+        };
+      } else {
+        const searchTrimmed = search.trim();
+        const numericId = Number(searchTrimmed);
+        const searchTokens = Array.from(
+          new Set(
+            searchTrimmed
+              .split(/\s+/)
+              .map((t) => t.trim())
+              .filter((t) => t.length >= 2)
+          )
+        ).slice(0, 5);
 
-      const searchResult = await searchService.searchProducts(search, candidateProducts);
-      baseWhere.ProductID = { in: searchResult.matchedIds };
-      searchMeta = {
-        engine: searchResult.engine,
-        processingTimeMs: searchResult.processingTimeMs,
-      };
+        const textConditions: Record<string, unknown>[] = [
+          { ProductName: { contains: searchTrimmed } },
+          { Description: { contains: searchTrimmed } },
+          { ProductType: { contains: searchTrimmed } },
+          ...searchTokens.flatMap((token) => [
+            { ProductName: { contains: token } },
+            { ProductType: { contains: token } },
+            ...(token.length >= 4 ? [{ ProductName: { contains: token.slice(0, 3) } }] : []),
+          ]),
+        ];
+        if (Number.isInteger(numericId) && numericId > 0) {
+          textConditions.push({ ProductID: numericId });
+        }
+
+        const slimSelect = {
+          ProductID: true,
+          ProductName: true,
+          Description: true,
+          ProductType: true,
+          Unit: true,
+        } as const;
+
+        let candidateProducts = await prisma.product.findMany({
+          where: {
+            AND: [baseWhere, { OR: textConditions }],
+          },
+          select: slimSelect,
+          take: 150,
+          orderBy: { ProductID: 'asc' },
+        });
+
+        if (candidateProducts.length < 10) {
+          const existingIds = candidateProducts.map((p) => p.ProductID);
+          const supplement = await prisma.product.findMany({
+            where: {
+              AND: [
+                baseWhere,
+                ...(existingIds.length > 0 ? [{ ProductID: { notIn: existingIds } }] : []),
+              ],
+            },
+            select: slimSelect,
+            take: Math.max(0, 250 - candidateProducts.length),
+            orderBy: { ProductID: 'asc' },
+          });
+          candidateProducts = [...candidateProducts, ...supplement];
+        }
+
+        const searchResult = await searchService.searchProducts(searchTrimmed, candidateProducts);
+        baseWhere.ProductID = { in: searchResult.matchedIds };
+        searchMeta = {
+          engine: searchResult.engine,
+          processingTimeMs: searchResult.processingTimeMs,
+        };
+      }
     }
 
     const [total, items, allTypes, allUnits] = await Promise.all([
@@ -177,48 +240,73 @@ class ProductService {
   /**
    * 2. Thêm mới sản phẩm thuốc kèm quy cách đóng gói, phân loại kê đơn IsRx & lô thật (nếu Quantity > 0)
    */
+  private assertRxClassificationConfirmed(
+    candidate: Pick<Product, 'ProductName' | 'ProductType' | 'Description'>,
+    packagingInput?: Record<string, any> | null
+  ): boolean {
+    if (!packagingInput || typeof packagingInput !== 'object' || typeof packagingInput.IsRx !== 'boolean') {
+      const err = new Error(
+        'Bắt buộc xác nhận rõ phân loại Thuốc kê đơn (Rx) hoặc Không kê đơn (OTC) trong thông tin đóng gói.'
+      ) as Error & { statusCode?: number; code?: string };
+      err.statusCode = 400;
+      err.code = 'RX_CLASSIFICATION_REQUIRED';
+      throw err;
+    }
+
+    const explicitIsRx = Boolean(packagingInput.IsRx);
+    if (!explicitIsRx && deriveIsRxClassification(candidate) && packagingInput.confirmOtcOverride !== true) {
+      const err = new Error(
+        'Tên hoặc nhóm thuốc có dấu hiệu thuộc danh mục kê đơn (Rx). Vui lòng chọn phân loại Rx hoặc tích xác nhận ngoại lệ OTC (confirmOtcOverride).'
+      ) as Error & { statusCode?: number; code?: string };
+      err.statusCode = 400;
+      err.code = 'RX_CLASSIFICATION_CONFIRMATION_REQUIRED';
+      throw err;
+    }
+
+    return explicitIsRx;
+  }
+
   public async create(data: ProductInputDTO, packagingInput?: Record<string, any>): Promise<Product> {
-    const { InitialBatchNumber, InitialExpiryDate, ...productData } = data;
+    const { InitialBatchNumber, InitialExpiryDate, packaging: dtoPackaging, ...productData } = data;
+    const mergedPackaging = packagingInput ?? dtoPackaging;
+    const explicitIsRx = this.assertRxClassificationConfirmed(productData, mergedPackaging);
+
     const created = await prisma.$transaction(async (tx) => {
       const item = await tx.product.create({ data: productData });
       await this.createInitialVerifiedLotTx(tx, item, InitialBatchNumber, InitialExpiryDate);
       const spec = await packagingService.getOrCreatePackagingSpec(item, tx);
-      const explicitIsRx =
-        packagingInput && typeof packagingInput === 'object' && packagingInput.IsRx !== undefined
-          ? Boolean(packagingInput.IsRx)
-          : deriveIsRxClassification(item);
 
       await tx.productPackaging.update({
         where: { PackagingID: spec.PackagingID },
         data: {
           IsRx: explicitIsRx,
-          ...(packagingInput && typeof packagingInput === 'object'
+          ...(mergedPackaging && typeof mergedPackaging === 'object'
             ? {
-                PackageUnit: packagingInput.PackageUnit || item.Unit,
-                CartonUnit: packagingInput.CartonUnit || 'Thùng',
-                BoxesPerCarton: Number(packagingInput.BoxesPerCarton) || 20,
-                BlisterUnit: packagingInput.BlisterUnit ?? spec.BlisterUnit,
+                PackageUnit: mergedPackaging.PackageUnit || item.Unit,
+                CartonUnit: mergedPackaging.CartonUnit || 'Thùng',
+                BoxesPerCarton: Number(mergedPackaging.BoxesPerCarton) || 20,
+                BlisterUnit: mergedPackaging.BlisterUnit ?? spec.BlisterUnit,
                 BlistersPerPackage:
-                  packagingInput.BlistersPerPackage !== undefined
-                    ? Number(packagingInput.BlistersPerPackage) || null
+                  mergedPackaging.BlistersPerPackage !== undefined
+                    ? Number(mergedPackaging.BlistersPerPackage) || null
                     : spec.BlistersPerPackage,
-                SmallestUnit: packagingInput.SmallestUnit || spec.SmallestUnit,
+                SmallestUnit: mergedPackaging.SmallestUnit || spec.SmallestUnit,
                 UnitsPerPackage: Math.max(
                   1,
-                  Number(packagingInput.UnitsPerPackage) || spec.UnitsPerPackage
+                  Number(mergedPackaging.UnitsPerPackage) || spec.UnitsPerPackage
                 ),
                 UnitsPerBlister:
-                  packagingInput.UnitsPerBlister !== undefined
-                    ? Number(packagingInput.UnitsPerBlister) || null
+                  mergedPackaging.UnitsPerBlister !== undefined
+                    ? Number(mergedPackaging.UnitsPerBlister) || null
                     : spec.UnitsPerBlister,
                 WholesalePrice:
-                  packagingInput.WholesalePrice !== undefined
-                    ? Number(packagingInput.WholesalePrice)
+                  mergedPackaging.WholesalePrice !== undefined && mergedPackaging.WholesalePrice !== null
+                    ? Number(mergedPackaging.WholesalePrice)
                     : spec.WholesalePrice,
-                MinWholesaleQty: Math.max(1, Number(packagingInput.MinWholesaleQty) || 10),
+                MinWholesaleQty: Math.max(1, Number(mergedPackaging.MinWholesaleQty) || 10),
                 AllowFractionalSale:
-                  packagingInput.AllowFractionalSale !== undefined
-                    ? Boolean(packagingInput.AllowFractionalSale)
+                  mergedPackaging.AllowFractionalSale !== undefined
+                    ? Boolean(mergedPackaging.AllowFractionalSale)
                     : spec.AllowFractionalSale,
               }
             : {}),
@@ -231,44 +319,79 @@ class ProductService {
   }
 
   /**
-   * 3. Cập nhật sản phẩm thuốc kèm quy cách đóng gói & phân loại kê đơn IsRx
+   * 3. Cập nhật sản phẩm thuốc kèm quy cách đóng gói & bắt buộc xác nhận phân loại IsRx khi gửi thông tin đóng gói
    */
   public async update(id: number, data: ProductUpdateDTO, packagingInput?: Record<string, any>): Promise<Product> {
+    const { packaging: dtoPackaging, ...productData } = data;
+    const mergedPackaging = packagingInput ?? dtoPackaging;
+
+    const existing = await prisma.product.findUnique({
+      where: { ProductID: id },
+      include: { packaging: true },
+    });
+    if (!existing) {
+      const err = new Error(`Không tìm thấy sản phẩm #${id}`) as Error & { statusCode?: number; code?: string };
+      err.statusCode = 404;
+      err.code = 'PRODUCT_NOT_FOUND';
+      throw err;
+    }
+
+    const mergedCandidate = {
+      ProductName: productData.ProductName ?? existing.ProductName,
+      ProductType: productData.ProductType ?? existing.ProductType,
+      Description: productData.Description ?? existing.Description,
+    };
+
+    let validatedIsRx: boolean | undefined;
+    if (mergedPackaging && typeof mergedPackaging === 'object') {
+      validatedIsRx = this.assertRxClassificationConfirmed(mergedCandidate, mergedPackaging);
+    } else if (
+      (productData.ProductName !== undefined || productData.ProductType !== undefined) &&
+      !existing.packaging?.IsRx &&
+      deriveIsRxClassification(mergedCandidate)
+    ) {
+      const err = new Error(
+        'Tên hoặc nhóm thuốc mới có dấu hiệu là thuốc kê đơn (Rx). Vui lòng xác nhận rõ phân loại kê đơn (Rx / OTC).'
+      ) as Error & { statusCode?: number; code?: string };
+      err.statusCode = 400;
+      err.code = 'RX_CLASSIFICATION_REQUIRED';
+      throw err;
+    }
+
     const updated = await prisma.product.update({
       where: { ProductID: id },
-      data,
+      data: productData,
     });
     const spec = await packagingService.getOrCreatePackagingSpec(updated);
-    if (packagingInput && typeof packagingInput === 'object') {
+    if (mergedPackaging && typeof mergedPackaging === 'object') {
       await prisma.productPackaging.update({
         where: { PackagingID: spec.PackagingID },
         data: {
-          PackageUnit: packagingInput.PackageUnit || updated.Unit,
-          CartonUnit: packagingInput.CartonUnit || spec.CartonUnit || 'Thùng',
-          BoxesPerCarton: Number(packagingInput.BoxesPerCarton) || spec.BoxesPerCarton || 20,
+          PackageUnit: mergedPackaging.PackageUnit || updated.Unit,
+          CartonUnit: mergedPackaging.CartonUnit || spec.CartonUnit || 'Thùng',
+          BoxesPerCarton: Number(mergedPackaging.BoxesPerCarton) || spec.BoxesPerCarton || 20,
           BlisterUnit:
-            packagingInput.BlisterUnit !== undefined ? packagingInput.BlisterUnit : spec.BlisterUnit,
+            mergedPackaging.BlisterUnit !== undefined ? mergedPackaging.BlisterUnit : spec.BlisterUnit,
           BlistersPerPackage:
-            packagingInput.BlistersPerPackage !== undefined
-              ? Number(packagingInput.BlistersPerPackage) || null
+            mergedPackaging.BlistersPerPackage !== undefined
+              ? Number(mergedPackaging.BlistersPerPackage) || null
               : spec.BlistersPerPackage,
-          SmallestUnit: packagingInput.SmallestUnit || spec.SmallestUnit,
-          UnitsPerPackage: Math.max(1, Number(packagingInput.UnitsPerPackage) || spec.UnitsPerPackage),
+          SmallestUnit: mergedPackaging.SmallestUnit || spec.SmallestUnit,
+          UnitsPerPackage: Math.max(1, Number(mergedPackaging.UnitsPerPackage) || spec.UnitsPerPackage),
           UnitsPerBlister:
-            packagingInput.UnitsPerBlister !== undefined
-              ? Number(packagingInput.UnitsPerBlister) || null
+            mergedPackaging.UnitsPerBlister !== undefined
+              ? Number(mergedPackaging.UnitsPerBlister) || null
               : spec.UnitsPerBlister,
           WholesalePrice:
-            packagingInput.WholesalePrice !== undefined
-              ? Number(packagingInput.WholesalePrice)
+            mergedPackaging.WholesalePrice !== undefined && mergedPackaging.WholesalePrice !== null
+              ? Number(mergedPackaging.WholesalePrice)
               : spec.WholesalePrice,
-          MinWholesaleQty: Math.max(1, Number(packagingInput.MinWholesaleQty) || spec.MinWholesaleQty || 10),
+          MinWholesaleQty: Math.max(1, Number(mergedPackaging.MinWholesaleQty) || spec.MinWholesaleQty || 10),
           AllowFractionalSale:
-            packagingInput.AllowFractionalSale !== undefined
-              ? Boolean(packagingInput.AllowFractionalSale)
+            mergedPackaging.AllowFractionalSale !== undefined
+              ? Boolean(mergedPackaging.AllowFractionalSale)
               : spec.AllowFractionalSale,
-          IsRx:
-            packagingInput.IsRx !== undefined ? Boolean(packagingInput.IsRx) : spec.IsRx,
+          IsRx: validatedIsRx !== undefined ? validatedIsRx : spec.IsRx,
         },
       });
     }
@@ -411,10 +534,14 @@ class ProductService {
     const created = await prisma.$transaction(async (tx) => {
       let count = 0;
       for (const item of items) {
-        const { InitialBatchNumber, InitialExpiryDate, ...productData } = item;
+        const { InitialBatchNumber, InitialExpiryDate, packaging, ...productData } = item;
         const prod = await tx.product.create({ data: productData });
         await this.createInitialVerifiedLotTx(tx, prod, InitialBatchNumber, InitialExpiryDate);
-        await packagingService.getOrCreatePackagingSpec(prod, tx);
+        const spec = await packagingService.getOrCreatePackagingSpec(prod, tx);
+        await tx.productPackaging.update({
+          where: { PackagingID: spec.PackagingID },
+          data: { IsRx: Boolean(packaging?.IsRx) },
+        });
         count += 1;
       }
       return count;
