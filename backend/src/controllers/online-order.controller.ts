@@ -1,8 +1,12 @@
 import crypto from 'crypto';
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
-import { packagingService } from '../services/packaging.service';
+import {
+  deriveIsRxClassification,
+  packagingService,
+} from '../services/packaging.service';
 import {
   IdempotencyConflictError,
   runWithIdempotencyTx,
@@ -59,6 +63,14 @@ export const uploadPrescriptionImage = async (req: Request, res: Response): Prom
         success: false,
         code: 'INVALID_FILE_TYPE',
         message: 'Tệp không phải ảnh hợp lệ (chỉ chấp nhận JPEG, PNG, WEBP tối đa 3MB).',
+      });
+      return;
+    }
+    if (error instanceof Error && error.message === 'PRESCRIPTION_STORAGE_QUOTA_EXCEEDED') {
+      res.status(507).json({
+        success: false,
+        code: 'PRESCRIPTION_STORAGE_QUOTA_EXCEEDED',
+        message: 'Dung lượng lưu trữ toa thuốc đã đạt giới hạn tối đa. Vui lòng thử lại sau.',
       });
       return;
     }
@@ -215,6 +227,24 @@ export const createCustomerOnlineOrder = async (
       const ext = PrescriptionFileKey.split('.').pop()?.toLowerCase();
       validatedFileMime =
         ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    }
+
+    const uniqueProductIds = Array.from(new Set(items.map((i) => i.ProductID)));
+    const orderedProducts = await prisma.product.findMany({
+      where: { ProductID: { in: uniqueProductIds } },
+      include: { packaging: true },
+    });
+    const requiresPrescription = orderedProducts.some((p) =>
+      p.packaging ? Boolean(p.packaging.IsRx) : deriveIsRxClassification(p)
+    );
+    if (requiresPrescription && !validatedFileKey) {
+      res.status(400).json({
+        success: false,
+        code: 'PRESCRIPTION_REQUIRED',
+        message:
+          'Đơn hàng chứa thuốc kê đơn (Rx). Vui lòng tải lên ảnh toa thuốc bác sĩ hợp lệ trước khi đặt hàng.',
+      });
+      return;
     }
 
     const structuredAllergies = mergePatientAllergies(PatientAllergies);
@@ -679,18 +709,118 @@ export const getPublicStorefrontCatalog = async (
   res: Response
 ): Promise<void> => {
   try {
-    await packagingService.releaseExpiredReservations().catch(() => 0);
-
-    const search = String(req.query.search || '').trim().toLowerCase();
+    const rawSearch = String(req.query.search || '').trim();
+    const searchLower = rawSearch.toLowerCase();
     const type = String(req.query.type || req.query.productType || '').trim();
     const inStockOnly = req.query.inStockOnly === 'true' || req.query.inStockOnly === '1';
-    const page = Math.max(1, Number(req.query.page || 1));
-    const limit = Math.min(48, Math.max(1, Number(req.query.limit || 24)));
+    const page = Math.max(1, Number(req.query.page || 1) || 1);
+    const limit = Math.min(48, Math.max(1, Number(req.query.limit || 24) || 24));
     const todayIso = new Date().toISOString().slice(0, 10);
 
-    const baseWhere = {
-      AND: [
-        {
+    const escapeLike = (val: string) => val.replace(/[\\%_]/g, '\\$&');
+    const conditions: Prisma.Sql[] = [
+      Prisma.sql`pk.IsPublished = 1`,
+      Prisma.sql`pk.IsTestOnly = 0`,
+    ];
+
+    if (type && type !== 'ALL') {
+      conditions.push(Prisma.sql`p.ProductType = ${type}`);
+    }
+
+    if (inStockOnly) {
+      conditions.push(Prisma.sql`(p.Quantity - COALESCE(pk.ReservedBaseQty, 0)) > 0`);
+      conditions.push(
+        Prisma.sql`EXISTS (
+          SELECT 1 FROM StockLot sl
+          WHERE sl.ProductID = p.ProductID
+            AND sl.Status = 'ACTIVE'
+            AND sl.RemainingQuantity > 0
+            AND sl.ExpiryDate >= ${todayIso}
+        )`
+      );
+    }
+
+    if (rawSearch) {
+      const lowerPat = `%${escapeLike(searchLower)}%`;
+      const rawPat = `%${escapeLike(rawSearch)}%`;
+      conditions.push(
+        Prisma.sql`(
+          LOWER(p.ProductName) LIKE ${lowerPat} ESCAPE '\\'
+          OR LOWER(p.Description) LIKE ${lowerPat} ESCAPE '\\'
+          OR LOWER(p.ProductType) LIKE ${lowerPat} ESCAPE '\\'
+          OR p.ProductName LIKE ${rawPat} ESCAPE '\\'
+          OR p.Description LIKE ${rawPat} ESCAPE '\\'
+          OR p.ProductType LIKE ${rawPat} ESCAPE '\\'
+        )`
+      );
+    }
+
+    const whereSql = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
+
+    const countRows = await prisma.$queryRaw<Array<{ total: bigint | number }>>(
+      Prisma.sql`
+        SELECT COUNT(*) AS total
+        FROM Product p
+        INNER JOIN ProductPackaging pk ON pk.ProductID = p.ProductID
+        ${whereSql}
+      `
+    );
+
+    const total = Number(countRows[0]?.total ?? 0);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage = Math.min(page, totalPages);
+    const offset = (safePage - 1) * limit;
+
+    const pageIdRows =
+      total > 0
+        ? await prisma.$queryRaw<Array<{ ProductID: number }>>(
+            Prisma.sql`
+              SELECT p.ProductID
+              FROM Product p
+              INNER JOIN ProductPackaging pk ON pk.ProductID = p.ProductID
+              ${whereSql}
+              ORDER BY p.ProductID ASC
+              LIMIT ${limit} OFFSET ${offset}
+            `
+          )
+        : [];
+
+    const pageProductIds = pageIdRows.map((row) => Number(row.ProductID));
+
+    const [pageProducts, categoriesRows] = await Promise.all([
+      pageProductIds.length > 0
+        ? prisma.product.findMany({
+            where: { ProductID: { in: pageProductIds } },
+            include: {
+              packaging: {
+                select: {
+                  PackageUnit: true,
+                  BlisterUnit: true,
+                  BlistersPerPackage: true,
+                  SmallestUnit: true,
+                  UnitsPerPackage: true,
+                  UnitsPerBlister: true,
+                  AllowFractionalSale: true,
+                  ReservedBaseQty: true,
+                  IsRx: true,
+                },
+              },
+              stockLots: {
+                where: {
+                  Status: 'ACTIVE',
+                  RemainingQuantity: { gt: 0 },
+                  ExpiryDate: { gte: todayIso },
+                },
+                select: {
+                  RemainingQuantity: true,
+                },
+              },
+            },
+            orderBy: { ProductID: 'asc' },
+          })
+        : Promise.resolve([]),
+      prisma.product.findMany({
+        where: {
           packaging: {
             is: {
               IsPublished: true,
@@ -698,110 +828,46 @@ export const getPublicStorefrontCatalog = async (
             },
           },
         },
-        ...(type && type !== 'ALL' ? [{ ProductType: type }] : []),
-      ],
-    };
+        select: { ProductType: true },
+        distinct: ['ProductType'],
+        orderBy: { ProductType: 'asc' },
+      }),
+    ]);
 
-    const rawProducts = await prisma.product.findMany({
-      where: baseWhere,
-      include: {
-        packaging: {
-          select: {
-            PackageUnit: true,
-            BlisterUnit: true,
-            BlistersPerPackage: true,
-            SmallestUnit: true,
-            UnitsPerPackage: true,
-            UnitsPerBlister: true,
-            AllowFractionalSale: true,
-            ReservedBaseQty: true,
-          },
-        },
-        stockLots: {
-          where: { Status: 'ACTIVE', RemainingQuantity: { gt: 0 }, ExpiryDate: { gte: todayIso } },
-          select: {
-            RemainingQuantity: true,
-          },
-        },
-      },
-      orderBy: { ProductID: 'asc' },
+    const pagedItems = pageProducts.map((p) => {
+      const reservedBase = p.packaging?.ReservedBaseQty || 0;
+      const physicalAvailable = Math.max(0, p.Quantity - reservedBase);
+      const lotSum = p.stockLots.reduce((sum, l) => sum + l.RemainingQuantity, 0);
+      const sellableBoxes = Math.max(0, Math.min(physicalAvailable, lotSum));
+      const stockStatus: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK' =
+        sellableBoxes <= 0 ? 'OUT_OF_STOCK' : sellableBoxes <= 15 ? 'LOW_STOCK' : 'IN_STOCK';
+
+      return {
+        ProductID: p.ProductID,
+        ProductName: p.ProductName,
+        PathImage: p.PathImage,
+        ProductType: p.ProductType,
+        Unit: p.Unit,
+        Price: p.Price,
+        Description: p.Description,
+        IsRx: p.packaging ? Boolean(p.packaging.IsRx) : deriveIsRxClassification(p),
+        StockStatus: stockStatus,
+        InStock: sellableBoxes > 0,
+        MaxOrderQty: sellableBoxes > 0 ? Math.min(sellableBoxes, 20) : 0,
+        packaging: p.packaging
+          ? {
+              PackageUnit: p.packaging.PackageUnit,
+              BlisterUnit: p.packaging.BlisterUnit,
+              BlistersPerPackage: p.packaging.BlistersPerPackage,
+              SmallestUnit: p.packaging.SmallestUnit,
+              UnitsPerPackage: p.packaging.UnitsPerPackage,
+              UnitsPerBlister: p.packaging.UnitsPerBlister,
+              AllowFractionalSale: p.packaging.AllowFractionalSale,
+              IsRx: p.packaging.IsRx,
+            }
+          : null,
+      };
     });
-
-    const categoriesRows = await prisma.product.findMany({
-      where: {
-        packaging: {
-          is: {
-            IsPublished: true,
-            IsTestOnly: false,
-          },
-        },
-      },
-      select: { ProductType: true },
-      distinct: ['ProductType'],
-      orderBy: { ProductType: 'asc' },
-    });
-
-    const mapped = rawProducts
-      .filter((p) => {
-        if (!search) return true;
-        return (
-          p.ProductName.toLowerCase().includes(search) ||
-          p.Description.toLowerCase().includes(search) ||
-          p.ProductType.toLowerCase().includes(search)
-        );
-      })
-      .map((p) => {
-        const reservedBase = p.packaging?.ReservedBaseQty || 0;
-        const physicalAvailable = Math.max(0, p.Quantity - reservedBase);
-        const lotSum = p.stockLots.reduce((sum, l) => sum + l.RemainingQuantity, 0);
-        const sellableBoxes = Math.max(0, Math.min(physicalAvailable, lotSum));
-        const stockStatus: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK' =
-          sellableBoxes <= 0 ? 'OUT_OF_STOCK' : sellableBoxes <= 15 ? 'LOW_STOCK' : 'IN_STOCK';
-
-        const isRx =
-          p.ProductType.toLowerCase().includes('kháng sinh') ||
-          p.ProductType.toLowerCase().includes('tim mạch') ||
-          p.ProductType.toLowerCase().includes('thần kinh') ||
-          /augmentin|nexium|lipitor|glucophage|amoxicillin|cefuroxim|azithromycin/i.test(
-            p.ProductName
-          );
-
-        return {
-          inStock: sellableBoxes > 0,
-          dto: {
-            ProductID: p.ProductID,
-            ProductName: p.ProductName,
-            PathImage: p.PathImage,
-            ProductType: p.ProductType,
-            Unit: p.Unit,
-            Price: p.Price,
-            Description: p.Description,
-            IsRx: isRx,
-            StockStatus: stockStatus,
-            InStock: sellableBoxes > 0,
-            MaxOrderQty: sellableBoxes > 0 ? Math.min(sellableBoxes, 20) : 0,
-            packaging: p.packaging
-              ? {
-                  PackageUnit: p.packaging.PackageUnit,
-                  BlisterUnit: p.packaging.BlisterUnit,
-                  BlistersPerPackage: p.packaging.BlistersPerPackage,
-                  SmallestUnit: p.packaging.SmallestUnit,
-                  UnitsPerPackage: p.packaging.UnitsPerPackage,
-                  UnitsPerBlister: p.packaging.UnitsPerBlister,
-                  AllowFractionalSale: p.packaging.AllowFractionalSale,
-                }
-              : null,
-          },
-        };
-      })
-      .filter((entry) => (!inStockOnly ? true : entry.inStock));
-
-    const total = mapped.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    const safePage = Math.min(page, totalPages);
-    const pagedItems = mapped
-      .slice((safePage - 1) * limit, safePage * limit)
-      .map((entry) => entry.dto);
 
     res.json({
       success: true,
@@ -831,8 +897,6 @@ export const listOnlineOrdersForStaff = async (
   res: Response
 ): Promise<void> => {
   try {
-    await packagingService.releaseExpiredReservations();
-
     const statusFilter = String(req.query.status || '').trim();
     const page = Math.max(1, Number(req.query.page || 1));
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 40)));
@@ -847,7 +911,11 @@ export const listOnlineOrdersForStaff = async (
         include: {
           items: {
             include: {
-              product: true,
+              product: {
+                include: {
+                  packaging: true,
+                },
+              },
               lotAllocations: true,
             },
           },
@@ -975,7 +1043,7 @@ export const pharmacistReviewOnlineOrder = async (
         const order = await tx.onlineOrder.findUnique({
           where: { OrderID: orderId },
           include: {
-            items: { include: { product: true } },
+            items: { include: { product: { include: { packaging: true } } } },
             reservations: true,
             customer: true,
           },
@@ -1059,6 +1127,24 @@ export const pharmacistReviewOnlineOrder = async (
         }
 
         // Nhánh 2: DƯỢC SĨ CHẤP THUẬN ĐƠN HÀNG (APPROVE)
+        const hasRxProduct = order.items.some((item) =>
+          item.product?.packaging
+            ? Boolean(item.product.packaging.IsRx)
+            : deriveIsRxClassification(item.product)
+        );
+        const hasValidPrescriptionFile = Boolean(
+          order.PrescriptionFileKey &&
+            resolveSafePrescriptionFilePath(order.PrescriptionFileKey)
+        );
+        if (hasRxProduct && !hasValidPrescriptionFile) {
+          const err: any = new Error(
+            'Đơn hàng chứa thuốc kê đơn (Rx) nhưng chưa có ảnh toa thuốc hợp lệ trên hệ thống. Không thể duyệt xuất kho!'
+          );
+          err.statusCode = 422;
+          err.code = 'PRESCRIPTION_FILE_REQUIRED';
+          throw err;
+        }
+
         // S2 FIX: Luôn truyền cả CustomerID VÀ PatientAllergies khai báo trên OnlineOrder
         const clinicalAssessment = await evaluateClinicalSafetyServerSide({
           tx,

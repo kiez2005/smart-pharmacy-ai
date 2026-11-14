@@ -63,9 +63,16 @@ async function httpReq(
 
 async function run() {
   process.env.DISABLE_AUTO_LISTEN = '1';
+  process.env.AI_SERVICE_URL = 'http://127.0.0.1:59999';
   const { app } = await import('../src/index');
   const { prisma } = await import('../src/config/prisma');
   const { productService } = await import('../src/services/product.service');
+  const { packagingService } = await import('../src/services/packaging.service');
+  const {
+    cleanupPrescriptionFiles,
+    resolveSafePrescriptionFilePath,
+    saveValidatedPrescriptionFile,
+  } = await import('../src/services/prescription-storage.service');
 
   const server: http.Server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -201,6 +208,7 @@ async function run() {
         SmallestUnit: 'Viên',
         UnitsPerPackage: 14,
         AllowFractionalSale: false,
+        IsRx: true,
         IsPublished: true,
         IsTestOnly: false,
       },
@@ -375,7 +383,7 @@ async function run() {
       where: { ProductID: noLotProd.ProductID },
     });
 
-    // Clone check creates opening StockLot
+    // Issue 1: Clone must reset stock Quantity=0 and create 0 StockLots (stock enters via PO only)
     const cloned = await productService.cloneOne(paraA.ProductID);
     const clonedLotsCount = await prisma.stockLot.count({
       where: { ProductID: cloned.ProductID, Status: 'ACTIVE' },
@@ -392,8 +400,9 @@ async function run() {
         lotA2AfterRefund?.RemainingQuantity === 5 &&
         [400, 409].includes(noLotAttempt.status) &&
         synthLotsCount === 0 &&
-        clonedLotsCount >= 1,
-      `Split lots=${invItemLots.length}, post-deduct=(${lotA1AfterDeduct?.RemainingQuantity},${lotA2AfterDeduct?.RemainingQuantity}), post-refund=(${lotA1AfterRefund?.RemainingQuantity},${lotA2AfterRefund?.RemainingQuantity}), noLot=${noLotAttempt.status}, syntheticLots=${synthLotsCount}, clonedLots=${clonedLotsCount}`
+        cloned.Quantity === 0 &&
+        clonedLotsCount === 0,
+      `Split lots=${invItemLots.length}, post-deduct=(${lotA1AfterDeduct?.RemainingQuantity},${lotA2AfterDeduct?.RemainingQuantity}), post-refund=(${lotA1AfterRefund?.RemainingQuantity},${lotA2AfterRefund?.RemainingQuantity}), noLot=${noLotAttempt.status}, syntheticLots=${synthLotsCount}, clonedQty=${cloned.Quantity}, clonedLots=${clonedLotsCount}`
     );
 
     // -------------------------------------------------------------------------
@@ -669,6 +678,309 @@ async function run() {
         goodCors.headers.get('x-content-type-options') === 'nosniff' &&
         goodCors.headers.get('x-frame-options') === 'DENY',
       `EvilOrigin=${evilCors.status}, AllowedOrigin=${goodCors.status}, noXPoweredBy=${goodCors.headers.get('x-powered-by') === null}, nosniff=${goodCors.headers.get('x-content-type-options')}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST ISSUE-2: Mandatory Real BatchNumber & Future ExpiryDate (No Fake Defaults)
+    // -------------------------------------------------------------------------
+    const prodMissingLotRes = await httpReq(baseUrl, 'POST', '/products', {
+      token: pharmToken,
+      body: {
+        ProductName: `Sản phẩm Thiếu Lô ${ts}`,
+        ProductType: 'Vitamin & Khoáng chất',
+        Quantity: 5,
+        Unit: 'Hộp',
+        Price: 80000,
+        Description: 'Missing lot test',
+      },
+    });
+    const prodPastExpRes = await httpReq(baseUrl, 'POST', '/products', {
+      token: pharmToken,
+      body: {
+        ProductName: `Sản phẩm Hết Hạn ${ts}`,
+        ProductType: 'Vitamin & Khoáng chất',
+        Quantity: 5,
+        Unit: 'Hộp',
+        Price: 80000,
+        Description: 'Past expiry test',
+        InitialBatchNumber: `LOT-EXP-${ts}`,
+        InitialExpiryDate: '2020-01-01',
+      },
+    });
+    const prodRealLotRes = await httpReq(baseUrl, 'POST', '/products', {
+      token: pharmToken,
+      body: {
+        ProductName: `Sản phẩm Kê Đơn Cấu Trúc ${ts}`,
+        ProductType: 'Dụng cụ y tế', // intentionally neutral non-Rx category name to test structured IsRx
+        Quantity: 4,
+        Unit: 'Hộp',
+        Price: 120000,
+        Description: 'Structured IsRx & real lot verification',
+        InitialBatchNumber: `REAL-LOT-${ts}`,
+        InitialExpiryDate: '2029-05-01',
+        packaging: {
+          PackageUnit: 'Hộp',
+          SmallestUnit: 'Viên',
+          UnitsPerPackage: 10,
+          AllowFractionalSale: false,
+          IsRx: true,
+        },
+      },
+    });
+    const structuredRxProd = prodRealLotRes.json?.data;
+    if (structuredRxProd?.ProductID) {
+      await prisma.productPackaging.update({
+        where: { ProductID: structuredRxProd.ProductID },
+        data: { IsPublished: true, IsTestOnly: false },
+      });
+    }
+    const createdRealLots = structuredRxProd?.ProductID
+      ? await prisma.stockLot.findMany({ where: { ProductID: structuredRxProd.ProductID } })
+      : [];
+
+    const supplier = await prisma.supplier.create({
+      data: {
+        SupplierCode: `SUP-VRF-${ts}`,
+        SupplierName: `NCC Kiểm thử ${ts}`,
+        ContactPerson: 'Tester',
+        Phone: '0901112233',
+        Address: '123 Test Street, Ha Noi',
+      },
+    });
+    const poMissingLotRes = await httpReq(baseUrl, 'POST', '/enterprise/purchase-orders', {
+      token: pharmToken,
+      body: {
+        SupplierID: supplier.SupplierID,
+        CreatedBy: 'Pharmacist Tester',
+        items: [{ ProductID: paraA.ProductID, Quantity: 2, ImportPrice: 50000 }],
+      },
+    });
+
+    record(
+      'ISSUE-2',
+      prodMissingLotRes.status === 400 &&
+        prodPastExpRes.status === 400 &&
+        prodRealLotRes.status === 201 &&
+        createdRealLots.length === 1 &&
+        createdRealLots[0].BatchNumber === `REAL-LOT-${ts}` &&
+        createdRealLots[0].ExpiryDate === '2029-05-01' &&
+        poMissingLotRes.status === 400,
+      `prodMissingLot=${prodMissingLotRes.status}, prodPastExp=${prodPastExpRes.status}, prodRealLot=${prodRealLotRes.status} (lot=${createdRealLots[0]?.BatchNumber}/${createdRealLots[0]?.ExpiryDate}), poMissingLot=${poMissingLotRes.status}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST ISSUE-3: Structured IsRx Classification & Mandatory Rx Upload on Create + Review APPROVE
+    // -------------------------------------------------------------------------
+    const rxCreateBlockedRes = structuredRxProd?.ProductID
+      ? await httpReq(baseUrl, 'POST', '/online-orders', {
+          body: {
+            OrderType: 'RETAIL',
+            CustomerName: 'Khách thiếu toa',
+            CustomerPhone: '0911223344',
+            ShippingAddress: '123 Đường Láng, Hà Nội',
+            ShippingMethod: 'STANDARD',
+            PaymentMethod: 'COD',
+            items: [{ ProductID: structuredRxProd.ProductID, Quantity: 1, Unit: 'Hộp' }],
+          },
+        })
+      : { status: 0, json: null };
+
+    let rxApproveBlockedStatus = 0;
+    if (structuredRxProd?.ProductID) {
+      const forgedRxOrder = await prisma.onlineOrder.create({
+        data: {
+          OrderCode: `WEB-FORGE-${ts}`,
+          OrderType: 'RETAIL',
+          Status: 'PENDING_REVIEW',
+          PaymentStatus: 'UNPAID',
+          PaymentMethod: 'COD',
+          CustomerName: 'Bypass Rx Test',
+          CustomerPhone: '0911223344',
+          ShippingAddress: '123 Đường Láng, Hà Nội',
+          ShippingMethod: 'STANDARD',
+          SubTotal: 120000,
+          ShippingFee: 15000,
+          TotalAmount: 135000,
+          items: {
+            create: [
+              {
+                ProductID: structuredRxProd.ProductID,
+                Quantity: 1,
+                Unit: 'Hộp',
+                UnitPrice: 120000,
+                BaseQtyReserved: 1,
+                LooseQtyReserved: 0,
+              },
+            ],
+          },
+        },
+      });
+      const rxApproveBlockedRes = await httpReq(
+        baseUrl,
+        'POST',
+        `/online-orders/${forgedRxOrder.OrderID}/review`,
+        {
+          token: pharmToken,
+          body: { action: 'APPROVE' },
+        }
+      );
+      rxApproveBlockedStatus = rxApproveBlockedRes.status;
+    }
+
+    const structuredCatRes = await httpReq(
+      baseUrl,
+      'GET',
+      `/online-orders/catalog?search=${encodeURIComponent(`Kê Đơn Cấu Trúc ${ts}`)}`
+    );
+    const structuredCatItem = structuredCatRes.json?.data?.items?.[0];
+
+    record(
+      'ISSUE-3',
+      Boolean(structuredCatItem?.IsRx === true) &&
+        rxCreateBlockedRes.status === 400 &&
+        rxCreateBlockedRes.json?.code === 'PRESCRIPTION_REQUIRED' &&
+        rxApproveBlockedStatus === 422,
+      `catalogStructuredIsRx=${structuredCatItem?.IsRx}, createNoRx=${rxCreateBlockedRes.status}/${rxCreateBlockedRes.json?.code}, approveNoRx=${rxApproveBlockedStatus}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST ISSUE-4: AI Chat RBAC (Block CASHIER) & Fail-Closed Pharmacist Handoff
+    // -------------------------------------------------------------------------
+    const reLoginCashier = await httpReq(baseUrl, 'POST', '/auth/login', {
+      body: { Email: cashier.Email, Password: 'Verify@12345' },
+    });
+    const freshCashierToken: string = reLoginCashier.json?.data?.token;
+    const aiCashierRes = await httpReq(baseUrl, 'POST', '/ai/diagnose-chat', {
+      token: freshCashierToken,
+      body: { message: 'Đau đầu sốt cao buồn nôn' },
+    });
+    const aiOfflinePharmRes = await httpReq(baseUrl, 'POST', '/ai/diagnose-chat', {
+      token: pharmToken,
+      body: { message: 'Triệu chứng lạ chưa xác định xyz123' },
+    });
+    const aiData = aiOfflinePharmRes.json?.data;
+
+    record(
+      'ISSUE-4',
+      aiCashierRes.status === 403 &&
+        aiOfflinePharmRes.status === 200 &&
+        aiData?.engine === 'pharmacist-handoff' &&
+        aiData?.aiServiceAvailable === false &&
+        aiData?.requiresPharmacistConsultation === true &&
+        Array.isArray(aiData?.recommendedProducts) &&
+        aiData.recommendedProducts.length === 0 &&
+        !/cảm cúm/i.test(aiData?.preliminaryDiagnosis || ''),
+      `cashier=${aiCashierRes.status}, offlineEngine=${aiData?.engine}, recs=${aiData?.recommendedProducts?.length}, handoff=${aiData?.requiresPharmacistConsultation}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST ISSUE-5: DB-Level Catalog Pagination & No Read-Path Reservation Mutation
+    // -------------------------------------------------------------------------
+    let expiredResvStillActiveOnGet = false;
+    if (structuredRxProd?.ProductID) {
+      const expOrder = await prisma.onlineOrder.create({
+        data: {
+          OrderCode: `WEB-EXP-GET-${ts}`,
+          OrderType: 'RETAIL',
+          Status: 'PENDING_REVIEW',
+          PaymentStatus: 'UNPAID',
+          PaymentMethod: 'COD',
+          CustomerName: 'Read-path check',
+          CustomerPhone: '0911223355',
+          ShippingAddress: '123 Read Path Test, HN',
+          ShippingMethod: 'STANDARD',
+          ReservedUntil: new Date(Date.now() - 60_000),
+          items: {
+            create: [
+              {
+                ProductID: structuredRxProd.ProductID,
+                Quantity: 1,
+                Unit: 'Hộp',
+                UnitPrice: 120000,
+                BaseQtyReserved: 1,
+                LooseQtyReserved: 0,
+              },
+            ],
+          },
+        },
+        include: { items: true },
+      });
+      const resvRow = await prisma.inventoryReservation.create({
+        data: {
+          OrderID: expOrder.OrderID,
+          OrderItemID: expOrder.items[0].OrderItemID,
+          ProductID: structuredRxProd.ProductID,
+          Unit: 'Hộp',
+          Quantity: 1,
+          BaseQtyReserved: 1,
+          LooseQtyReserved: 0,
+          Status: 'ACTIVE',
+          ExpiresAt: new Date(Date.now() - 60_000),
+        },
+      });
+      await prisma.productPackaging.update({
+        where: { ProductID: structuredRxProd.ProductID },
+        data: { ReservedBaseQty: { increment: 1 } },
+      });
+
+      const getCatPageRes = await httpReq(
+        baseUrl,
+        'GET',
+        '/online-orders/catalog?inStockOnly=true&page=1&limit=2'
+      );
+      const afterGet = await prisma.inventoryReservation.findUnique({
+        where: { ReservationID: resvRow.ReservationID },
+      });
+      expiredResvStillActiveOnGet =
+        getCatPageRes.status === 200 &&
+        getCatPageRes.json?.data?.items?.length <= 2 &&
+        afterGet?.Status === 'ACTIVE';
+
+      // Background sweep cleanly releases it
+      await packagingService.releaseExpiredReservations();
+    }
+
+    record(
+      'ISSUE-5',
+      expiredResvStillActiveOnGet,
+      `catalogNoMutationOnGet=${expiredResvStillActiveOnGet}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST ISSUE-6: Prescription Storage Orphan/Closed TTL Cleanup & Disk Quota (507)
+    // -------------------------------------------------------------------------
+    const savedOrphan = saveValidatedPrescriptionFile(validPngBytes);
+    const orphanExistsBefore = Boolean(resolveSafePrescriptionFilePath(savedOrphan.fileKey));
+    const prematureCleanup = await cleanupPrescriptionFiles();
+    const stillExistsBeforeTtl = Boolean(resolveSafePrescriptionFilePath(savedOrphan.fileKey));
+    const cleanupRes = await cleanupPrescriptionFiles({
+      nowMs: Date.now() + 65 * 60 * 1000,
+    });
+    const orphanExistsAfter = Boolean(resolveSafePrescriptionFilePath(savedOrphan.fileKey));
+
+    const prevQuota = process.env.PRESCRIPTION_STORAGE_QUOTA_MB;
+    process.env.PRESCRIPTION_STORAGE_QUOTA_MB = '0.000005'; // 5 bytes quota
+    const quotaForm = new FormData();
+    quotaForm.append('prescription', new Blob([validPngBytes], { type: 'image/png' }), 'quota.png');
+    const quotaExceededRes = await httpReq(baseUrl, 'POST', '/online-orders/prescriptions', {
+      body: quotaForm,
+    });
+    if (prevQuota === undefined) {
+      delete process.env.PRESCRIPTION_STORAGE_QUOTA_MB;
+    } else {
+      process.env.PRESCRIPTION_STORAGE_QUOTA_MB = prevQuota;
+    }
+
+    record(
+      'ISSUE-6',
+      orphanExistsBefore &&
+        prematureCleanup.deletedOrphans === 0 &&
+        stillExistsBeforeTtl &&
+        cleanupRes.deletedOrphans >= 1 &&
+        !orphanExistsAfter &&
+        quotaExceededRes.status === 507 &&
+        quotaExceededRes.json?.code === 'PRESCRIPTION_STORAGE_QUOTA_EXCEEDED',
+      `beforeTtlDeleted=${prematureCleanup.deletedOrphans}, afterTtlDeleted=${cleanupRes.deletedOrphans}, removed=${!orphanExistsAfter}, quotaStatus=${quotaExceededRes.status}`
     );
 
     // -------------------------------------------------------------------------

@@ -129,6 +129,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       toast.error('Giỏ thuốc đang trống');
       return;
     }
+    if (hasRxItem && uploadingRx) {
+      toast.error('Ảnh toa thuốc đang được tải lên máy chủ, vui lòng chờ hoàn tất');
+      return;
+    }
+    if (hasRxItem && !prescriptionFileKey) {
+      toast.error(
+        'Giỏ thuốc có sản phẩm kê đơn (Rx). Vui lòng tải lên ảnh toa thuốc bác sĩ trước khi đặt hàng!'
+      );
+      return;
+    }
 
     const cleanName = customerName.trim();
     const cleanPhone = customerPhone.trim();
@@ -448,11 +458,26 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
               {/* Rx Notice & Multipart Private Prescription Attachment */}
               {hasRxItem && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 space-y-2.5">
+                <div
+                  className={`rounded-xl border p-3.5 space-y-2.5 ${
+                    prescriptionFileKey
+                      ? 'border-emerald-200 bg-emerald-50'
+                      : 'border-rose-200 bg-rose-50'
+                  }`}
+                >
                   <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                    <p className="text-xs text-amber-900 leading-relaxed">
-                      Giỏ thuốc có sản phẩm <strong>thuốc kê đơn (Rx)</strong>. Bạn nên tải lên ảnh toa thuốc bác sĩ (tối đa 3MB) để Dược sĩ thẩm định nhanh.
+                    <AlertTriangle
+                      className={`mt-0.5 h-4 w-4 shrink-0 ${
+                        prescriptionFileKey ? 'text-emerald-600' : 'text-rose-600'
+                      }`}
+                    />
+                    <p
+                      className={`text-xs leading-relaxed ${
+                        prescriptionFileKey ? 'text-emerald-900' : 'text-rose-900'
+                      }`}
+                    >
+                      Giỏ thuốc có sản phẩm <strong>thuốc kê đơn (Rx)</strong>.{' '}
+                      <strong>Bắt buộc tải lên ảnh toa thuốc bác sĩ</strong> (tối đa 3MB) để Dược sĩ thẩm định trước khi đặt hàng.
                     </p>
                   </div>
                   <label className="flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-amber-300 bg-white px-3 py-2 text-xs hover:bg-amber-50/50">

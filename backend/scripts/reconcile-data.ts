@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import { prisma } from '../src/config/prisma';
-import { derivePackagingSpec } from '../src/services/packaging.service';
+import {
+  deriveIsRxClassification,
+  derivePackagingSpec,
+} from '../src/services/packaging.service';
 
 function hashTrackingToken(rawToken: string): string {
   return crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -89,34 +92,28 @@ async function main() {
           LooseUnits: 0,
           WholesalePrice: Math.round(product.Price * 0.85),
           MinWholesaleQty: 10,
+          IsRx: deriveIsRxClassification(product),
           IsPublished: true,
           IsTestOnly: false,
         },
       });
       createdPackaging += 1;
-    } else if (!product.packaging.IsPublished || product.packaging.IsTestOnly) {
-      await prisma.productPackaging.update({
-        where: { ProductID: product.ProductID },
-        data: { IsPublished: true, IsTestOnly: false },
-      });
-    }
-
-    const activeLotSum = product.stockLots.reduce((acc, lot) => acc + lot.RemainingQuantity, 0);
-    if (product.Quantity > activeLotSum) {
-      const deficit = product.Quantity - activeLotSum;
-      await prisma.stockLot.create({
-        data: {
-          ProductID: product.ProductID,
-          BatchNumber: `LOT-INIT-2026-${String(product.ProductID).padStart(3, '0')}`,
-          ExpiryDate: '2028-12-31',
-          InitialQuantity: deficit,
-          RemainingQuantity: deficit,
-          ImportPrice: Math.round(product.Price * 0.72),
-          BranchCode: 'CS1-GPP',
-          Status: 'ACTIVE',
-        },
-      });
-      reconciledLots += 1;
+    } else {
+      const expectedRx = deriveIsRxClassification(product);
+      if (
+        !product.packaging.IsPublished ||
+        product.packaging.IsTestOnly ||
+        (expectedRx && !product.packaging.IsRx)
+      ) {
+        await prisma.productPackaging.update({
+          where: { ProductID: product.ProductID },
+          data: {
+            IsPublished: true,
+            IsTestOnly: false,
+            ...(expectedRx ? { IsRx: true } : {}),
+          },
+        });
+      }
     }
   }
 

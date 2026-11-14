@@ -103,8 +103,8 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
         setPoItems([
           {
             ProductID: first.ProductID,
-            BatchNumber: `LOT-${new Date().getFullYear()}09`,
-            ExpiryDate: '2028-12-31',
+            BatchNumber: '',
+            ExpiryDate: '',
             Quantity: 50,
             ImportPrice: Math.round(first.Price * 0.75),
           },
@@ -270,8 +270,8 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
       ...prev,
       {
         ProductID: target.ProductID,
-        BatchNumber: `LOT-${Math.floor(1000 + Math.random() * 9000)}`,
-        ExpiryDate: '2028-06-30',
+        BatchNumber: '',
+        ExpiryDate: '',
         Quantity: 30,
         ImportPrice: Math.round(target.Price * 0.75),
       },
@@ -284,21 +284,41 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
       toast.error('Vui lòng chọn nhà cung cấp và ít nhất 1 mặt hàng nhập kho');
       return;
     }
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    for (let idx = 0; idx < poItems.length; idx += 1) {
+      const line = poItems[idx];
+      if (!line.BatchNumber || line.BatchNumber.trim().length < 2) {
+        toast.error(`Dòng #${idx + 1}: Vui lòng nhập Số lô sản xuất thật (tối thiểu 2 ký tự).`);
+        return;
+      }
+      if (!line.ExpiryDate || !/^\d{4}-\d{2}-\d{2}$/.test(line.ExpiryDate) || line.ExpiryDate < todayIso) {
+        toast.error(`Dòng #${idx + 1}: Vui lòng nhập Hạn dùng hợp lệ (không ở quá khứ).`);
+        return;
+      }
+    }
+
     setSubmittingPo(true);
     try {
       const created = await enterpriseApi.createPurchaseOrder({
         SupplierID: selectedSupplierId,
         Note: poNote,
         CreatedBy: 'DS. Nguyễn Văn Trung',
-        items: poItems,
+        items: poItems.map((item) => ({
+          ...item,
+          BatchNumber: item.BatchNumber.trim(),
+        })),
       });
       toast.success(
         `Đã lập phiếu nhập kho ${created.POCode} và tự động cộng tồn kho cho ${created.items.length} mặt hàng!`
       );
       setShowCreatePoModal(false);
       await loadAll();
-    } catch {
-      toast.error('Không thể tạo phiếu nhập kho');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Không thể tạo phiếu nhập kho';
+      toast.error(msg);
     } finally {
       setSubmittingPo(false);
     }
@@ -833,9 +853,11 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                     </div>
 
                     <div className="col-span-6 sm:col-span-2">
-                      <label className="block text-[11px] font-medium text-slate-600 mb-1">Số lô SX</label>
+                      <label className="block text-[11px] font-medium text-slate-600 mb-1">Số lô SX *</label>
                       <input
                         type="text"
+                        required
+                        placeholder="VD: LOT-2601"
                         value={item.BatchNumber}
                         onChange={(e) =>
                           setPoItems((prev) =>
@@ -849,9 +871,11 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                     </div>
 
                     <div className="col-span-6 sm:col-span-2">
-                      <label className="block text-[11px] font-medium text-slate-600 mb-1">Hạn dùng</label>
+                      <label className="block text-[11px] font-medium text-slate-600 mb-1">Hạn dùng *</label>
                       <input
                         type="date"
+                        required
+                        min={new Date().toISOString().slice(0, 10)}
                         value={item.ExpiryDate}
                         onChange={(e) =>
                           setPoItems((prev) =>

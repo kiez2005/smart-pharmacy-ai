@@ -7,6 +7,7 @@ import {
   ExportFormat,
   productInputSchema,
   ProductQueryParams,
+  productUpdateSchema,
 } from '../types/product.types';
 
 const VALID_SORT_FIELDS = new Set<keyof Product>([
@@ -101,9 +102,12 @@ export const createProduct = async (req: Request, res: Response): Promise<void> 
       data: created,
     });
   } catch (error) {
-    res.status(500).json({
+    const errAny = error as { statusCode?: number; code?: string };
+    const status = errAny?.statusCode && errAny.statusCode < 500 ? errAny.statusCode : 500;
+    res.status(status).json({
       success: false,
-      message: 'Lỗi khi thêm mới sản phẩm thuốc',
+      code: errAny?.code,
+      message: status < 500 && error instanceof Error ? error.message : 'Lỗi khi thêm mới sản phẩm thuốc',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
@@ -121,7 +125,7 @@ export const updateProduct = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const parsed = productInputSchema.partial().safeParse(req.body);
+    const parsed = productUpdateSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
         success: false,

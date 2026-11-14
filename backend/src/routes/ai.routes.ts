@@ -14,7 +14,12 @@ router.post(
   ocrPrescription
 );
 
-// Gợi ý AI #2, #3, #5: Chatbot & Chẩn đoán Y tế sơ bộ (Mọi nhân sự đã đăng nhập)
-router.post('/diagnose-chat', authenticateToken, diagnoseChat);
+// Gợi ý AI #2, #3, #5: Trợ lý lâm sàng AI (Chỉ Dược sĩ và Admin thao tác, đồng bộ RBAC với UI)
+router.post(
+  '/diagnose-chat',
+  authenticateToken,
+  requireRoles(['ADMIN', 'PHARMACIST']),
+  diagnoseChat
+);
 
 export default router;

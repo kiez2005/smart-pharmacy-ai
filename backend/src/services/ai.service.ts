@@ -26,7 +26,9 @@ export interface OcrPrescriptionResult {
 }
 
 export interface DiagnoseChatResult {
-  engine: 'python-sklearn-tfidf-rag' | 'node-clinical-rag-fallback';
+  engine: 'python-sklearn-tfidf-rag' | 'pharmacist-handoff';
+  aiServiceAvailable: boolean;
+  requiresPharmacistConsultation: boolean;
   preliminaryDiagnosis: string;
   clinicalAdvice: string;
   contraindicationWarning: string;
@@ -319,6 +321,8 @@ class AiGatewayService {
 
         return {
           engine: 'python-sklearn-tfidf-rag',
+          aiServiceAvailable: true,
+          requiresPharmacistConsultation: (pyRes.recommended_products || []).length === 0,
           preliminaryDiagnosis: pyRes.preliminary_diagnosis,
           clinicalAdvice: pyRes.clinical_advice,
           contraindicationWarning: pyRes.contraindication_warning,
@@ -338,68 +342,23 @@ class AiGatewayService {
         };
       }
     } catch {
-      // Fallback sang thuật toán đối chiếu triệu chứng trên Node.js
+      // Dịch vụ AI Python không khả dụng: chuyển Dược sĩ tư vấn trực tiếp, KHÔNG đoán mặc định.
     }
 
-    // 2. Fallback phân tích triệu chứng lâm sàng trên Node.js
-    const q = message.toLowerCase();
-    let diagnosis = 'Hội chứng Cảm cúm / Sốt & Đau nhức cơ thể';
-    let advice =
-      'Khuyến nghị hạ sốt - giảm đau bằng Paracetamol 500mg (cách 4-6 giờ), bù nước Oresol và bổ sung Vitamin tổng hợp tăng sức đề kháng.';
-    let warning = 'Không dùng quá liều Paracetamol quy định. Nếu sốt cao trên 39°C kéo dài cần đi khám chuyên khoa.';
-    let searchTerms = 'Panadol Efferalgan Oresol Berocca Vitamin C';
-
-    if (q.includes('ho') || q.includes('họng') || q.includes('đờm') || q.includes('mũi')) {
-      diagnosis = 'Viêm đường hô hấp trên (Đau rát họng - Ho - Sổ mũi)';
-      advice =
-        'Khuyến nghị súc họng bằng nước muối sinh lý Natri Clorid 0.9%, uống siro ho thảo dược Prospan hoặc tiêu đờm Acemuc, ngậm viên kháng khuẩn Strepsils.';
-      warning = 'Hạn chế nước đá lạnh. Nếu có đờm đặc đổi màu kèm khó thở cần khám bác sĩ.';
-      searchTerms = 'Prospan Acemuc Strepsils Otrivin Decolgen';
-    } else if (
-      q.includes('bụng') ||
-      q.includes('tiêu chảy') ||
-      q.includes('dạ dày') ||
-      q.includes('ợ chua')
-    ) {
-      diagnosis = 'Rối loạn tiêu hóa / Viêm dạ dày - Trào ngược';
-      advice =
-        'Nếu đau dạ dày, ợ chua dùng sữa nghệ Phosphalugel hoặc Gaviscon. Nếu tiêu chảy, đi ngoài dùng Smecta / Berberin kèm men vi sinh Enterogermina và Oresol.';
-      warning = 'Kiêng đồ chua cay, rượu bia. Tránh dùng thuốc giảm đau nhóm NSAID khi đang đau dạ dày.';
-      searchTerms = 'Phosphalugel Gaviscon Smecta Berberin Enterogermina Oresol';
-    } else if (q.includes('dị ứng') || q.includes('ngứa') || q.includes('mề đay') || q.includes('hắt hơi')) {
-      diagnosis = 'Viêm mũi dị ứng / Nổi mề đay dị ứng';
-      advice =
-        'Sử dụng thuốc kháng Histamin không gây buồn ngủ Telfast HD 180mg hoặc Loratadin 10mg kết hợp vệ sinh mũi bằng nước muối sinh lý.';
-      warning = 'Tránh tiếp xúc khói bụi, phấn hoa hoặc thực phẩm gây dị ứng.';
-      searchTerms = 'Telfast Loratadin Bepanthen';
-    }
-
-    const fuse = new Fuse(allProducts, {
-      keys: ['ProductName', 'Description', 'ProductType'],
-      threshold: 0.5,
-      includeScore: true,
-    });
-
-    const hits = fuse.search(`${message} ${searchTerms}`).slice(0, 4);
-
+    // 2. Fail-closed khi thiếu nguồn AI đáng tin cậy: không đưa chẩn đoán hoặc gợi ý thuốc mặc định
     return {
-      engine: 'node-clinical-rag-fallback',
-      preliminaryDiagnosis: diagnosis,
-      clinicalAdvice: advice,
-      contraindicationWarning: warning,
+      engine: 'pharmacist-handoff',
+      aiServiceAvailable: false,
+      requiresPharmacistConsultation: true,
+      preliminaryDiagnosis: 'Chưa có kết quả phân tích tự động — Chuyển Dược sĩ tư vấn trực tiếp',
+      clinicalAdvice:
+        'Hệ thống AI lâm sàng hiện không khả dụng hoặc chưa có nguồn dữ liệu đối chiếu đáng tin cậy. Tuyệt đối không tự chẩn đoán mặc định; vui lòng chuyển thông tin người bệnh sang Dược sĩ chuyên môn thăm hỏi trực tiếp trước khi tư vấn thuốc.',
+      contraindicationWarning:
+        'Cần khai thác trực tiếp tiền sử dị ứng, bệnh nền, phụ nữ có thai/cho con bú và thuốc đang sử dụng trước khi chỉ định hoặc cấp phát.',
       isAdvisoryOnly: true,
       disclaimer: CLINICAL_ADVISORY_DISCLAIMER,
       ruleVersion: CLINICAL_RULE_VERSION,
-      recommendedProducts: hits.map((h) => ({
-        ProductID: h.item.ProductID,
-        ProductName: h.item.ProductName,
-        ProductType: h.item.ProductType,
-        Price: h.item.Price,
-        Unit: h.item.Unit,
-        Quantity: h.item.Quantity,
-        Description: h.item.Description,
-        matchNote: 'Gợi ý tham khảo từ khóa triệu chứng — không thay thế tư vấn Dược sĩ.',
-      })),
+      recommendedProducts: [],
     };
   }
 }

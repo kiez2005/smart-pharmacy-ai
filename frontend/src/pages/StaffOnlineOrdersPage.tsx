@@ -157,6 +157,9 @@ export const StaffOnlineOrdersPage: React.FC = () => {
       ? orderVirtualizer.getTotalSize() - virtualOrderRows[virtualOrderRows.length - 1].end
       : 0;
 
+  const orderHasRxItem = (order: OnlineOrderRecord) =>
+    order.items.some((it) => Boolean(it.product?.packaging?.IsRx));
+
   const handleOpenReview = (order: OnlineOrderRecord, action: 'APPROVE' | 'REJECT') => {
     setReviewingOrder(order);
     setReviewAction(action);
@@ -169,6 +172,10 @@ export const StaffOnlineOrdersPage: React.FC = () => {
     if (!reviewingOrder) return;
     if (!canReviewClinical) {
       toast.error('Chỉ Dược sĩ (PHARMACIST) hoặc Quản trị viên (ADMIN) mới có quyền thẩm định đơn Online!');
+      return;
+    }
+    if (reviewAction === 'APPROVE' && orderHasRxItem(reviewingOrder) && !reviewingOrder.PrescriptionFileKey) {
+      toast.error('Đơn chứa thuốc kê đơn (Rx) nhưng chưa có ảnh toa thuốc hợp lệ. Không thể duyệt xuất kho!');
       return;
     }
     if (reviewAction === 'REJECT' && !rejectReason.trim()) {
@@ -707,6 +714,18 @@ export const StaffOnlineOrdersPage: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Cảnh báo thiếu ảnh toa thuốc bắt buộc đối với đơn Rx */}
+                {reviewAction === 'APPROVE' &&
+                  orderHasRxItem(reviewingOrder) &&
+                  !reviewingOrder.PrescriptionFileKey && (
+                    <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 flex items-start gap-2 text-rose-900 font-semibold">
+                      <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                      <span>
+                        Đơn hàng có thuốc kê đơn (Rx) nhưng chưa có ảnh toa thuốc đính kèm. Hệ thống chặn duyệt xuất kho để đảm bảo tuân thủ GPP.
+                      </span>
+                    </div>
+                  )}
+
                 {/* Ảnh đơn thuốc bảo mật RBAC */}
                 {(reviewingOrder.PrescriptionFileKey || rxLoading) && (
                   <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-2.5 space-y-1.5">
@@ -739,11 +758,18 @@ export const StaffOnlineOrdersPage: React.FC = () => {
                   <div className="font-bold text-slate-700">Mặt hàng trong đơn:</div>
                   <div className="max-h-36 overflow-y-auto divide-y divide-slate-100 border rounded-lg p-2 bg-white">
                     {reviewingOrder.items.map((it, idx) => (
-                      <div key={idx} className="py-1 flex justify-between">
-                        <span>
-                          {it.Quantity} {it.Unit} · {it.product?.ProductName}
+                      <div key={idx} className="py-1 flex justify-between gap-2">
+                        <span className="flex items-center gap-1.5">
+                          {Boolean(it.product?.packaging?.IsRx) && (
+                            <span className="inline-flex shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200">
+                              Rx
+                            </span>
+                          )}
+                          <span>
+                            {it.Quantity} {it.Unit} · {it.product?.ProductName}
+                          </span>
                         </span>
-                        <span className="font-bold tabular-nums">
+                        <span className="font-bold tabular-nums shrink-0">
                           {formatVND(it.Quantity * it.UnitPrice)}
                         </span>
                       </div>
@@ -838,9 +864,14 @@ export const StaffOnlineOrdersPage: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  disabled={submittingReview}
+                  disabled={
+                    submittingReview ||
+                    (reviewAction === 'APPROVE' &&
+                      orderHasRxItem(reviewingOrder) &&
+                      !reviewingOrder.PrescriptionFileKey)
+                  }
                   onClick={() => void handleSubmitReview()}
-                  className={`h-8 px-4 rounded-lg text-xs font-semibold text-white shadow-2xs ${
+                  className={`h-8 px-4 rounded-lg text-xs font-semibold text-white shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed ${
                     reviewAction === 'APPROVE'
                       ? 'bg-teal-600 hover:bg-teal-700'
                       : 'bg-rose-600 hover:bg-rose-700'

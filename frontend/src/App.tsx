@@ -236,7 +236,7 @@ export const App: React.FC = () => {
           label: 'AI Lâm sàng & Tương tác',
           icon: Stethoscope,
           badge: 'AI',
-          roles: ['ADMIN', 'PHARMACIST', 'CASHIER'],
+          roles: ['ADMIN', 'PHARMACIST'],
         },
         {
           id: 'CONTACT',
@@ -625,7 +625,9 @@ export const App: React.FC = () => {
             {activeTab === 'AI_OCR' && currentUser.Role !== 'CASHIER' && (
               <PrescriptionOcrPage onTransferToPos={handleTransferOcrToPos} />
             )}
-            {activeTab === 'AI_CLINICAL' && <ClinicalAiAndInteractionPage />}
+            {activeTab === 'AI_CLINICAL' && currentUser.Role !== 'CASHIER' && (
+              <ClinicalAiAndInteractionPage />
+            )}
             {activeTab === 'CONTACT' && currentUser.Role !== 'CASHIER' && <ContactPage />}
             {activeTab === 'AUTH' && (
               <AuthPage

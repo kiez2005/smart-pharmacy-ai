@@ -5,6 +5,7 @@ import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import path from 'path';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
+import { isValidFutureIsoDate } from '../utils/date.util';
 
 // ============================================================================
 // 1. DASHBOARD ĐIỀU HÀNH & PHÂN TÍCH TỔNG QUAN (GET /api/enterprise/dashboard)
@@ -281,8 +282,16 @@ const purchaseOrderSchema = z.object({
         ProductID: z.coerce.number().int().positive(),
         Quantity: z.coerce.number().int().positive(),
         ImportPrice: z.coerce.number().min(0),
-        BatchNumber: z.string().trim().optional().default('LOT-2026B'),
-        ExpiryDate: z.string().trim().optional().default('2028-12-31'),
+        BatchNumber: z
+          .string()
+          .trim()
+          .min(2, 'Số lô sản xuất bắt buộc (tối thiểu 2 ký tự)'),
+        ExpiryDate: z
+          .string()
+          .trim()
+          .refine((val) => isValidFutureIsoDate(val), {
+            message: 'Hạn sử dụng bắt buộc định dạng YYYY-MM-DD và phải còn hạn (>= hôm nay)',
+          }),
       })
     )
     .min(1, 'Phiếu nhập kho phải có ít nhất 1 mặt hàng'),
@@ -336,7 +345,11 @@ export const createPurchaseOrder = async (req: Request, res: Response): Promise<
     if (!parsed.success) {
       res.status(400).json({
         success: false,
-        message: 'Dữ liệu phiếu nhập kho không hợp lệ',
+        code: 'INVALID_PURCHASE_ORDER',
+        message:
+          parsed.error.issues[0]?.message ||
+          'Dữ liệu phiếu nhập kho không hợp lệ (bắt buộc nhập Số lô & Hạn sử dụng hợp lệ)',
+        errors: parsed.error.flatten().fieldErrors,
       });
       return;
     }

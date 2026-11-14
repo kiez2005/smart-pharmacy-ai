@@ -274,6 +274,28 @@ export const derivePackagingSpec = (
   };
 };
 
+/**
+ * Phân loại thuốc kê đơn (Rx) mặc định khi khởi tạo danh mục lần đầu.
+ * Dữ liệu vận hành chính thức đọc trực tiếp từ cột có cấu trúc `ProductPackaging.IsRx`.
+ */
+export const deriveIsRxClassification = (
+  product: Pick<Product, 'ProductName' | 'ProductType' | 'Description'>
+): boolean => {
+  const type = (product.ProductType || '').toLowerCase();
+  const nameAndDesc = `${product.ProductName || ''} ${product.Description || ''}`.toLowerCase();
+  if (
+    type.includes('kháng sinh') ||
+    type.includes('tim mạch') ||
+    type.includes('thần kinh') ||
+    type.includes('đặc trị')
+  ) {
+    return true;
+  }
+  return /augmentin|nexium|lipitor|glucophage|amoxicillin|cefuroxim|azithromycin|ciprofloxacin|losartan|amlodipin|metformin|atorvastatin|kê đơn|\brx\b/i.test(
+    nameAndDesc
+  );
+};
+
 export class PackagingService {
   /**
    * Lấy hoặc tự động khởi tạo bản ghi ProductPackaging trong database
@@ -302,6 +324,7 @@ export class PackagingService {
           WholesalePrice: defaultWholesalePrice,
           MinWholesaleQty: 10,
           LooseUnits: 0,
+          IsRx: deriveIsRxClassification(product),
         },
       });
     } else if (spec.WholesalePrice === null || spec.WholesalePrice === undefined) {

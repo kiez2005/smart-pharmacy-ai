@@ -8,6 +8,8 @@ import contactRoutes from './routes/contact.routes';
 import aiRoutes from './routes/ai.routes';
 import enterpriseRoutes from './routes/enterprise.routes';
 import onlineOrderRoutes from './routes/online-order.routes';
+import { packagingService } from './services/packaging.service';
+import { cleanupPrescriptionFiles } from './services/prescription-storage.service';
 
 export const app = express();
 
@@ -86,8 +88,22 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
+const MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
+
+function runBackgroundMaintenance(): void {
+  void packagingService.releaseExpiredReservations().catch((error) => {
+    console.error('[Maintenance] Failed to release expired reservations:', error);
+  });
+  void cleanupPrescriptionFiles().catch((error) => {
+    console.error('[Maintenance] Failed to clean up prescription files:', error);
+  });
+}
+
 if (process.env.DISABLE_AUTO_LISTEN !== '1') {
   app.listen(PORT, () => {
     console.log(`[PharmaCore ERP Backend] Listening on http://localhost:${PORT}`);
+    runBackgroundMaintenance();
+    const timer = setInterval(runBackgroundMaintenance, MAINTENANCE_INTERVAL_MS);
+    timer.unref();
   });
 }

@@ -180,8 +180,22 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
 
           {diagnoseResult && (
             <div className="space-y-3 pt-2 border-t border-zinc-100 text-xs">
-              <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[11px] font-medium text-amber-900 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <div
+                className={`rounded-lg border p-2.5 text-[11px] font-medium flex items-start gap-2 ${
+                  diagnoseResult.engine === 'pharmacist-handoff' ||
+                  diagnoseResult.requiresPharmacistConsultation
+                    ? 'border-rose-300 bg-rose-50 text-rose-900'
+                    : 'border-amber-300 bg-amber-50 text-amber-900'
+                }`}
+              >
+                <AlertTriangle
+                  className={`h-4 w-4 shrink-0 mt-0.5 ${
+                    diagnoseResult.engine === 'pharmacist-handoff' ||
+                    diagnoseResult.requiresPharmacistConsultation
+                      ? 'text-rose-600'
+                      : 'text-amber-600'
+                  }`}
+                />
                 <span>
                   {diagnoseResult.disclaimer ||
                     'Công cụ gợi ý AI chỉ mang tính tham khảo cho nhân viên y tế, không thay thế chẩn đoán bác sĩ hoặc thẩm định Dược sĩ.'}
@@ -191,7 +205,11 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-zinc-900 flex items-center gap-1">
                     <Sparkles className="h-3.5 w-3.5 text-teal-600" />
-                    <span>Nhận định tham khảo sơ bộ (Advisory Only):</span>
+                    <span>
+                      {diagnoseResult.engine === 'pharmacist-handoff'
+                        ? 'Chuyển tiếp Dược sĩ phụ trách (AI Ngoại tuyến):'
+                        : 'Nhận định tham khảo sơ bộ (Advisory Only):'}
+                    </span>
                   </span>
                   <span className="font-mono text-[10px] text-zinc-500">
                     {diagnoseResult.engine}
@@ -210,25 +228,34 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                 <div className="font-semibold text-zinc-800">
                   Dược phẩm gợi ý tham khảo trong danh mục:
                 </div>
-                {diagnoseResult.recommendedProducts.map((rp) => (
-                  <div
-                    key={rp.ProductID}
-                    className="rounded-md border border-zinc-200 p-2.5 flex items-center justify-between gap-3 hover:bg-zinc-50"
-                  >
-                    <div className="min-w-0">
-                      <div className="font-semibold text-zinc-900 truncate">{rp.ProductName}</div>
-                      <div className="text-[11px] text-zinc-500 truncate">{rp.Description}</div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="inline-block rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 border border-sky-200/60">
-                        {rp.matchNote || 'Gợi ý tham khảo'}
-                      </span>
-                      <div className="text-xs font-semibold text-zinc-900 tabular-nums mt-0.5">
-                        {formatVND(rp.Price)} / {rp.Unit}
+                {diagnoseResult.recommendedProducts.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-zinc-300 bg-zinc-50 p-3 text-xs text-zinc-600">
+                    {diagnoseResult.requiresPharmacistConsultation ||
+                    diagnoseResult.engine === 'pharmacist-handoff'
+                      ? 'Hệ thống AI hiện không đưa ra chẩn đoán hoặc gợi ý thuốc mặc định. Vui lòng chuyển ca cho Dược sĩ chuyên môn khai thác triệu chứng trực tiếp.'
+                      : 'Không tìm thấy thuốc phù hợp trong danh mục. Vui lòng tham vấn Dược sĩ chuyên môn.'}
+                  </div>
+                ) : (
+                  diagnoseResult.recommendedProducts.map((rp) => (
+                    <div
+                      key={rp.ProductID}
+                      className="rounded-md border border-zinc-200 p-2.5 flex items-center justify-between gap-3 hover:bg-zinc-50"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-semibold text-zinc-900 truncate">{rp.ProductName}</div>
+                        <div className="text-[11px] text-zinc-500 truncate">{rp.Description}</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="inline-block rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 border border-sky-200/60">
+                          {rp.matchNote || 'Gợi ý tham khảo'}
+                        </span>
+                        <div className="text-xs font-semibold text-zinc-900 tabular-nums mt-0.5">
+                          {formatVND(rp.Price)} / {rp.Unit}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           )}

@@ -192,8 +192,12 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
         toast.success(`Đã thêm mới "${values.ProductName}"`);
       }
       await loadProducts();
-    } catch {
-      toast.error('Không thể lưu dữ liệu dược phẩm');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Không thể lưu dữ liệu dược phẩm';
+      toast.error(msg);
+      throw err;
     }
   };
 
@@ -397,14 +401,6 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
     [sortBy, sortOrder]
   );
 
-  const isPrescriptionDrug = (type: string, name: string) => {
-    const rxTypes = ['Kháng sinh', 'Tim mạch', 'Huyết áp', 'Tiểu đường', 'Thần kinh', 'Dạ dày'];
-    return (
-      rxTypes.some((t) => type.toLowerCase().includes(t.toLowerCase())) ||
-      /augmentin|nexium|lipitor|glucophage|amoxicillin|cefuroxim|azithromycin/i.test(name)
-    );
-  };
-
   const getConversionSpec = (product: Product) => {
     const pkg = product.packaging;
     const boxesPerCarton = pkg?.BoxesPerCarton ?? 20;
@@ -487,7 +483,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
           </button>
         ),
         cell: ({ row }) => {
-          const isRx = isPrescriptionDrug(row.original.ProductType, row.original.ProductName);
+          const isRx = Boolean(row.original.packaging?.IsRx);
           return (
             <div className="max-w-[290px]">
               <div className="flex items-center gap-1.5">

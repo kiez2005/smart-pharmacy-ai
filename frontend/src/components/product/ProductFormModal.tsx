@@ -14,10 +14,12 @@ const DEFAULT_VALUES: ProductFormValues = {
   ProductName: '',
   PathImage: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400&auto=format&fit=crop&q=80',
   ProductType: 'Giảm đau - Hạ sốt',
-  Quantity: 100,
+  Quantity: 0,
   Unit: 'Hộp',
   Price: 50000,
   Description: '',
+  InitialBatchNumber: '',
+  InitialExpiryDate: '',
   packaging: {
     PackageUnit: 'Hộp',
     BlisterUnit: 'Vỉ',
@@ -27,6 +29,7 @@ const DEFAULT_VALUES: ProductFormValues = {
     BlistersPerPackage: 10,
     UnitsPerPackage: 100,
     AllowFractionalSale: true,
+    IsRx: false,
     WholesalePrice: 44000,
     MinWholesaleQty: 10,
   },
@@ -55,9 +58,11 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 }) => {
   const [values, setValues] = useState<ProductFormValues>(DEFAULT_VALUES);
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
+    setFormError(null);
     if (editingProduct) {
       const pkg = editingProduct.packaging;
       const isTabletBox = editingProduct.Unit.toLowerCase().includes('hộp');
@@ -69,6 +74,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         Unit: editingProduct.Unit,
         Price: editingProduct.Price,
         Description: editingProduct.Description,
+        InitialBatchNumber: '',
+        InitialExpiryDate: '',
         packaging: {
           PackageUnit: editingProduct.Unit,
           BlisterUnit: pkg?.BlisterUnit ?? (isTabletBox ? 'Vỉ' : null),
@@ -78,6 +85,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
           BlistersPerPackage: pkg?.BlistersPerPackage ?? (isTabletBox ? 10 : null),
           UnitsPerPackage: pkg?.UnitsPerPackage ?? (isTabletBox ? 100 : 1),
           AllowFractionalSale: pkg?.AllowFractionalSale ?? isTabletBox,
+          IsRx: Boolean(pkg?.IsRx),
           WholesalePrice: pkg?.WholesalePrice ?? Math.round((editingProduct.Price * 0.88) / 500) * 500,
           MinWholesaleQty: pkg?.MinWholesaleQty ?? 10,
         },
@@ -117,11 +125,46 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   const handleFormSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!values.ProductName.trim()) return;
+    if (!values.ProductName.trim()) {
+      setFormError('Vui lòng nhập tên dược phẩm.');
+      return;
+    }
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    if (!editingProduct && values.Quantity > 0) {
+      const batch = (values.InitialBatchNumber || '').trim();
+      const expiry = (values.InitialExpiryDate || '').trim();
+      if (batch.length < 2) {
+        setFormError('Khi khai báo tồn đầu kỳ (> 0), vui lòng nhập Số lô sản xuất thật (tối thiểu 2 ký tự).');
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry) || expiry < todayIso) {
+        setFormError('Khi khai báo tồn đầu kỳ (> 0), vui lòng nhập Hạn dùng hợp lệ (không ở quá khứ).');
+        return;
+      }
+    }
+
+    setFormError(null);
     setSubmitting(true);
     try {
-      await onSubmit(values);
+      const payload: ProductFormValues = {
+        ...values,
+        InitialBatchNumber:
+          !editingProduct && values.Quantity > 0
+            ? (values.InitialBatchNumber || '').trim()
+            : undefined,
+        InitialExpiryDate:
+          !editingProduct && values.Quantity > 0
+            ? (values.InitialExpiryDate || '').trim()
+            : undefined,
+      };
+      await onSubmit(payload);
       onClose();
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Không thể lưu dữ liệu dược phẩm';
+      setFormError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -206,15 +249,22 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1.5">
-                  Số lượng tồn kho
+                  {editingProduct
+                    ? 'Số lượng tồn kho (Điều chỉnh qua Nhập/Kiểm kê)'
+                    : 'Số lượng tồn kho ban đầu (Khuyến nghị = 0)'}
                 </label>
                 <input
                   type="number"
                   min={0}
                   required
+                  readOnly={Boolean(editingProduct)}
                   value={values.Quantity}
                   onChange={(e) => setValues({ ...values, Quantity: Number(e.target.value) })}
-                  className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-3 text-xs text-zinc-900 tabular-nums shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                  className={`w-full h-9 rounded-lg border border-zinc-200 px-3 text-xs tabular-nums shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 ${
+                    editingProduct
+                      ? 'bg-zinc-100 text-zinc-500 cursor-not-allowed'
+                      : 'bg-white text-zinc-900'
+                  }`}
                 />
               </div>
 
@@ -243,34 +293,94 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 />
               </div>
 
+              {!editingProduct && values.Quantity > 0 && (
+                <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-amber-900 mb-1">
+                      Số lô SX đầu kỳ (Bắt buộc) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="VD: LOT-2026A"
+                      value={values.InitialBatchNumber || ''}
+                      onChange={(e) =>
+                        setValues({ ...values, InitialBatchNumber: e.target.value })
+                      }
+                      className="w-full h-9 rounded-lg border border-amber-300 bg-white px-3 font-mono text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-amber-900 mb-1">
+                      Hạn dùng (ExpiryDate) *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      min={new Date().toISOString().slice(0, 10)}
+                      value={values.InitialExpiryDate || ''}
+                      onChange={(e) =>
+                        setValues({ ...values, InitialExpiryDate: e.target.value })
+                      }
+                      className="w-full h-9 rounded-lg border border-amber-300 bg-white px-3 text-xs text-zinc-900 shadow-sm focus:border-teal-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {formError && (
+                <div className="sm:col-span-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+                  {formError}
+                </div>
+              )}
+
               {/* Khối Cấu hình Quy cách Đóng gói 4 cấp & Giá Bán Buôn B2B */}
               <div className="sm:col-span-2 rounded-xl border border-teal-200/80 bg-teal-50/40 p-3.5 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <div>
                     <h3 className="text-xs font-bold text-teal-900">
                       Quy cách đóng gói 4 cấp (GPP) & Giá Bán Buôn Đại lý B2B (GDP)
                     </h3>
                     <p className="text-[11px] text-teal-700/80">
-                      Hỗ trợ bán lẻ cắt liều (Hộp → Vỉ → Viên) và xuất buôn nguyên Thùng/Hộp cho đại lý
+                      Hỗ trợ bán lẻ cắt liều (Hộp → Vỉ → Viên) và phân loại thuốc kê đơn (Rx)
                     </p>
                   </div>
-                  <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(values.packaging?.AllowFractionalSale)}
-                      onChange={(e) =>
-                        setValues({
-                          ...values,
-                          packaging: {
-                            ...values.packaging,
-                            AllowFractionalSale: e.target.checked,
-                          },
-                        })
-                      }
-                      className="rounded border-teal-300 text-teal-600 focus:ring-teal-500"
-                    />
-                    <span>Cho phép bán lẻ Vỉ/Viên</span>
-                  </label>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(values.packaging?.AllowFractionalSale)}
+                        onChange={(e) =>
+                          setValues({
+                            ...values,
+                            packaging: {
+                              ...values.packaging,
+                              AllowFractionalSale: e.target.checked,
+                            },
+                          })
+                        }
+                        className="rounded border-teal-300 text-teal-600 focus:ring-teal-500"
+                      />
+                      <span>Cho phép bán lẻ Vỉ/Viên</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(values.packaging?.IsRx)}
+                        onChange={(e) =>
+                          setValues({
+                            ...values,
+                            packaging: {
+                              ...values.packaging,
+                              IsRx: e.target.checked,
+                            },
+                          })
+                        }
+                        className="rounded border-rose-300 text-rose-600 focus:ring-rose-500"
+                      />
+                      <span>Thuốc kê đơn (Rx - bắt buộc toa)</span>
+                    </label>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">

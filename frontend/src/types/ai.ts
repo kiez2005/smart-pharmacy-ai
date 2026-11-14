@@ -36,7 +36,9 @@ export interface RecommendedDrugItem {
 }
 
 export interface DiagnoseChatResponse {
-  engine: 'python-sklearn-tfidf-rag' | 'node-clinical-rag-fallback';
+  engine: 'python-sklearn-tfidf-rag' | 'pharmacist-handoff';
+  aiServiceAvailable?: boolean;
+  requiresPharmacistConsultation?: boolean;
   isAdvisoryOnly?: boolean;
   disclaimer?: string;
   preliminaryDiagnosis: string;

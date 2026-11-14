@@ -14,6 +14,7 @@ export interface ProductPackaging {
   ReservedLooseUnits?: number;
   Version?: number;
   AllowFractionalSale: boolean;
+  IsRx?: boolean;
   WholesalePrice?: number | null;
   MinWholesaleQty?: number;
 }
@@ -53,6 +54,8 @@ export interface ProductFormValues {
   Unit: string;
   Price: number;
   Description: string;
+  InitialBatchNumber?: string;
+  InitialExpiryDate?: string;
   packaging?: Partial<ProductPackaging>;
 }
 

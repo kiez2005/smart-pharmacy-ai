@@ -142,7 +142,9 @@ class ImportExportService {
     }
 
     const validProducts: ProductInputDTO[] = [];
-    for (const raw of rawRecords) {
+    const validationErrors: string[] = [];
+    for (let idx = 0; idx < rawRecords.length; idx += 1) {
+      const raw = rawRecords[idx];
       const normalized = {
         ProductName: String(raw.ProductName ?? raw.productName ?? raw['Tên thuốc'] ?? '').trim(),
         PathImage: String(
@@ -155,16 +157,36 @@ class ImportExportService {
         Unit: String(raw.Unit ?? raw.unit ?? raw['Đơn vị'] ?? 'Hộp').trim(),
         Price: Number(raw.Price ?? raw.price ?? raw['Đơn giá'] ?? 0),
         Description: String(raw.Description ?? raw.description ?? raw['Mô tả'] ?? '').trim(),
+        InitialBatchNumber:
+          raw.InitialBatchNumber ?? raw.BatchNumber ?? raw.batchNumber ?? raw['Số lô']
+            ? String(
+                raw.InitialBatchNumber ?? raw.BatchNumber ?? raw.batchNumber ?? raw['Số lô']
+              ).trim()
+            : undefined,
+        InitialExpiryDate:
+          raw.InitialExpiryDate ?? raw.ExpiryDate ?? raw.expiryDate ?? raw['Hạn sử dụng']
+            ? String(
+                raw.InitialExpiryDate ??
+                  raw.ExpiryDate ??
+                  raw.expiryDate ??
+                  raw['Hạn sử dụng']
+              ).trim()
+            : undefined,
       };
 
       const check = productInputSchema.safeParse(normalized);
       if (check.success) {
         validProducts.push(check.data);
+      } else {
+        const firstIssue = check.error.issues[0]?.message || 'Dữ liệu không hợp lệ';
+        validationErrors.push(`Dòng ${idx + 1} (${normalized.ProductName || 'N/A'}): ${firstIssue}`);
       }
     }
 
     if (validProducts.length === 0) {
-      throw new Error('Không tìm thấy bản ghi Product hợp lệ nào trong file tải lên');
+      throw new Error(
+        validationErrors[0] || 'Không tìm thấy bản ghi Product hợp lệ nào trong file tải lên'
+      );
     }
 
     return validProducts;

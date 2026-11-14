@@ -1,6 +1,9 @@
 import bcrypt from 'bcryptjs';
 import { prisma } from '../src/config/prisma';
-import { derivePackagingSpec } from '../src/services/packaging.service';
+import {
+  deriveIsRxClassification,
+  derivePackagingSpec,
+} from '../src/services/packaging.service';
 
 const sampleProducts = [
   {
@@ -395,10 +398,15 @@ async function main() {
         LooseUnits: 0,
         WholesalePrice: Math.round(prod.Price * 0.85),
         MinWholesaleQty: 10,
+        IsRx: deriveIsRxClassification(prod),
         IsPublished: true,
         IsTestOnly: false,
       },
-      update: { IsPublished: true, IsTestOnly: false },
+      update: {
+        IsRx: deriveIsRxClassification(prod),
+        IsPublished: true,
+        IsTestOnly: false,
+      },
     });
     const lotAgg = await prisma.stockLot.aggregate({
       where: { ProductID: prod.ProductID, Status: 'ACTIVE' },

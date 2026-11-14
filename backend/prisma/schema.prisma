@@ -58,6 +58,7 @@ model ProductPackaging {
   AllowFractionalSale Boolean  @default(true) // Cho phép bán lẻ vỉ/viên
   WholesalePrice      Float?   // Giá bán buôn (B2B) trên 1 PackageUnit (Hộp)
   MinWholesaleQty     Int      @default(10) // Số lượng hộp tối thiểu áp dụng giá sỉ
+  IsRx                Boolean  @default(false) // Phân loại thuốc kê đơn bắt buộc toa bác sĩ
   IsPublished         Boolean  @default(true)
   IsTestOnly          Boolean  @default(false)
 
@@ -201,8 +202,8 @@ model PurchaseOrderItem {
   ProductID       Int
   Quantity        Int           @default(1)
   ImportPrice     Float         @default(0)
-  BatchNumber     String        @default("LOT-2026A")
-  ExpiryDate      String        @default("2028-12-31")
+  BatchNumber     String
+  ExpiryDate      String
 
   purchaseOrder   PurchaseOrder @relation(fields: [PurchaseOrderID], references: [PurchaseOrderID], onDelete: Cascade)
   product         Product       @relation(fields: [ProductID], references: [ProductID], onDelete: Restrict)
