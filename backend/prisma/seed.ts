@@ -324,24 +324,71 @@ const sampleProducts = [
 ];
 
 async function main() {
-  console.log('Đang khởi tạo dữ liệu doanh nghiệp PharmaCore ERP (8 bảng)...');
+  const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  if (isProd && process.env.ALLOW_PRODUCTION_SEED !== 'true') {
+    throw new Error(
+      'CRITICAL SAFETY GUARD: Cấm chạy prisma/seed.ts trên môi trường production! Nếu cần khởi tạo lần đầu có chủ đích, hãy đặt ALLOW_PRODUCTION_SEED=true.'
+    );
+  }
 
-  // Xóa dữ liệu cũ theo đúng thứ tự khóa ngoại
-  await prisma.payment.deleteMany();
-  await prisma.invoiceItem.deleteMany();
-  await prisma.invoice.deleteMany();
-  await prisma.purchaseOrderItem.deleteMany();
-  await prisma.purchaseOrder.deleteMany();
-  await prisma.supplier.deleteMany();
-  await prisma.customer.deleteMany();
-  await prisma.contact.deleteMany();
-  await prisma.product.deleteMany();
-  await prisma.user.deleteMany();
+  const argv = new Set(process.argv.slice(2));
+  const wantsDestructiveReset =
+    argv.has('--force-reset') || process.env.SEED_FORCE_RESET === 'true';
 
-  // 1. Tạo đội ngũ nhân sự Dược sĩ & Quản trị viên
-  const hashedPassword = await bcrypt.hash('123456', 10);
-  const admin = await prisma.user.create({
-    data: {
+  if (wantsDestructiveReset) {
+    if (isProd || process.env.CONFIRM_SEED_WIPE !== 'WIPE_ALL_DATA') {
+      throw new Error(
+        'CRITICAL SAFETY GUARD: Để xóa trắng dữ liệu khi seed (--force-reset), môi trường không được là production và bắt buộc truyền biến xác nhận CONFIRM_SEED_WIPE=WIPE_ALL_DATA.'
+      );
+    }
+    console.warn('⚠️ Đang xóa dữ liệu cũ theo cờ --force-reset + CONFIRM_SEED_WIPE=WIPE_ALL_DATA...');
+    await prisma.paymentTransaction.deleteMany();
+    await prisma.payment.deleteMany();
+    await prisma.invoiceItem.deleteMany();
+    await prisma.invoice.deleteMany();
+    await prisma.purchaseOrderItem.deleteMany();
+    await prisma.purchaseOrder.deleteMany();
+    await prisma.supplier.deleteMany();
+    await prisma.customer.deleteMany();
+    await prisma.contact.deleteMany();
+    await prisma.stockMovement.deleteMany();
+    await prisma.stockLot.deleteMany();
+    await prisma.productPackaging.deleteMany();
+    await prisma.product.deleteMany();
+    await prisma.user.deleteMany();
+  } else {
+    console.log(
+      'Đang khởi tạo dữ liệu doanh nghiệp PharmaCore ERP ở chế độ AN TOÀN (Idempotent Upsert — không xóa dữ liệu hiện có)...'
+    );
+  }
+
+  // 1. Tạo hoặc cập nhật đội ngũ nhân sự Dược sĩ & Quản trị viên
+  const envSeedPassword = (
+    process.env.SEED_ADMIN_PASSWORD ||
+    process.env.SEED_DEFAULT_PASSWORD ||
+    ''
+  ).trim();
+  const bootstrapPassword =
+    envSeedPassword.length >= 6
+      ? envSeedPassword
+      : `Pharm#${Math.random().toString(36).slice(2, 8)}!${Date.now().toString(36).slice(-4)}`;
+
+  if (!envSeedPassword) {
+    console.warn(
+      'ℹ️ Chưa đặt SEED_ADMIN_PASSWORD trong .env — hệ thống đã tự sinh mật khẩu khởi tạo ngẫu nhiên một lần cho tài khoản mẫu mới.'
+    );
+  }
+
+  const hashedPassword = await bcrypt.hash(bootstrapPassword, 10);
+  const admin = await prisma.user.upsert({
+    where: { Email: 'trung.d18cnpm5@epu.edu.vn' },
+    update: {
+      FullName: 'DS. Nguyễn Văn Trung',
+      Role: 'ADMIN',
+      Status: 'ACTIVE',
+      ...(envSeedPassword ? { Password: hashedPassword } : {}),
+    },
+    create: {
       FullName: 'DS. Nguyễn Văn Trung',
       Email: 'trung.d18cnpm5@epu.edu.vn',
       Password: hashedPassword,
@@ -351,8 +398,15 @@ async function main() {
     },
   });
 
-  const pharmacist1 = await prisma.user.create({
-    data: {
+  const pharmacist1 = await prisma.user.upsert({
+    where: { Email: 'duc.d18cnpm5@epu.edu.vn' },
+    update: {
+      FullName: 'DS. Đặng Minh Đức',
+      Role: 'PHARMACIST',
+      Status: 'ACTIVE',
+      ...(envSeedPassword ? { Password: hashedPassword } : {}),
+    },
+    create: {
       FullName: 'DS. Đặng Minh Đức',
       Email: 'duc.d18cnpm5@epu.edu.vn',
       Password: hashedPassword,
@@ -362,8 +416,15 @@ async function main() {
     },
   });
 
-  await prisma.user.create({
-    data: {
+  await prisma.user.upsert({
+    where: { Email: 'baongoc.pharmacore@epu.edu.vn' },
+    update: {
+      FullName: 'DS. Lê Hoàng Bảo Ngọc',
+      Role: 'CASHIER',
+      Status: 'ACTIVE',
+      ...(envSeedPassword ? { Password: hashedPassword } : {}),
+    },
+    create: {
       FullName: 'DS. Lê Hoàng Bảo Ngọc',
       Email: 'baongoc.pharmacore@epu.edu.vn',
       Password: hashedPassword,
@@ -430,284 +491,311 @@ async function main() {
   }
   const allProducts = await prisma.product.findMany({ orderBy: { ProductID: 'asc' } });
 
-  // 3. Tạo 5 Nhà cung cấp dược phẩm lớn
-  const suppliers = await Promise.all([
-    prisma.supplier.create({
-      data: {
-        SupplierCode: 'NCC-DHG01',
-        SupplierName: 'Công ty Cổ phần Dược Hậu Giang (DHG Pharma)',
-        ContactPerson: 'Nguyễn Thành Công',
-        Phone: '02923891433',
-        Email: 'supply@dhgpharma.com.vn',
-        Address: '288 Bis Nguyễn Văn Cừ, Q. Ninh Kiều, TP. Cần Thơ',
-        TaxCode: '1800156801',
-      },
-    }),
-    prisma.supplier.create({
-      data: {
-        SupplierCode: 'NCC-TRA02',
-        SupplierName: 'Công ty Cổ phần Traphaco',
-        ContactPerson: 'Trần Thu Hà',
-        Phone: '18006612',
-        Email: 'contact@traphaco.com.vn',
-        Address: '75 Yên Ninh, Q. Ba Đình, TP. Hà Nội',
-        TaxCode: '0100108656',
-      },
-    }),
-    prisma.supplier.create({
-      data: {
-        SupplierCode: 'NCC-SAN03',
-        SupplierName: 'Công ty Cổ phần Sanofi Việt Nam',
-        ContactPerson: 'Lê Minh Tuấn',
-        Phone: '02838298526',
-        Email: 'order.vn@sanofi.com',
-        Address: 'Khu Công Nghệ Cao, TP. Thủ Đức, TP. Hồ Chí Minh',
-        TaxCode: '0300462841',
-      },
-    }),
-    prisma.supplier.create({
-      data: {
-        SupplierCode: 'NCC-ZUE04',
-        SupplierName: 'Công ty TNHH Zuellig Pharma Việt Nam',
-        ContactPerson: 'Phạm Quốc Bảo',
-        Phone: '02839102650',
-        Email: 'distribution@zuelligpharma.com',
-        Address: 'KCN Tân Bình, Q. Tân Phú, TP. Hồ Chí Minh',
-        TaxCode: '0301449218',
-      },
-    }),
-  ]);
-
-  // 4. Tạo 2 Phiếu nhập kho mẫu (Purchase Orders)
-  await prisma.purchaseOrder.create({
-    data: {
-      OrderCode: 'PNK-2026-001',
-      SupplierID: suppliers[0].SupplierID,
-      UserID: admin.UserID,
-      TotalCost: 15800000,
-      Note: 'Nhập bổ sung nhóm thuốc hạ sốt và tiêu hóa định kỳ tháng 11',
-      Status: 'COMPLETED',
-      items: {
-        create: [
-          {
-            ProductID: allProducts[0].ProductID,
-            Quantity: 50,
-            ImportPrice: 195000,
-            BatchNumber: 'LOT-PAN26A',
-            ExpiryDate: '2028-10-15',
-          },
-          {
-            ProductID: allProducts[16].ProductID,
-            Quantity: 60,
-            ImportPrice: 88000,
-            BatchNumber: 'LOT-PHO26B',
-            ExpiryDate: '2028-06-30',
-          },
-        ],
-      },
+  // 3. Tạo hoặc cập nhật 4 Nhà cung cấp dược phẩm lớn (Idempotent Upsert)
+  const supplierSpecs = [
+    {
+      SupplierCode: 'NCC-DHG01',
+      SupplierName: 'Công ty Cổ phần Dược Hậu Giang (DHG Pharma)',
+      ContactPerson: 'Nguyễn Thành Công',
+      Phone: '02923891433',
+      Email: 'supply@dhgpharma.com.vn',
+      Address: '288 Bis Nguyễn Văn Cừ, Q. Ninh Kiều, TP. Cần Thơ',
+      TaxCode: '1800156801',
     },
-  });
-
-  await prisma.purchaseOrder.create({
-    data: {
-      OrderCode: 'PNK-2026-002',
-      SupplierID: suppliers[2].SupplierID,
-      UserID: pharmacist1.UserID,
-      TotalCost: 11200000,
-      Note: 'Nhập lô thuốc kháng sinh và chống dị ứng Sanofi',
-      Status: 'COMPLETED',
-      items: {
-        create: [
-          {
-            ProductID: allProducts[10].ProductID,
-            Quantity: 30,
-            ImportPrice: 210000,
-            BatchNumber: 'LOT-AUG26C',
-            ExpiryDate: '2028-05-20',
-          },
-          {
-            ProductID: allProducts[28].ProductID,
-            Quantity: 70,
-            ImportPrice: 70000,
-            BatchNumber: 'LOT-TEL26D',
-            ExpiryDate: '2029-01-10',
-          },
-        ],
-      },
+    {
+      SupplierCode: 'NCC-TRA02',
+      SupplierName: 'Công ty Cổ phần Traphaco',
+      ContactPerson: 'Trần Thu Hà',
+      Phone: '18006612',
+      Email: 'contact@traphaco.com.vn',
+      Address: '75 Yên Ninh, Q. Ba Đình, TP. Hà Nội',
+      TaxCode: '0100108656',
     },
-  });
+    {
+      SupplierCode: 'NCC-SAN03',
+      SupplierName: 'Công ty Cổ phần Sanofi Việt Nam',
+      ContactPerson: 'Lê Minh Tuấn',
+      Phone: '02838298526',
+      Email: 'order.vn@sanofi.com',
+      Address: 'Khu Công Nghệ Cao, TP. Thủ Đức, TP. Hồ Chí Minh',
+      TaxCode: '0300462841',
+    },
+    {
+      SupplierCode: 'NCC-ZUE04',
+      SupplierName: 'Công ty TNHH Zuellig Pharma Việt Nam',
+      ContactPerson: 'Phạm Quốc Bảo',
+      Phone: '02839102650',
+      Email: 'distribution@zuelligpharma.com',
+      Address: 'KCN Tân Bình, Q. Tân Phú, TP. Hồ Chí Minh',
+      TaxCode: '0301449218',
+    },
+  ];
 
-  // 5. Tạo 5 Hồ sơ Bệnh nhân / Khách hàng (Customer) kèm tiền sử dị ứng thực tế
-  const customers = await Promise.all([
-    prisma.customer.create({
-      data: {
-        CustomerCode: 'BN-0001',
-        FullName: 'Trần Thị Mai Hương',
-        Phone: '0912345678',
-        Email: 'maihuong.tran@gmail.com',
-        Gender: 'Nữ',
-        BirthYear: 1994,
-        Allergies: 'Dị ứng kháng sinh nhóm Penicillin (Amoxicillin, Augmentin)',
-        ChronicCond: 'Viêm mũi dị ứng thời tiết',
-        LoyaltyPoints: 240,
-      },
-    }),
-    prisma.customer.create({
-      data: {
-        CustomerCode: 'BN-0002',
-        FullName: 'Nguyễn Mạnh Cường',
-        Phone: '0987654321',
-        Email: 'cuong.nm@gmail.com',
-        Gender: 'Nam',
-        BirthYear: 1982,
-        Allergies: 'Kích ứng dạ dày với nhóm giảm đau NSAID (Ibuprofen, Diclofenac)',
-        ChronicCond: 'Viêm loét dạ dày - Trào ngược thực quản (GERD)',
-        LoyaltyPoints: 510,
-      },
-    }),
-    prisma.customer.create({
-      data: {
-        CustomerCode: 'BN-0003',
-        FullName: 'Lê Văn Hòa',
-        Phone: '0909112233',
-        Email: 'hoale.epu@gmail.com',
-        Gender: 'Nam',
-        BirthYear: 1975,
-        Allergies: 'Không có',
-        ChronicCond: 'Tăng men gan nhẹ - Hạn chế dùng liều cao Paracetamol',
-        LoyaltyPoints: 185,
-      },
-    }),
-    prisma.customer.create({
-      data: {
-        CustomerCode: 'BN-0004',
-        FullName: 'Phạm Ngọc Ánh',
-        Phone: '0933445566',
-        Email: 'ngocanh.pham@gmail.com',
-        Gender: 'Nữ',
-        BirthYear: 2001,
-        Allergies: 'Không có',
-        ChronicCond: 'Không có',
-        LoyaltyPoints: 95,
-      },
-    }),
-  ]);
+  const suppliers = await Promise.all(
+    supplierSpecs.map((s) =>
+      prisma.supplier.upsert({
+        where: { SupplierCode: s.SupplierCode },
+        update: { SupplierName: s.SupplierName, Phone: s.Phone },
+        create: s,
+      })
+    )
+  );
 
-  // 6. Tạo 3 Hóa đơn bán hàng & Giao dịch thanh toán mẫu
-  await prisma.invoice.create({
-    data: {
-      InvoiceCode: 'HD-2026-0001',
-      CustomerName: customers[0].FullName,
-      CustomerPhone: customers[0].Phone,
-      CustomerID: customers[0].CustomerID,
-      Note: 'Đơn thuốc điều trị sốt siêu vi và viêm họng cấp',
-      Discount: 0,
-      TotalAmount: allProducts[0].Price * 1 + allProducts[6].Price * 1 + allProducts[8].Price * 2,
-      Status: 'PAID',
-      UserID: admin.UserID,
-      items: {
-        create: [
-          {
-            ProductID: allProducts[0].ProductID,
-            Quantity: 1,
-            UnitPrice: allProducts[0].Price,
-            DosageNote: 'Uống 1 viên khi sốt > 38.5°C, cách 4-6 giờ',
-          },
-          {
-            ProductID: allProducts[6].ProductID,
-            Quantity: 1,
-            UnitPrice: allProducts[6].Price,
-            DosageNote: 'Uống 5ml × 3 lần/ngày sau ăn',
-          },
-          {
-            ProductID: allProducts[8].ProductID,
-            Quantity: 2,
-            UnitPrice: allProducts[8].Price,
-            DosageNote: 'Ngậm 1 viên mỗi 3 giờ',
-          },
-        ],
-      },
-      payment: {
-        create: {
-          PaymentMethod: 'VIETQR',
-          TransactionCode: 'VQR20261104001',
-          PaidAmount: allProducts[0].Price * 1 + allProducts[6].Price * 1 + allProducts[8].Price * 2,
-          Status: 'COMPLETED',
+  // 4. Tạo 2 Phiếu nhập kho mẫu nếu chưa tồn tại (Purchase Orders)
+  const existingPo1 = await prisma.purchaseOrder.findUnique({ where: { OrderCode: 'PNK-2026-001' } });
+  if (!existingPo1) {
+    await prisma.purchaseOrder.create({
+      data: {
+        OrderCode: 'PNK-2026-001',
+        SupplierID: suppliers[0].SupplierID,
+        UserID: admin.UserID,
+        TotalCost: 15800000,
+        Note: 'Nhập bổ sung nhóm thuốc hạ sốt và tiêu hóa định kỳ tháng 11',
+        Status: 'COMPLETED',
+        items: {
+          create: [
+            {
+              ProductID: allProducts[0].ProductID,
+              Quantity: 50,
+              ImportPrice: 195000,
+              BatchNumber: 'LOT-PAN26A',
+              ExpiryDate: '2028-10-15',
+            },
+            {
+              ProductID: allProducts[16].ProductID,
+              Quantity: 60,
+              ImportPrice: 88000,
+              BatchNumber: 'LOT-PHO26B',
+              ExpiryDate: '2028-06-30',
+            },
+          ],
         },
       },
-    },
-  });
+    });
+  }
 
-  await prisma.invoice.create({
-    data: {
-      InvoiceCode: 'HD-2026-0002',
-      CustomerName: customers[1].FullName,
-      CustomerPhone: customers[1].Phone,
-      CustomerID: customers[1].CustomerID,
-      Note: 'Đơn điều trị trào ngược dạ dày thực quản (GERD)',
-      Discount: 10000,
-      TotalAmount: allProducts[16].Price * 1 + allProducts[20].Price * 1 + allProducts[18].Price * 1 - 10000,
-      Status: 'PAID',
-      UserID: pharmacist1.UserID,
-      items: {
-        create: [
-          {
-            ProductID: allProducts[16].ProductID,
-            Quantity: 1,
-            UnitPrice: allProducts[16].Price,
-            DosageNote: 'Uống 1 gói sau ăn hoặc khi đau thượng vị',
-          },
-          {
-            ProductID: allProducts[20].ProductID,
-            Quantity: 1,
-            UnitPrice: allProducts[20].Price,
-            DosageNote: 'Uống 1 viên trước ăn sáng 30 phút',
-          },
-          {
-            ProductID: allProducts[18].ProductID,
-            Quantity: 1,
-            UnitPrice: allProducts[18].Price,
-            DosageNote: 'Sáng 1 ống, Chiều 1 ống',
-          },
-        ],
-      },
-      payment: {
-        create: {
-          PaymentMethod: 'CASH',
-          TransactionCode: 'CASH20261104002',
-          PaidAmount: allProducts[16].Price * 1 + allProducts[20].Price * 1 + allProducts[18].Price * 1 - 10000,
-          Status: 'COMPLETED',
+  const existingPo2 = await prisma.purchaseOrder.findUnique({ where: { OrderCode: 'PNK-2026-002' } });
+  if (!existingPo2) {
+    await prisma.purchaseOrder.create({
+      data: {
+        OrderCode: 'PNK-2026-002',
+        SupplierID: suppliers[2].SupplierID,
+        UserID: pharmacist1.UserID,
+        TotalCost: 11200000,
+        Note: 'Nhập lô thuốc kháng sinh và chống dị ứng Sanofi',
+        Status: 'COMPLETED',
+        items: {
+          create: [
+            {
+              ProductID: allProducts[10].ProductID,
+              Quantity: 30,
+              ImportPrice: 210000,
+              BatchNumber: 'LOT-AUG26C',
+              ExpiryDate: '2028-05-20',
+            },
+            {
+              ProductID: allProducts[28].ProductID,
+              Quantity: 70,
+              ImportPrice: 70000,
+              BatchNumber: 'LOT-TEL26D',
+              ExpiryDate: '2029-01-10',
+            },
+          ],
         },
       },
-    },
-  });
+    });
+  }
 
-  // 7. Tạo Phiếu tư vấn dược lâm sàng mẫu
-  await prisma.contact.create({
-    data: {
-      FullName: 'Lê Hoàng Nam',
-      Email: 'hoangnam@gmail.com',
-      Phone: '0933112233',
-      Subject: 'Tư vấn phác đồ điều trị viêm xoang dị ứng thời tiết',
-      Message: 'Mình thường xuyên bị hắt hơi, sổ mũi vào buổi sáng khi trời lạnh, cần thuốc không gây buồn ngủ vì phải lái xe.',
-      Priority: 'HIGH',
-      ReplyNote: 'Khuyến nghị sử dụng Telfast HD 180mg (Fexofenadine thế hệ 2 không gây buồn ngủ) 1 viên/ngày sau ăn sáng, kết hợp rửa mũi bằng Natri Clorid 0.9%.',
-      Status: 'REPLIED',
-      UserID: admin.UserID,
+  // 5. Tạo hoặc cập nhật Hồ sơ Bệnh nhân / Khách hàng (Customer)
+  const customerSpecs = [
+    {
+      CustomerCode: 'BN-0001',
+      FullName: 'Trần Thị Mai Hương',
+      Phone: '0912345678',
+      Email: 'maihuong.tran@gmail.com',
+      Gender: 'Nữ',
+      BirthYear: 1994,
+      Allergies: 'Dị ứng kháng sinh nhóm Penicillin (Amoxicillin, Augmentin)',
+      ChronicCond: 'Viêm mũi dị ứng thời tiết',
+      LoyaltyPoints: 240,
     },
-  });
+    {
+      CustomerCode: 'BN-0002',
+      FullName: 'Nguyễn Mạnh Cường',
+      Phone: '0987654321',
+      Email: 'cuong.nm@gmail.com',
+      Gender: 'Nam',
+      BirthYear: 1982,
+      Allergies: 'Kích ứng dạ dày với nhóm giảm đau NSAID (Ibuprofen, Diclofenac)',
+      ChronicCond: 'Viêm loét dạ dày - Trào ngược thực quản (GERD)',
+      LoyaltyPoints: 510,
+    },
+    {
+      CustomerCode: 'BN-0003',
+      FullName: 'Lê Văn Hòa',
+      Phone: '0909112233',
+      Email: 'hoale.epu@gmail.com',
+      Gender: 'Nam',
+      BirthYear: 1975,
+      Allergies: 'Không có',
+      ChronicCond: 'Tăng men gan nhẹ - Hạn chế dùng liều cao Paracetamol',
+      LoyaltyPoints: 185,
+    },
+    {
+      CustomerCode: 'BN-0004',
+      FullName: 'Phạm Ngọc Ánh',
+      Phone: '0933445566',
+      Email: 'ngocanh.pham@gmail.com',
+      Gender: 'Nữ',
+      BirthYear: 2001,
+      Allergies: 'Không có',
+      ChronicCond: 'Không có',
+      LoyaltyPoints: 95,
+    },
+  ];
 
-  await prisma.contact.create({
-    data: {
-      FullName: 'Vũ Thị Thu Thảo',
-      Email: 'thuthao.vu@gmail.com',
-      Phone: '0944556677',
-      Subject: 'Hỏi về cách kết hợp thuốc hạ sốt và viên sủi giảm đau',
-      Message: 'Nhà mình đang có sẵn Panadol Extra và viên sủi Efferalgan 500mg, uống cả 2 loại cùng lúc để hạ sốt nhanh hơn có được không?',
-      Priority: 'HIGH',
-      Status: 'NEW',
-    },
-  });
+  const customers = await Promise.all(
+    customerSpecs.map((c) =>
+      prisma.customer.upsert({
+        where: { CustomerCode: c.CustomerCode },
+        update: { FullName: c.FullName, Phone: c.Phone },
+        create: c,
+      })
+    )
+  );
+
+  // 6. Tạo 2 Hóa đơn bán hàng & Giao dịch thanh toán mẫu nếu chưa tồn tại
+  const existingInv1 = await prisma.invoice.findUnique({ where: { InvoiceCode: 'HD-2026-0001' } });
+  if (!existingInv1) {
+    const inv1Total = allProducts[0].Price * 1 + allProducts[6].Price * 1 + allProducts[8].Price * 2;
+    await prisma.invoice.create({
+      data: {
+        InvoiceCode: 'HD-2026-0001',
+        CustomerName: customers[0].FullName,
+        CustomerPhone: customers[0].Phone,
+        CustomerID: customers[0].CustomerID,
+        Note: 'Đơn thuốc điều trị sốt siêu vi và viêm họng cấp',
+        Discount: 0,
+        TotalAmount: inv1Total,
+        PaidAmount: inv1Total,
+        DebtAmount: 0,
+        PaymentStatus: 'PAID',
+        Status: 'PAID',
+        UserID: admin.UserID,
+        items: {
+          create: [
+            {
+              ProductID: allProducts[0].ProductID,
+              Quantity: 1,
+              UnitPrice: allProducts[0].Price,
+              DosageNote: 'Uống 1 viên khi sốt > 38.5°C, cách 4-6 giờ',
+            },
+            {
+              ProductID: allProducts[6].ProductID,
+              Quantity: 1,
+              UnitPrice: allProducts[6].Price,
+              DosageNote: 'Uống 5ml × 3 lần/ngày sau ăn',
+            },
+            {
+              ProductID: allProducts[8].ProductID,
+              Quantity: 2,
+              UnitPrice: allProducts[8].Price,
+              DosageNote: 'Ngậm 1 viên mỗi 3 giờ',
+            },
+          ],
+        },
+        payment: {
+          create: {
+            PaymentMethod: 'VIETQR',
+            TransactionCode: 'VQR20261104001',
+            PaidAmount: inv1Total,
+            Status: 'PAID',
+          },
+        },
+      },
+    });
+  }
+
+  const existingInv2 = await prisma.invoice.findUnique({ where: { InvoiceCode: 'HD-2026-0002' } });
+  if (!existingInv2) {
+    const inv2Total = allProducts[16].Price * 1 + allProducts[20].Price * 1 + allProducts[18].Price * 1 - 10000;
+    await prisma.invoice.create({
+      data: {
+        InvoiceCode: 'HD-2026-0002',
+        CustomerName: customers[1].FullName,
+        CustomerPhone: customers[1].Phone,
+        CustomerID: customers[1].CustomerID,
+        Note: 'Đơn điều trị trào ngược dạ dày thực quản (GERD)',
+        Discount: 10000,
+        TotalAmount: inv2Total,
+        PaidAmount: inv2Total,
+        DebtAmount: 0,
+        PaymentStatus: 'PAID',
+        Status: 'PAID',
+        UserID: pharmacist1.UserID,
+        items: {
+          create: [
+            {
+              ProductID: allProducts[16].ProductID,
+              Quantity: 1,
+              UnitPrice: allProducts[16].Price,
+              DosageNote: 'Uống 1 gói sau ăn hoặc khi đau thượng vị',
+            },
+            {
+              ProductID: allProducts[20].ProductID,
+              Quantity: 1,
+              UnitPrice: allProducts[20].Price,
+              DosageNote: 'Uống 1 viên trước ăn sáng 30 phút',
+            },
+            {
+              ProductID: allProducts[18].ProductID,
+              Quantity: 1,
+              UnitPrice: allProducts[18].Price,
+              DosageNote: 'Sáng 1 ống, Chiều 1 ống',
+            },
+          ],
+        },
+        payment: {
+          create: {
+            PaymentMethod: 'CASH',
+            TransactionCode: 'CASH20261104002',
+            PaidAmount: inv2Total,
+            Status: 'PAID',
+          },
+        },
+      },
+    });
+  }
+
+  // 7. Tạo Phiếu tư vấn dược lâm sàng mẫu nếu chưa tồn tại
+  const contactCount = await prisma.contact.count();
+  if (contactCount === 0) {
+    await prisma.contact.create({
+      data: {
+        FullName: 'Lê Hoàng Nam',
+        Email: 'hoangnam@gmail.com',
+        Phone: '0933112233',
+        Subject: 'Tư vấn phác đồ điều trị viêm xoang dị ứng thời tiết',
+        Message: 'Mình thường xuyên bị hắt hơi, sổ mũi vào buổi sáng khi trời lạnh, cần thuốc không gây buồn ngủ vì phải lái xe.',
+        Priority: 'HIGH',
+        ReplyNote: 'Khuyến nghị sử dụng Telfast HD 180mg (Fexofenadine thế hệ 2 không gây buồn ngủ) 1 viên/ngày sau ăn sáng, kết hợp rửa mũi bằng Natri Clorid 0.9%.',
+        Status: 'REPLIED',
+        UserID: admin.UserID,
+      },
+    });
+
+    await prisma.contact.create({
+      data: {
+        FullName: 'Vũ Thị Thu Thảo',
+        Email: 'thuthao.vu@gmail.com',
+        Phone: '0944556677',
+        Subject: 'Hỏi về cách kết hợp thuốc hạ sốt và viên sủi giảm đau',
+        Message: 'Nhà mình đang có sẵn Panadol Extra và viên sủi Efferalgan 500mg, uống cả 2 loại cùng lúc để hạ sốt nhanh hơn có được không?',
+        Priority: 'HIGH',
+        Status: 'NEW',
+      },
+    });
+  }
 
   console.log('Hoàn tất khởi tạo dữ liệu doanh nghiệp PharmaCore ERP trên cả 8 bảng!');
 }

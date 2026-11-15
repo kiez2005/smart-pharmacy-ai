@@ -191,10 +191,23 @@ async def ocr_prescription_endpoint(
             detail="Không nhận dạng được văn bản từ ảnh: Ảnh bị mờ, trắng hoặc không chứa nét chữ đơn thuốc hợp lệ."
         )
 
-    # Phân tích ngữ cảnh đơn thuốc để bóc tách danh sách thuốc chuẩn xác
-    if "da-day" in fname or "tieu-hoa" in fname or "da-day" in hint:
+    # P0-05: Chỉ cho phép nạp đơn mẫu preset khi is_demo == True.
+    # Tuyệt đối KHÔNG suy đoán thuốc mẫu từ tên file (da-day, di-ung, cam-cum) đối với ảnh thật (is_demo == False)!
+    raw_hint = (preset_hint or "").strip()
+    if "\n" in raw_hint:
+        lines = [ln.strip() for ln in raw_hint.splitlines() if len(ln.strip()) > 2]
+        detected_items = []
+        for ln in lines:
+            clean_name = ln.split("—")[0].split("-")[0].strip()
+            detected_items.append({
+                "keyword": clean_name or ln,
+                "quantity": 1,
+                "dosage": ln,
+            })
+        extracted_text = "BẢN NHÁP BÓC TÁCH ĐƠN THUỐC (CẦN DƯỢC SĨ XÁC NHẬN)\n" + "\n".join(lines)
+    elif is_demo and ("da-day" in hint or "tieu-hoa" in hint):
         extracted_text = (
-            "BỆNH VIỆN ĐA KHOA - ĐƠN THUỐC TIÊU HÓA\n"
+            "[DEMO MẪU THỬ NGHIỆM] BỆNH VIỆN ĐA KHOA - ĐƠN THUỐC TIÊU HÓA\n"
             "Chẩn đoán: Viêm dạ dày - Trào ngược thực quản (GERD)\n"
             "1. Sữa nghệ Phosphalugel — Số lượng: 1 Hộp (Uống 1 gói khi đau hoặc sau ăn)\n"
             "2. Omeprazol 20mg DHG — Số lượng: 1 Hộp (Ngày uống 1 viên trước ăn sáng 30 phút)\n"
@@ -205,9 +218,9 @@ async def ocr_prescription_endpoint(
             {"keyword": "Omeprazol 20mg", "quantity": 1, "dosage": "Uống 1 viên trước ăn sáng 30 phút"},
             {"keyword": "Enterogermina", "quantity": 1, "dosage": "Sáng 1 ống, Chiều 1 ống"},
         ]
-    elif "di-ung" in fname or "xoang" in fname or "di-ung" in hint:
+    elif is_demo and ("di-ung" in hint or "xoang" in hint or "khang-sinh" in hint):
         extracted_text = (
-            "PHÒNG KHÁM TAI MŨI HỌNG - ĐƠN THUỐC NGOẠI TRÚ\n"
+            "[DEMO MẪU THỬ NGHIỆM] PHÒNG KHÁM TAI MŨI HỌNG - ĐƠN THUỐC NGOẠI TRÚ\n"
             "Chẩn đoán: Viêm mũi xoang dị ứng thời tiết cấp\n"
             "1. Thuốc chống dị ứng Telfast HD 180mg — Số lượng: 1 Hộp (Sáng 1 viên sau ăn)\n"
             "2. Thuốc xịt mũi Otrivin 0.1% — Số lượng: 1 Chai (Xịt mũi 2 lần/ngày)\n"
@@ -218,9 +231,9 @@ async def ocr_prescription_endpoint(
             {"keyword": "Otrivin", "quantity": 1, "dosage": "Xịt mỗi bên mũi 1 nhát sáng/tối"},
             {"keyword": "Natri Clorid 0.9%", "quantity": 2, "dosage": "Rửa mũi và súc họng 3 lần/ngày"},
         ]
-    elif is_demo or "cam-cum" in fname or "cam-cum" in hint:
+    elif is_demo:
         extracted_text = (
-            "BỆNH VIỆN ĐẠI HỌC Y - ĐƠN THUỐC KHÁM BỆNH\n"
+            "[DEMO MẪU THỬ NGHIỆM] BỆNH VIỆN ĐẠI HỌC Y - ĐƠN THUỐC KHÁM BỆNH\n"
             "Chẩn đoán: Viêm họng cấp - Sốt siêu vi\n"
             "1. Panadol Extra Đỏ 500mg — Số lượng: 1 Hộp (Sáng 1 viên, Chiều 1 viên khi sốt > 38.5°C)\n"
             "2. Siro Ho Prospan Đức 100ml — Số lượng: 1 Chai (Uống 5ml x 3 lần/ngày sau ăn)\n"
@@ -234,15 +247,17 @@ async def ocr_prescription_endpoint(
             {"keyword": "Berocca", "quantity": 1, "dosage": "Pha 1 viên sủi với 200ml nước uống sáng"},
         ]
     else:
-        # Nếu là ảnh thật và không đọc được nội dung khớp:
+        # Nếu là ảnh thật và không đọc được nội dung chữ: từ chối rõ ràng, không đoán từ tên file
         from fastapi import HTTPException
         raise HTTPException(
             status_code=400,
-            detail="Không nhận dạng được dòng thuốc nào từ hình ảnh này. Vui lòng chụp rõ nét đơn thuốc của bác sĩ."
+            detail="Không nhận dạng được dòng thuốc nào từ hình ảnh này. Vui lòng chụp rõ nét đơn thuốc của bác sĩ hoặc nhập trực tiếp tên thuốc."
         )
 
     return {
         "engine": "python-opencv-ocr",
+        "is_demo": bool(is_demo),
+        "requires_pharmacist_verification": True,
         "opencv_preprocessing": cv_result,
         "raw_ocr_text": extracted_text,
         "detected_items": detected_items,
@@ -250,19 +265,20 @@ async def ocr_prescription_endpoint(
 
 
 # ============================================================================
-# 2. PIPELINE CHẨN ĐOÁN SƠ BỘ & GỢI Ý THUỐC BẰNG SCIKIT-LEARN TF-IDF (GỢI Ý #2, #3, #5)
+# 2. PIPELINE CHẨN ĐOÁN SƠ BỘ & GỢI Ý THUỐC BẰNG SCIKIT-LEARN TF-IDF (P0-06)
 # ============================================================================
 @app.post("/api/py-ai/diagnose")
 def diagnose_symptoms_endpoint(payload: DiagnoseRequest):
     """
     Sử dụng Scikit-learn (TfidfVectorizer + Cosine Similarity) để đối chiếu triệu chứng
     của người bệnh với toàn bộ kho thuốc trong Database Product.
+    Không gán mặc định Cảm cúm khi không khớp từ khóa triệu chứng; không bơm điểm tương đồng 0.65.
     """
     user_query = payload.message.strip().lower()
     products = payload.products
 
-    # 1. Xác định phác đồ lâm sàng phù hợp nhất
-    matched_protocol = CLINICAL_PROTOCOLS[0]
+    # 1. Xác định phác đồ lâm sàng phù hợp nhất (chỉ nhận khi có ít nhất 1 từ khóa khớp)
+    matched_protocol = None
     best_keyword_hits = 0
 
     for proto in CLINICAL_PROTOCOLS:
@@ -271,7 +287,17 @@ def diagnose_symptoms_endpoint(payload: DiagnoseRequest):
             best_keyword_hits = hits
             matched_protocol = proto
 
-    # 2. Tính độ tương đồng Cosine Similarity bằng Scikit-learn TF-IDF
+    if best_keyword_hits == 0 or matched_protocol is None:
+        return {
+            "engine": "python-sklearn-tfidf-rag",
+            "requires_pharmacist_consultation": True,
+            "preliminary_diagnosis": "Chưa đủ căn cứ phân loại triệu chứng — Chuyển Dược sĩ tư vấn trực tiếp",
+            "clinical_advice": "Mô tả triệu chứng hiện tại chưa khớp với phác đồ tham khảo chuẩn. Vui lòng để Dược sĩ chuyên môn khai thác trực tiếp triệu chứng, thời gian khởi phát và tiền sử dùng thuốc.",
+            "contraindication_warning": "Tuyệt đối không tự ý suy đoán bệnh hoặc dùng thuốc kê đơn khi chưa có tư vấn của Bác sĩ / Dược sĩ.",
+            "recommended_products": [],
+        }
+
+    # 2. Tính độ tương đồng Cosine Similarity thực tế bằng Scikit-learn TF-IDF (không ép min 0.65)
     enriched_query = f"{user_query} {matched_protocol['priority_terms']}"
     corpus = [
         f"{p.ProductName} {p.ProductType} {p.Description}" for p in products
@@ -286,6 +312,8 @@ def diagnose_symptoms_endpoint(payload: DiagnoseRequest):
         ranked_indices = np.argsort(cosine_scores)[::-1][:4]
         for idx in ranked_indices:
             score = float(cosine_scores[idx])
+            if score <= 0.05:
+                continue
             prod = products[int(idx)]
             if prod.Quantity > 0:
                 recommendations.append({
@@ -296,11 +324,12 @@ def diagnose_symptoms_endpoint(payload: DiagnoseRequest):
                     "Unit": prod.Unit,
                     "Quantity": prod.Quantity,
                     "Description": prod.Description,
-                    "similarityScore": round(min(0.98, max(0.65, score * 2.4)), 2),
+                    "similarityScore": round(score, 4),
                 })
 
     return {
         "engine": "python-sklearn-tfidf-rag",
+        "requires_pharmacist_consultation": len(recommendations) == 0,
         "preliminary_diagnosis": matched_protocol["diagnosis"],
         "clinical_advice": matched_protocol["advice"],
         "contraindication_warning": matched_protocol["warning"],

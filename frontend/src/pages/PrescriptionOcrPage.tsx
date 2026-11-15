@@ -172,13 +172,14 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
   const handleRunPresetScan = async (template = selectedPreset, customText = customOcrLines) => {
     setScanning(true);
     setOcrError(null);
+    setPharmacistVerified(false);
     try {
       const file = await generatePrescriptionBitmaps(template, customText);
       const res = await aiApi.scanPrescription(file, customText, true);
-      setOcrResult(res);
+      setOcrResult({ ...res, isDemo: true });
       setReviewItems(res.items);
       toast.success(
-        `[DEMO] Đã bóc tách ${res.items.length} dòng thuốc và đối chiếu danh mục kho thành công!`
+        `[DEMO] Đã bóc tách ${res.items.length} dòng thuốc mẫu và đối chiếu danh mục kho!`
       );
     } catch (err: unknown) {
       const msg =
@@ -271,9 +272,26 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
     }
   };
 
+  const [pharmacistVerified, setPharmacistVerified] = useState<boolean>(false);
+
   const handleTransfer = () => {
     if (reviewItems.length === 0) {
       toast.error('Không có dòng thuốc nào trong đơn để chuyển');
+      return;
+    }
+
+    // P0-05: Cấm chuyển kết quả Demo sang giỏ bán hàng thật và bắt buộc Dược sĩ xác nhận
+    if (activeTab === 'DEMO' || ocrResult?.isDemo) {
+      toast.error(
+        'Đang ở chế độ Mẫu Demo Bệnh Viện! Để xuất bán đơn thật trên POS, vui lòng chuyển sang tab "Tải Ảnh Thật (Real OCR)" và tải ảnh đơn thuốc của bệnh nhân.'
+      );
+      return;
+    }
+
+    if (!pharmacistVerified) {
+      toast.warning(
+        'Dược sĩ bắt buộc tích xác nhận đã đối chiếu từng dòng thuốc, hàm lượng và liều dùng với đơn gốc trước khi chuyển sang Quầy POS!'
+      );
       return;
     }
 
@@ -556,14 +574,25 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
                 Dược sĩ kiểm tra tên hoạt chất, liều lượng, chọn thuốc thay thế nếu ngoài danh mục trước khi chuyển sang POS.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={handleTransfer}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-4 text-xs font-bold text-white hover:bg-teal-700 shadow-sm"
-            >
-              <span>Xác Nhận & Chuyển Sang Quầy POS</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </button>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pharmacistVerified}
+                  onChange={(e) => setPharmacistVerified(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-teal-600"
+                />
+                <span>Tôi (Dược sĩ) xác nhận đã kiểm tra khớp đơn gốc</span>
+              </label>
+              <button
+                type="button"
+                onClick={handleTransfer}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-4 text-xs font-bold text-white hover:bg-teal-700 shadow-sm"
+              >
+                <span>Xác Nhận & Chuyển Sang Quầy POS</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto">

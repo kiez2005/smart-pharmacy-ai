@@ -4,6 +4,37 @@ import path from 'path';
 // Nạp cấu hình từ .env ngay khi file được import
 dotenv.config();
 
+const KNOWN_WEAK_OR_SAMPLE_SECRETS = new Set([
+  'smart_pharmacy_d18cnpm5_secret_key_2026',
+  'replace-with-a-strong-random-jwt-secret-at-least-32-chars',
+  'secret',
+  'jwt_secret',
+  '123456',
+  'changeme',
+  'default_secret',
+]);
+
+export function validateJwtSecret(
+  secret: string | undefined,
+  nodeEnv: string | undefined = process.env.NODE_ENV
+): string {
+  const trimmed = (secret || '').trim();
+  if (!trimmed) {
+    throw new Error('CRITICAL SECURITY ERROR: Biến môi trường JWT_SECRET chưa được thiết lập!');
+  }
+
+  const isProd = (nodeEnv || '').toLowerCase() === 'production';
+  if (isProd) {
+    if (trimmed.length < 32 || KNOWN_WEAK_OR_SAMPLE_SECRETS.has(trimmed.toLowerCase())) {
+      throw new Error(
+        'CRITICAL SECURITY ERROR: JWT_SECRET trong môi trường production phải có độ dài tối thiểu 32 ký tự và không được trùng giá trị mẫu/yếu!'
+      );
+    }
+  }
+
+  return trimmed;
+}
+
 // Kiểm tra Fail-Fast cấu hình bảo mật bắt buộc
 const rawJwtSecret = process.env.JWT_SECRET;
 if (!rawJwtSecret || rawJwtSecret.trim() === '') {
@@ -11,6 +42,15 @@ if (!rawJwtSecret || rawJwtSecret.trim() === '') {
   console.error('[CRITICAL SECURITY ERROR] Biến môi trường JWT_SECRET chưa được thiết lập!');
   console.error('Hệ thống bắt buộc dừng khởi động ngay lập tức để bảo vệ an toàn.');
   console.error('Vui lòng thiết lập JWT_SECRET trong file backend/.env');
+  console.error('================================================================');
+  process.exit(1);
+}
+
+try {
+  validateJwtSecret(rawJwtSecret, process.env.NODE_ENV);
+} catch (err) {
+  console.error('================================================================');
+  console.error(err instanceof Error ? err.message : '[CRITICAL SECURITY ERROR] JWT_SECRET không hợp lệ!');
   console.error('================================================================');
   process.exit(1);
 }

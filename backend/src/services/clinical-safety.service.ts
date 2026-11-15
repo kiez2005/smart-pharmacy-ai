@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 
 export const CLINICAL_RULE_VERSION = '2026.11-GPP-VN-v2';
+export const CLINICAL_RULE_SOURCE =
+  'Dược thư Quốc gia Việt Nam & Bộ quy tắc GPP nội bộ (Local Rule Set — phạm vi giới hạn, không thay thế CSDL tương tác toàn diện)';
 export const CLINICAL_ADVISORY_DISCLAIMER =
   'Cảnh báo lâm sàng và gợi ý AI chỉ mang tính chất tham khảo hỗ trợ quyết định; KHÔNG thay thế chẩn đoán y khoa hoặc thẩm định trực tiếp của Dược sĩ chuyên môn.';
 
@@ -52,6 +54,8 @@ export interface ClinicalSafetyResult {
   isAdvisoryOnly: true;
   disclaimer: string;
   ruleVersion: string;
+  ruleSource?: string;
+  coverageScope?: 'LOCAL_RULE_SET_LIMITED';
   patientAllergies: string;
   warnings: ClinicalWarningItem[];
 }
@@ -336,6 +340,8 @@ export function evaluateDrugSetSafety(
     isAdvisoryOnly: true,
     disclaimer: CLINICAL_ADVISORY_DISCLAIMER,
     ruleVersion: CLINICAL_RULE_VERSION,
+    ruleSource: CLINICAL_RULE_SOURCE,
+    coverageScope: 'LOCAL_RULE_SET_LIMITED',
     patientAllergies,
     warnings,
   };

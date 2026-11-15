@@ -11,6 +11,8 @@ export interface MatchedPrescriptionItem {
 
 export interface OcrPrescriptionResponse {
   engine: 'python-opencv-ocr' | 'node-fallback-ocr';
+  isDemo?: boolean;
+  requiresPharmacistVerification?: boolean;
   isAdvisoryOnly?: boolean;
   disclaimer?: string;
   opencvPreprocessing: {

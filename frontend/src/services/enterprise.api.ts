@@ -26,15 +26,25 @@ export const enterpriseApi = {
     return res.data.data;
   },
 
-  async getProductStockCard(productId: number): Promise<ProductStockCardResponse> {
+  async getProductStockCard(
+    productId: number,
+    params?: { page?: number; limit?: number }
+  ): Promise<ProductStockCardResponse> {
     const res = await http.get<{ success: boolean; data: ProductStockCardResponse }>(
-      `/products/${productId}/stock-card`
+      `/products/${productId}/stock-card`,
+      { params }
     );
     return res.data.data;
   },
 
-  async getSuppliers(): Promise<SupplierRecord[]> {
-    const res = await http.get<{ success: boolean; data: SupplierRecord[] }>('/suppliers');
+  async getSuppliers(params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+  }): Promise<SupplierRecord[]> {
+    const res = await http.get<{ success: boolean; data: SupplierRecord[] }>('/suppliers', {
+      params,
+    });
     return res.data.data;
   },
 
@@ -51,9 +61,23 @@ export const enterpriseApi = {
     return res.data.data;
   },
 
-  async getPurchaseOrders(): Promise<PurchaseOrderRecord[]> {
+  async getPurchaseOrders(params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+  }): Promise<PurchaseOrderRecord[]> {
     const res = await http.get<{ success: boolean; data: PurchaseOrderRecord[] }>(
-      '/purchase-orders'
+      '/purchase-orders',
+      { params }
+    );
+    return res.data.data;
+  },
+
+  async cancelPurchaseOrder(poId: number, reason: string): Promise<any> {
+    const res = await http.post<{ success: boolean; data: any }>(
+      `/purchase-orders/${poId}/cancel`,
+      { reason }
     );
     return res.data.data;
   },
@@ -77,8 +101,15 @@ export const enterpriseApi = {
     return res.data.data;
   },
 
-  async getCustomers(): Promise<CustomerRecord[]> {
-    const res = await http.get<{ success: boolean; data: CustomerRecord[] }>('/customers');
+  async getCustomers(params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    type?: string;
+  }): Promise<CustomerRecord[]> {
+    const res = await http.get<{ success: boolean; data: CustomerRecord[] }>('/customers', {
+      params,
+    });
     return res.data.data;
   },
 
@@ -106,9 +137,49 @@ export const enterpriseApi = {
     return res.data.data;
   },
 
-  async getPayments(): Promise<PaymentRecord[]> {
-    const res = await http.get<{ success: boolean; data: PaymentRecord[] }>('/payments');
+  async getPayments(params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    method?: string;
+    status?: string;
+  }): Promise<PaymentRecord[]> {
+    const res = await http.get<{ success: boolean; data: PaymentRecord[] }>('/payments', {
+      params,
+    });
     return res.data.data;
+  },
+
+  async getPaymentsLedgerFull(params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    method?: string;
+    status?: string;
+  }): Promise<{
+    data: PaymentRecord[];
+    summary?: {
+      totalNet: number;
+      totalVietQr: number;
+      totalCashAndCard: number;
+      totalRefunded: number;
+      pendingVietQrCount?: number;
+    };
+    pagination?: { page: number; limit: number; total: number; totalPages: number };
+  }> {
+    const res = await http.get<{
+      success: boolean;
+      data: PaymentRecord[];
+      summary?: {
+        totalNet: number;
+        totalVietQr: number;
+        totalCashAndCard: number;
+        totalRefunded: number;
+        pendingVietQrCount?: number;
+      };
+      pagination?: { page: number; limit: number; total: number; totalPages: number };
+    }>('/payments', { params });
+    return res.data;
   },
 
   async getStaff(): Promise<UserProfile[]> {

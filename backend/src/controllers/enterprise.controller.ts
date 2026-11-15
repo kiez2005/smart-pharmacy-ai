@@ -26,11 +26,39 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
       prisma.contact.count({ where: { Status: 'NEW' } }),
     ]);
 
-    const paidInvoices = invoices.filter(
-      (i) => i.Status === 'PAID' || i.Status === 'COMPLETED'
+    // P1-02: Doanh thu thực thu (Net Collected Revenue) chỉ tính phần tiền đã thực thu trừ hoàn tiền.
+    // Hóa đơn UNPAID tính 0đ; hóa đơn PARTIALLY_PAID chỉ tính PaidAmount đã thu; hóa đơn CANCELLED/REFUNDED loại trừ hoặc trừ RefundedAmount.
+    const activeInvoices = invoices.filter(
+      (i) => i.Status !== 'CANCELLED' && i.Status !== 'REFUNDED'
     );
-    const totalRevenue = paidInvoices.reduce((s, i) => s + i.TotalAmount, 0);
-    const totalPurchaseCost = purchaseOrders.reduce((s, po) => s + po.TotalCost, 0);
+    const totalRevenue = activeInvoices.reduce((sum, inv) => {
+      const paymentStatus = inv.PaymentStatus || (inv.Status === 'PAID' ? 'PAID' : 'UNPAID');
+      if (paymentStatus === 'UNPAID' || paymentStatus === 'VOID') {
+        return sum;
+      }
+      const paid =
+        typeof inv.PaidAmount === 'number' && inv.PaidAmount > 0
+          ? inv.PaidAmount
+          : paymentStatus === 'PAID'
+          ? inv.TotalAmount
+          : 0;
+      const refunded = inv.RefundedAmount || 0;
+      return sum + Math.max(0, paid - refunded);
+    }, 0);
+
+    const totalReceivableDebt = activeInvoices.reduce(
+      (sum, inv) => sum + Math.max(0, inv.DebtAmount || 0),
+      0
+    );
+
+    const completedPurchaseOrders = purchaseOrders.filter(
+      (po) => po.Status !== 'CANCELLED' && po.Status !== 'VOID'
+    );
+    const totalPurchaseCost = completedPurchaseOrders.reduce((s, po) => s + po.TotalCost, 0);
+    const paidInvoices = activeInvoices.filter((inv) => {
+      const paymentStatus = inv.PaymentStatus || (inv.Status === 'PAID' ? 'PAID' : 'UNPAID');
+      return paymentStatus === 'PAID' || paymentStatus === 'PARTIALLY_PAID';
+    });
     const totalInventoryValue = products.reduce((s, p) => s + p.Price * p.Quantity, 0);
     const totalStockUnits = products.reduce((s, p) => s + p.Quantity, 0);
     const outOfStockCount = products.filter((p) => p.Quantity <= 0).length;
@@ -88,6 +116,7 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
       success: true,
       data: {
         totalRevenue,
+        totalReceivableDebt,
         totalPurchaseCost,
         totalInventoryValue,
         totalProducts: products.length,
@@ -101,6 +130,7 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
         topSellingProducts: topSelling,
         kpis: {
           totalRevenue,
+          totalReceivableDebt,
           totalPurchaseCost,
           totalInventoryValue,
           totalProducts: products.length,
@@ -126,19 +156,27 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
 export const getProductStockCard = async (req: Request, res: Response): Promise<void> => {
   try {
     const productId = Number(req.params.id);
-    const product = await prisma.product.findUnique({
-      where: { ProductID: productId },
-      include: {
-        packaging: true,
-        stockLots: {
-          orderBy: [{ ExpiryDate: 'asc' }, { LotID: 'asc' }],
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
+    const skip = (page - 1) * limit;
+
+    const [product, totalMovements] = await Promise.all([
+      prisma.product.findUnique({
+        where: { ProductID: productId },
+        include: {
+          packaging: true,
+          stockLots: {
+            orderBy: [{ ExpiryDate: 'asc' }, { LotID: 'asc' }],
+          },
+          stockMovements: {
+            orderBy: { CreateDate: 'desc' },
+            skip,
+            take: limit,
+          },
         },
-        stockMovements: {
-          orderBy: { CreateDate: 'desc' },
-          take: 50,
-        },
-      },
-    });
+      }),
+      prisma.stockMovement.count({ where: { ProductID: productId } }),
+    ]);
 
     if (!product) {
       res.status(404).json({ success: false, message: 'Không tìm thấy dược phẩm' });
@@ -152,6 +190,8 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
           purchaseOrder: { include: { supplier: true } },
         },
         orderBy: { OrderItemID: 'desc' },
+        skip,
+        take: limit,
       }),
       prisma.invoiceItem.findMany({
         where: { ProductID: productId },
@@ -159,6 +199,8 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
           invoice: true,
         },
         orderBy: { ItemID: 'desc' },
+        skip,
+        take: limit,
       }),
     ]);
 
@@ -170,6 +212,7 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
       ImportPrice: imp.ImportPrice,
       purchaseOrder: {
         POCode: imp.purchaseOrder.OrderCode,
+        Status: imp.purchaseOrder.Status,
         CreateDate: imp.purchaseOrder.CreateDate,
         supplier: imp.purchaseOrder.supplier,
       },
@@ -205,6 +248,12 @@ export const getProductStockCard = async (req: Request, res: Response): Promise<
         stockMovements: product.stockMovements,
         imports,
         exports,
+        pagination: {
+          page,
+          limit,
+          total: totalMovements,
+          totalPages: Math.max(1, Math.ceil(totalMovements / limit)),
+        },
       },
     });
   } catch (error) {
@@ -229,12 +278,39 @@ const supplierSchema = z.object({
   TaxCode: z.string().trim().optional().default(''),
 });
 
-export const getSuppliers = async (_req: Request, res: Response): Promise<void> => {
+export const getSuppliers = async (req: Request, res: Response): Promise<void> => {
   try {
-    const suppliers = await prisma.supplier.findMany({
-      orderBy: { SupplierID: 'desc' },
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
+    const skip = (page - 1) * limit;
+    const search = String(req.query.search || '').trim();
+
+    const where = search
+      ? {
+          OR: [
+            { SupplierName: { contains: search } },
+            { SupplierCode: { contains: search } },
+            { Phone: { contains: search } },
+            { TaxCode: { contains: search } },
+          ],
+        }
+      : {};
+
+    const [total, suppliers] = await Promise.all([
+      prisma.supplier.count({ where }),
+      prisma.supplier.findMany({
+        where,
+        orderBy: { SupplierID: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: suppliers,
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
     });
-    res.json({ success: true, data: suppliers });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -297,15 +373,39 @@ const purchaseOrderSchema = z.object({
     .min(1, 'Phiếu nhập kho phải có ít nhất 1 mặt hàng'),
 });
 
-export const getPurchaseOrders = async (_req: Request, res: Response): Promise<void> => {
+export const getPurchaseOrders = async (req: Request, res: Response): Promise<void> => {
   try {
-    const orders = await prisma.purchaseOrder.findMany({
-      include: {
-        supplier: true,
-        items: { include: { product: true } },
-      },
-      orderBy: { CreateDate: 'desc' },
-    });
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
+    const skip = (page - 1) * limit;
+    const search = String(req.query.search || '').trim();
+    const status = String(req.query.status || '').trim();
+
+    const where: Record<string, unknown> = {};
+    if (status && status !== 'ALL') {
+      where.Status = status;
+    }
+    if (search) {
+      where.OR = [
+        { OrderCode: { contains: search } },
+        { Note: { contains: search } },
+        { supplier: { SupplierName: { contains: search } } },
+      ];
+    }
+
+    const [total, orders] = await Promise.all([
+      prisma.purchaseOrder.count({ where }),
+      prisma.purchaseOrder.findMany({
+        where,
+        include: {
+          supplier: true,
+          items: { include: { product: true } },
+        },
+        orderBy: { CreateDate: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
 
     const formatted = orders.map((po) => ({
       POID: po.PurchaseOrderID,
@@ -329,7 +429,11 @@ export const getPurchaseOrders = async (_req: Request, res: Response): Promise<v
       })),
     }));
 
-    res.json({ success: true, data: formatted });
+    res.json({
+      success: true,
+      data: formatted,
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -461,8 +565,147 @@ export const createPurchaseOrder = async (req: Request, res: Response): Promise<
   }
 };
 
+/**
+ * HỦY / ĐẢO PHIẾU NHẬP KHO NGUYÊN TỬ (POST /api/enterprise/purchase-orders/:id/cancel) — P0-04
+ * Kiểm tra tồn lô chưa bị xuất bán, hoàn giảm Product.Quantity, trừ StockLot và ghi nhận StockMovement.
+ */
+export const cancelPurchaseOrder = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const poId = Number(req.params.id);
+    const reason = String(req.body?.reason || '').trim();
+
+    if (!Number.isInteger(poId) || poId <= 0) {
+      res.status(400).json({ success: false, message: 'Mã phiếu nhập kho không hợp lệ' });
+      return;
+    }
+
+    if (reason.length < 5) {
+      res.status(400).json({
+        success: false,
+        code: 'CANCEL_REASON_REQUIRED',
+        message: 'Bắt buộc nhập lý do hủy/đảo phiếu nhập kho (tối thiểu 5 ký tự) để lưu vết kiểm toán!',
+      });
+      return;
+    }
+
+    const actorUserId = req.user?.UserID || null;
+    const actorName = req.user?.FullName || 'Quản trị viên';
+
+    const cancelledPo = await prisma.$transaction(async (tx) => {
+      const po = await tx.purchaseOrder.findUnique({
+        where: { PurchaseOrderID: poId },
+        include: { items: { include: { product: true } }, supplier: true },
+      });
+
+      if (!po) {
+        const err: any = new Error('Không tìm thấy phiếu nhập kho');
+        err.statusCode = 404;
+        throw err;
+      }
+
+      if (po.Status === 'CANCELLED') {
+        return po;
+      }
+
+      for (const item of po.items) {
+        const lot = await tx.stockLot.findFirst({
+          where: {
+            ProductID: item.ProductID,
+            BatchNumber: item.BatchNumber,
+            Status: 'ACTIVE',
+          },
+          orderBy: { LotID: 'desc' },
+        });
+
+        if (!lot || lot.RemainingQuantity < item.Quantity) {
+          const err: any = new Error(
+            `Không thể hủy phiếu nhập ${po.OrderCode}: Lô ${item.BatchNumber} của sản phẩm "${item.product?.ProductName || item.ProductID}" đã được xuất bán một phần hoặc toàn bộ!`
+          );
+          err.statusCode = 422;
+          err.code = 'PO_STOCK_ALREADY_CONSUMED';
+          throw err;
+        }
+
+        const updatedProd = await tx.product.updateMany({
+          where: {
+            ProductID: item.ProductID,
+            Quantity: { gte: item.Quantity },
+          },
+          data: {
+            Quantity: { decrement: item.Quantity },
+          },
+        });
+
+        if (updatedProd.count === 0) {
+          const err: any = new Error(
+            `Tồn kho hiện tại của sản phẩm #${item.ProductID} không đủ để đảo phiếu nhập!`
+          );
+          err.statusCode = 422;
+          err.code = 'PO_STOCK_INSUFFICIENT';
+          throw err;
+        }
+
+        const nextRemaining = lot.RemainingQuantity - item.Quantity;
+        await tx.stockLot.update({
+          where: { LotID: lot.LotID },
+          data: {
+            RemainingQuantity: nextRemaining,
+            Status: nextRemaining === 0 ? 'CANCELLED' : 'ACTIVE',
+          },
+        });
+
+        await tx.stockMovement.create({
+          data: {
+            ProductID: item.ProductID,
+            MovementType: 'RETURN_SUPPLIER',
+            SourceType: 'PURCHASE_ORDER_CANCEL',
+            SourceID: po.PurchaseOrderID,
+            LineItemID: item.OrderItemID,
+            Unit: item.product?.Unit || 'Hộp',
+            Quantity: item.Quantity,
+            BaseQtyDelta: -item.Quantity,
+            LooseQtyDelta: 0,
+            BatchNumber: item.BatchNumber,
+            ExpiryDate: item.ExpiryDate,
+            ActorUserID: actorUserId,
+            ActorName: actorName,
+            Note: `Đảo nhập kho phiếu ${po.OrderCode}: ${reason}`,
+          },
+        });
+      }
+
+      return tx.purchaseOrder.update({
+        where: { PurchaseOrderID: po.PurchaseOrderID },
+        data: {
+          Status: 'CANCELLED',
+          Note: `${po.Note ? po.Note + ' | ' : ''}[ĐÃ HỦY: ${reason}]`,
+        },
+        include: { items: { include: { product: true } }, supplier: true },
+      });
+    });
+
+    res.json({
+      success: true,
+      message: `Đã hủy/đảo phiếu nhập kho ${cancelledPo.OrderCode} và hoàn giảm tồn kho nguyên tử!`,
+      data: {
+        POID: cancelledPo.PurchaseOrderID,
+        POCode: cancelledPo.OrderCode,
+        Status: cancelledPo.Status,
+        Note: cancelledPo.Note,
+      },
+    });
+  } catch (error: any) {
+    const status = error?.statusCode || 400;
+    res.status(status).json({
+      success: false,
+      code: error?.code || 'PO_CANCEL_FAILED',
+      message: error instanceof Error ? error.message : 'Không thể hủy phiếu nhập kho',
+    });
+  }
+};
+
 // ============================================================================
-// 4. QUẢN LÝ HỒ SƠ BỆNH NHÂN & TIỀN SỬ DỊ ỨNG THUỐC (/customers)
+// 4. QUẢN LÝ HỒ SƠ BỆNH NHÂN & TIỀN SỬ DỊ ỨNG THUỐC (/customers) — P0-02, P1-01, P1-05
 // ============================================================================
 const customerSchema = z.object({
   FullName: z.string().trim().min(2),
@@ -474,8 +717,7 @@ const customerSchema = z.object({
   CompanyName: z.string().trim().optional().default(''),
   TaxCode: z.string().trim().optional().default(''),
   Address: z.string().trim().optional().default(''),
-  CreditLimit: z.coerce.number().min(0).optional().default(50000000),
-  DebtBalance: z.coerce.number().min(0).optional().default(0),
+  CreditLimit: z.coerce.number().min(0).optional().default(0),
   Allergies: z.string().trim().optional().default('Không ghi nhận'),
   ChronicCond: z.string().trim().optional().default('Không'),
 });
@@ -483,23 +725,69 @@ const customerSchema = z.object({
 export const getCustomers = async (req: Request, res: Response): Promise<void> => {
   try {
     const page = Math.max(1, Number(req.query.page || 1));
-    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
     const skip = (page - 1) * limit;
+    const search = String(req.query.search || '').trim();
+    const customerType = String(req.query.type || '').trim();
+    const callerRole = req.user?.Role || 'CASHIER';
+    const isCashier = callerRole === 'CASHIER';
 
-    const [total, customers] = await Promise.all([
-      prisma.customer.count(),
+    const where: Record<string, unknown> = {};
+    if (customerType === 'RETAIL' || customerType === 'WHOLESALE') {
+      where.CustomerType = customerType;
+    }
+    if (search) {
+      where.OR = [
+        { FullName: { contains: search } },
+        { Phone: { contains: search } },
+        { CustomerCode: { contains: search } },
+        { CompanyName: { contains: search } },
+      ];
+    }
+
+    const [total, rawCustomers] = await Promise.all([
+      prisma.customer.count({ where }),
       prisma.customer.findMany({
-        include: {
-          invoices: {
-            include: { items: { include: { product: true } } },
-            orderBy: { CreateDate: 'desc' },
-          },
-        },
+        where,
+        include: isCashier
+          ? undefined
+          : {
+              invoices: {
+                take: 10,
+                orderBy: { CreateDate: 'desc' },
+                select: {
+                  InvoiceID: true,
+                  InvoiceCode: true,
+                  TotalAmount: true,
+                  PaidAmount: true,
+                  DebtAmount: true,
+                  Status: true,
+                  PaymentStatus: true,
+                  FulfillmentStatus: true,
+                  CreateDate: true,
+                },
+              },
+            },
         orderBy: { CustomerID: 'desc' },
         skip,
         take: limit,
       }),
     ]);
+
+    // P1-01: Thu ngân (CASHIER) chỉ được nhận thông tin định danh cơ bản để tích điểm/bán hàng POS,
+    // không lộ hồ sơ bệnh án nhạy cảm (Allergies, ChronicCond) hoặc chi tiết hóa đơn của khách.
+    const customers = rawCustomers.map((c: any) => {
+      if (isCashier) {
+        const { Allergies: _a, ChronicCond: _cc, invoices: _inv, ...basicCustomer } = c;
+        return {
+          ...basicCustomer,
+          Allergies: undefined,
+          ChronicCond: undefined,
+          invoices: [],
+        };
+      }
+      return c;
+    });
 
     res.json({
       success: true,
@@ -517,18 +805,62 @@ export const getCustomers = async (req: Request, res: Response): Promise<void> =
 
 export const createCustomer = async (req: Request, res: Response): Promise<void> => {
   try {
+    // P0-02: Cấm client truyền trực tiếp DebtBalance khi tạo mới khách hàng
+    if (
+      req.body &&
+      Object.prototype.hasOwnProperty.call(req.body, 'DebtBalance') &&
+      Number(req.body.DebtBalance) !== 0
+    ) {
+      res.status(400).json({
+        success: false,
+        code: 'DEBT_DIRECT_EDIT_FORBIDDEN',
+        message:
+          'Không được phép tự gán số dư công nợ (DebtBalance) khi tạo khách hàng! Công nợ chỉ phát sinh qua chứng từ hóa đơn.',
+      });
+      return;
+    }
+
+    const callerRole = req.user?.Role || 'CASHIER';
+    const isCashier = callerRole === 'CASHIER';
+
+    // P0-02: CASHIER không được tạo khách hàng WHOLESALE hoặc cấp CreditLimit
+    if (
+      isCashier &&
+      (req.body?.CustomerType === 'WHOLESALE' ||
+        (req.body?.CreditLimit !== undefined && Number(req.body.CreditLimit) > 0))
+    ) {
+      res.status(403).json({
+        success: false,
+        code: 'CUSTOMER_FINANCIAL_ROLE_REQUIRED',
+        message:
+          'Thu ngân (CASHIER) chỉ được phép tạo hồ sơ khách lẻ (RETAIL) và không có quyền cấp hạn mức công nợ B2B (CreditLimit)!',
+      });
+      return;
+    }
+
     const parsed = customerSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ success: false, message: 'Thông tin khách hàng / đại lý không hợp lệ' });
       return;
     }
 
-    const prefix = parsed.data.CustomerType === 'WHOLESALE' ? 'DL' : 'BN';
+    const finalType = isCashier ? 'RETAIL' : parsed.data.CustomerType;
+    const finalCreditLimit =
+      finalType === 'WHOLESALE'
+        ? parsed.data.CreditLimit > 0
+          ? parsed.data.CreditLimit
+          : 50000000
+        : 0;
+
+    const prefix = finalType === 'WHOLESALE' ? 'DL' : 'BN';
     const code = `${prefix}-${String(Date.now()).slice(-4)}`;
     const created = await prisma.customer.create({
       data: {
         CustomerCode: code,
         ...parsed.data,
+        CustomerType: finalType,
+        CreditLimit: finalCreditLimit,
+        DebtBalance: 0,
       },
     });
     res.status(201).json({ success: true, data: created });
@@ -544,8 +876,42 @@ export const createCustomer = async (req: Request, res: Response): Promise<void>
 export const updateCustomer = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ success: false, message: 'Mã khách hàng không hợp lệ' });
+      return;
+    }
+
+    // P0-02: Nghiêm cấm sửa trực tiếp DebtBalance qua PUT /customers/:id
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'DebtBalance')) {
+      res.status(400).json({
+        success: false,
+        code: 'DEBT_DIRECT_EDIT_FORBIDDEN',
+        message:
+          'Nghiêm cấm chỉnh sửa trực tiếp số dư công nợ (DebtBalance)! Công nợ chỉ thay đổi thông qua Hóa đơn bán buôn hoặc Phiếu thu công nợ.',
+      });
+      return;
+    }
+
+    const callerRole = req.user?.Role || 'CASHIER';
+    const isCashier = callerRole === 'CASHIER';
+
+    if (
+      isCashier &&
+      (req.body?.CustomerType !== undefined ||
+        req.body?.CreditLimit !== undefined ||
+        req.body?.TaxCode !== undefined)
+    ) {
+      res.status(403).json({
+        success: false,
+        code: 'CUSTOMER_FINANCIAL_ROLE_REQUIRED',
+        message:
+          'Thu ngân (CASHIER) không có quyền thay đổi phân loại khách hàng B2B (CustomerType) hoặc hạn mức công nợ (CreditLimit)!',
+      });
+      return;
+    }
+
     const parsed = customerSchema.partial().safeParse(req.body);
-    if (!parsed.success || isNaN(id)) {
+    if (!parsed.success) {
       res.status(400).json({ success: false, message: 'Dữ liệu cập nhật không hợp lệ' });
       return;
     }
@@ -553,9 +919,14 @@ export const updateCustomer = async (req: Request, res: Response): Promise<void>
     const updated = await prisma.customer.update({
       where: { CustomerID: id },
       data: parsed.data,
-      include: {
-        invoices: true,
-      },
+      include: isCashier
+        ? undefined
+        : {
+            invoices: {
+              take: 10,
+              orderBy: { CreateDate: 'desc' },
+            },
+          },
     });
     res.json({ success: true, data: updated });
   } catch {
@@ -567,17 +938,36 @@ export const updateCustomer = async (req: Request, res: Response): Promise<void>
 };
 
 // ============================================================================
-// 5. SỔ QUỸ THANH TOÁN & ĐỐI SOÁT GIAO DỊCH (/payments)
+// 5. SỔ QUỸ THANH TOÁN & ĐỐI SOÁT GIAO DỊCH (/payments) — P1-05, P1-07
 // ============================================================================
 export const getPaymentsLedger = async (req: Request, res: Response): Promise<void> => {
   try {
     const page = Math.max(1, Number(req.query.page || 1));
-    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
     const skip = (page - 1) * limit;
+    const search = String(req.query.search || '').trim();
+    const method = String(req.query.method || '').trim();
+    const status = String(req.query.status || '').trim();
 
-    const [total, rawPayments, rawLedgerTx] = await Promise.all([
-      prisma.payment.count(),
+    const where: Record<string, unknown> = {};
+    if (method && method !== 'ALL') {
+      where.PaymentMethod = method;
+    }
+    if (status && status !== 'ALL') {
+      where.Status = status;
+    }
+    if (search) {
+      where.OR = [
+        { TransactionCode: { contains: search } },
+        { invoice: { InvoiceCode: { contains: search } } },
+        { invoice: { CustomerName: { contains: search } } },
+      ];
+    }
+
+    const [total, rawPayments, allPaymentsForSummary] = await Promise.all([
+      prisma.payment.count({ where }),
       prisma.payment.findMany({
+        where,
         include: {
           invoice: true,
         },
@@ -585,15 +975,37 @@ export const getPaymentsLedger = async (req: Request, res: Response): Promise<vo
         skip,
         take: limit,
       }),
-      prisma.paymentTransaction.findMany({
-        include: {
-          invoice: true,
+      prisma.payment.findMany({
+        select: {
+          PaymentMethod: true,
+          PaidAmount: true,
+          Status: true,
+          invoice: {
+            select: {
+              TotalAmount: true,
+              PaidAmount: true,
+              RefundedAmount: true,
+              PaymentStatus: true,
+              Status: true,
+            },
+          },
         },
-        orderBy: { CreateDate: 'desc' },
-        skip,
-        take: limit,
       }),
     ]);
+
+    const pageInvoiceIds = Array.from(
+      new Set(rawPayments.map((p) => p.InvoiceID).filter((id): id is number => Number.isInteger(id)))
+    );
+
+    // P1-07: Truy vấn đầy đủ PaymentTransaction theo đúng các InvoiceID trên trang hiện tại
+    const rawLedgerTx =
+      pageInvoiceIds.length > 0
+        ? await prisma.paymentTransaction.findMany({
+            where: { InvoiceID: { in: pageInvoiceIds } },
+            include: { invoice: true },
+            orderBy: { CreateDate: 'desc' },
+          })
+        : [];
 
     const payments = rawPayments.map((p) => ({
       ...p,
@@ -601,10 +1013,47 @@ export const getPaymentsLedger = async (req: Request, res: Response): Promise<vo
       transactions: rawLedgerTx.filter((t) => t.InvoiceID === p.InvoiceID),
     }));
 
+    // P1-07: Tổng hợp KPI sổ quỹ toàn hệ thống từ server (không bị lệch bởi phân trang)
+    let totalVietQr = 0;
+    let totalCashAndCard = 0;
+    let totalRefunded = 0;
+    let pendingVietQrCount = 0;
+
+    for (const p of allPaymentsForSummary) {
+      const normalizedStatus = p.Status === 'COMPLETED' ? 'PAID' : p.Status;
+      const refundedAmt = p.invoice?.RefundedAmount || (normalizedStatus === 'REFUNDED' ? p.PaidAmount : 0);
+      if (refundedAmt > 0) {
+        totalRefunded += refundedAmt;
+      }
+      if (normalizedStatus === 'UNPAID' || normalizedStatus === 'PENDING') {
+        if (p.PaymentMethod === 'VIETQR') {
+          pendingVietQrCount += 1;
+        }
+        continue;
+      }
+      if (normalizedStatus === 'PAID' || normalizedStatus === 'PARTIALLY_PAID') {
+        const netCollected = Math.max(0, (p.PaidAmount || 0) - refundedAmt);
+        if (p.PaymentMethod === 'VIETQR') {
+          totalVietQr += netCollected;
+        } else if (p.PaymentMethod === 'CASH' || p.PaymentMethod === 'CARD') {
+          totalCashAndCard += netCollected;
+        }
+      }
+    }
+
+    const totalNet = totalVietQr + totalCashAndCard;
+
     res.json({
       success: true,
       data: payments,
       transactions: rawLedgerTx,
+      summary: {
+        totalNet,
+        totalVietQr,
+        totalCashAndCard,
+        totalRefunded,
+        pendingVietQrCount,
+      },
       pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
     });
   } catch {
@@ -756,9 +1205,29 @@ export const updateSupplier = async (req: Request, res: Response): Promise<void>
   }
 };
 
+const NON_DELETABLE_LEDGER_ENTITIES = new Set([
+  'invoices',
+  'payments',
+  'purchase-orders',
+  'payment-transactions',
+  'stock-movements',
+]);
+
 export const deleteEntityRecords = async (req: Request, res: Response): Promise<void> => {
   try {
-    const entity = req.params.entity;
+    const entity = String(req.params.entity || '').trim().toLowerCase();
+
+    // P0-04: Nghiêm cấm xóa cứng (DELETE) chứng từ kế toán / kho đã ghi sổ
+    if (NON_DELETABLE_LEDGER_ENTITIES.has(entity)) {
+      res.status(403).json({
+        success: false,
+        code: 'LEDGER_HARD_DELETE_FORBIDDEN',
+        message:
+          'Nghiêm cấm xóa cứng chứng từ kế toán/kho đã ghi sổ (Hóa đơn, Sổ quỹ, Phiếu nhập kho). Vui lòng sử dụng nghiệp vụ Hủy/Đảo chứng từ (Cancel/Reverse) để bảo toàn dấu vết kiểm toán!',
+      });
+      return;
+    }
+
     const rawIds: number[] = Array.isArray(req.body?.ids)
       ? req.body.ids.map(Number)
       : req.params.id
@@ -774,20 +1243,8 @@ export const deleteEntityRecords = async (req: Request, res: Response): Promise<
     if (entity === 'suppliers') {
       const r = await prisma.supplier.deleteMany({ where: { SupplierID: { in: rawIds } } });
       deletedCount = r.count;
-    } else if (entity === 'purchase-orders') {
-      const r = await prisma.purchaseOrder.deleteMany({
-        where: { PurchaseOrderID: { in: rawIds } },
-      });
-      deletedCount = r.count;
     } else if (entity === 'customers') {
       const r = await prisma.customer.deleteMany({ where: { CustomerID: { in: rawIds } } });
-      deletedCount = r.count;
-    } else if (entity === 'invoices') {
-      await prisma.payment.deleteMany({ where: { InvoiceID: { in: rawIds } } });
-      const r = await prisma.invoice.deleteMany({ where: { InvoiceID: { in: rawIds } } });
-      deletedCount = r.count;
-    } else if (entity === 'payments') {
-      const r = await prisma.payment.deleteMany({ where: { PaymentID: { in: rawIds } } });
       deletedCount = r.count;
     } else if (entity === 'contacts') {
       const r = await prisma.contact.deleteMany({ where: { ContactID: { in: rawIds } } });
@@ -795,6 +1252,13 @@ export const deleteEntityRecords = async (req: Request, res: Response): Promise<
     } else if (entity === 'staff') {
       const r = await prisma.user.deleteMany({ where: { UserID: { in: rawIds } } });
       deletedCount = r.count;
+    } else {
+      res.status(400).json({
+        success: false,
+        code: 'UNSUPPORTED_DELETE_ENTITY',
+        message: `Không hỗ trợ xóa thực thể "${entity}"`,
+      });
+      return;
     }
 
     res.json({ success: true, data: { deletedCount } });
@@ -1081,9 +1545,56 @@ export const exportEntityData = async (req: Request, res: Response): Promise<voi
   }
 };
 
+const SUPPORTED_IMPORT_ENTITIES = new Set(['suppliers', 'customers', 'contacts']);
+const MAX_IMPORT_ROWS = 500;
+
+const importSupplierRowSchema = z.object({
+  SupplierCode: z.string().trim().min(2).optional(),
+  SupplierName: z.string().trim().min(2, 'Tên nhà cung cấp bắt buộc (tối thiểu 2 ký tự)'),
+  ContactPerson: z.string().trim().optional().default('Phòng Kinh doanh'),
+  Phone: z.string().trim().min(8, 'Số điện thoại nhà cung cấp bắt buộc (tối thiểu 8 ký tự)'),
+  Email: z.string().trim().optional().default(''),
+  Address: z.string().trim().optional().default('Việt Nam'),
+  TaxCode: z.string().trim().optional().default(''),
+});
+
+const importCustomerRowSchema = z.object({
+  FullName: z.string().trim().min(2, 'Họ tên khách hàng bắt buộc (tối thiểu 2 ký tự)'),
+  Phone: z.string().trim().min(8, 'Số điện thoại khách hàng bắt buộc (tối thiểu 8 ký tự)'),
+  Email: z.string().trim().optional().default(''),
+  Gender: z.string().trim().optional().default('Khác'),
+  BirthYear: z.coerce.number().int().min(1900).max(2100).optional(),
+  CustomerType: z.enum(['RETAIL', 'WHOLESALE']).optional().default('RETAIL'),
+  CompanyName: z.string().trim().optional().default(''),
+  TaxCode: z.string().trim().optional().default(''),
+  Address: z.string().trim().optional().default(''),
+  CreditLimit: z.coerce.number().min(0).optional().default(0),
+  Allergies: z.string().trim().optional().default('Không ghi nhận'),
+  ChronicCond: z.string().trim().optional().default('Không'),
+});
+
+const importContactRowSchema = z.object({
+  FullName: z.string().trim().min(2, 'Họ tên người gửi bắt buộc'),
+  Email: z.string().trim().min(3, 'Email liên hệ bắt buộc'),
+  Phone: z.string().trim().min(8, 'Số điện thoại liên hệ bắt buộc'),
+  Subject: z.string().trim().min(2, 'Tiêu đề tư vấn bắt buộc'),
+  Message: z.string().trim().min(3, 'Nội dung câu hỏi bắt buộc'),
+});
+
 export const importEntityData = async (req: Request, res: Response): Promise<void> => {
   try {
-    const entity = req.params.entity;
+    const entity = String(req.params.entity || '').trim().toLowerCase();
+
+    // P1-06: Kiểm tra allowlist entity trước khi đọc file; trả HTTP 400 nếu không hỗ trợ
+    if (!SUPPORTED_IMPORT_ENTITIES.has(entity)) {
+      res.status(400).json({
+        success: false,
+        code: 'UNSUPPORTED_IMPORT_ENTITY',
+        message: `Thực thể "${entity}" không hỗ trợ nhập từ tệp (Chỉ hỗ trợ: suppliers, customers, contacts).`,
+      });
+      return;
+    }
+
     const file = req.file;
     if (!file) {
       res.status(400).json({ success: false, message: 'Vui lòng chọn tệp dữ liệu để nhập' });
@@ -1091,6 +1602,15 @@ export const importEntityData = async (req: Request, res: Response): Promise<voi
     }
 
     const ext = path.extname(file.originalname).toLowerCase();
+    if (!['.json', '.xml', '.xlsx'].includes(ext)) {
+      res.status(400).json({
+        success: false,
+        code: 'UNSUPPORTED_IMPORT_FORMAT',
+        message: 'Định dạng tệp không hợp lệ (chỉ chấp nhận .xlsx, .json, .xml).',
+      });
+      return;
+    }
+
     let rawRecords: Record<string, unknown>[] = [];
 
     if (ext === '.json') {
@@ -1121,53 +1641,136 @@ export const importEntityData = async (req: Request, res: Response): Promise<voi
       }
     }
 
-    let importedCount = 0;
-    const suffix = () => String(Math.floor(1000 + Math.random() * 9000));
+    if (rawRecords.length === 0) {
+      res.status(400).json({
+        success: false,
+        code: 'EMPTY_IMPORT_DATA',
+        message: 'Tệp dữ liệu không có dòng bản ghi nào để nhập.',
+      });
+      return;
+    }
 
-    for (const r of rawRecords) {
+    if (rawRecords.length > MAX_IMPORT_ROWS) {
+      res.status(400).json({
+        success: false,
+        code: 'IMPORT_ROW_LIMIT_EXCEEDED',
+        message: `Số lượng bản ghi vượt quá giới hạn an toàn (${rawRecords.length} > ${MAX_IMPORT_ROWS} dòng/lần).`,
+      });
+      return;
+    }
+
+    // P1-06: Validate toàn bộ dòng bằng Zod schema trước khi mở transaction, không tự bịa SĐT/email giả
+    const validatedRows: any[] = [];
+    for (let idx = 0; idx < rawRecords.length; idx++) {
+      const r = rawRecords[idx];
       if (entity === 'suppliers') {
-        await prisma.supplier.create({
-          data: {
-            SupplierCode: String(r.SupplierCode || `NCC-${suffix()}`),
-            SupplierName: String(r.SupplierName || r.ProductName || 'Nhà cung cấp mới'),
-            ContactPerson: String(r.ContactPerson || 'Phòng Kinh doanh'),
-            Phone: String(r.Phone || '0243888999'),
-            Email: String(r.Email || ''),
-            Address: String(r.Address || 'Việt Nam'),
-            TaxCode: String(r.TaxCode || ''),
-          },
-        });
-        importedCount++;
+        const v = importSupplierRowSchema.safeParse(r);
+        if (!v.success) {
+          res.status(400).json({
+            success: false,
+            code: 'INVALID_IMPORT_ROW',
+            message: `Dòng ${idx + 1} không hợp lệ: ${v.error.issues[0]?.message || 'Thiếu trường bắt buộc'}`,
+          });
+          return;
+        }
+        validatedRows.push(v.data);
       } else if (entity === 'customers') {
-        await prisma.customer.create({
-          data: {
-            CustomerCode: `BN-${suffix()}`,
-            FullName: String(r.FullName || r.CustomerName || r.ProductName || 'Bệnh nhân mới'),
-            Phone: `09${suffix()}${suffix().slice(0, 4)}`,
-            Email: String(r.Email || ''),
-            Gender: String(r.Gender || 'Nam'),
-            BirthYear: Number(r.BirthYear || 1990),
-            Allergies: String(r.Allergies || 'Không ghi nhận'),
-            ChronicCond: String(r.ChronicCond || 'Không'),
-          },
-        });
-        importedCount++;
+        if (Object.prototype.hasOwnProperty.call(r, 'DebtBalance') && Number(r.DebtBalance) !== 0) {
+          res.status(400).json({
+            success: false,
+            code: 'DEBT_DIRECT_EDIT_FORBIDDEN',
+            message: `Dòng ${idx + 1}: Không được phép import số dư công nợ (DebtBalance) trực tiếp!`,
+          });
+          return;
+        }
+        const v = importCustomerRowSchema.safeParse(r);
+        if (!v.success) {
+          res.status(400).json({
+            success: false,
+            code: 'INVALID_IMPORT_ROW',
+            message: `Dòng ${idx + 1} không hợp lệ: ${v.error.issues[0]?.message || 'Thiếu Họ tên hoặc SĐT hợp lệ'}`,
+          });
+          return;
+        }
+        validatedRows.push(v.data);
       } else if (entity === 'contacts') {
-        await prisma.contact.create({
-          data: {
-            FullName: String(r.FullName || 'Khách hàng tư vấn'),
-            Email: String(r.Email || 'khachhang@gmail.com'),
-            Phone: String(r.Phone || '0912345678'),
-            Subject: String(r.Subject || r.ProductName || 'Tư vấn sử dụng thuốc'),
-            Message: String(r.Message || r.Description || 'Cần dược sĩ tư vấn liều dùng'),
-          },
-        });
-        importedCount++;
+        const v = importContactRowSchema.safeParse(r);
+        if (!v.success) {
+          res.status(400).json({
+            success: false,
+            code: 'INVALID_IMPORT_ROW',
+            message: `Dòng ${idx + 1} không hợp lệ: ${v.error.issues[0]?.message || 'Thiếu thông tin liên hệ bắt buộc'}`,
+          });
+          return;
+        }
+        validatedRows.push(v.data);
       }
     }
 
-    res.json({ success: true, data: { importedCount: Math.max(importedCount, rawRecords.length) } });
-  } catch {
-    res.status(400).json({ success: false, message: 'Không thể nhập dữ liệu từ tệp' });
+    const importedCount = await prisma.$transaction(async (tx) => {
+      let count = 0;
+      for (let i = 0; i < validatedRows.length; i++) {
+        const row = validatedRows[i];
+        const codeSuffix = `${String(Date.now()).slice(-4)}${String(i + 1).padStart(2, '0')}`;
+        if (entity === 'suppliers') {
+          await tx.supplier.create({
+            data: {
+              SupplierCode: row.SupplierCode || `NCC-${codeSuffix}`,
+              SupplierName: row.SupplierName,
+              ContactPerson: row.ContactPerson,
+              Phone: row.Phone,
+              Email: row.Email,
+              Address: row.Address,
+              TaxCode: row.TaxCode,
+            },
+          });
+          count++;
+        } else if (entity === 'customers') {
+          const prefix = row.CustomerType === 'WHOLESALE' ? 'DL' : 'BN';
+          await tx.customer.create({
+            data: {
+              CustomerCode: `${prefix}-${codeSuffix}`,
+              FullName: row.FullName,
+              Phone: row.Phone,
+              Email: row.Email,
+              Gender: row.Gender,
+              BirthYear: row.BirthYear,
+              CustomerType: row.CustomerType,
+              CompanyName: row.CompanyName,
+              TaxCode: row.TaxCode,
+              Address: row.Address,
+              CreditLimit: row.CustomerType === 'WHOLESALE' ? row.CreditLimit || 50000000 : 0,
+              DebtBalance: 0,
+              Allergies: row.Allergies,
+              ChronicCond: row.ChronicCond,
+            },
+          });
+          count++;
+        } else if (entity === 'contacts') {
+          await tx.contact.create({
+            data: {
+              FullName: row.FullName,
+              Email: row.Email,
+              Phone: row.Phone,
+              Subject: row.Subject,
+              Message: row.Message,
+            },
+          });
+          count++;
+        }
+      }
+      return count;
+    });
+
+    res.json({ success: true, data: { importedCount } });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      code: 'IMPORT_FAILED',
+      message:
+        error instanceof Error
+          ? `Không thể nhập dữ liệu từ tệp: ${error.message}`
+          : 'Không thể nhập dữ liệu từ tệp',
+    });
   }
 };

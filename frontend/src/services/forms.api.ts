@@ -76,8 +76,17 @@ export const formsApi = {
   },
 
   // Form Hóa đơn & Thanh toán
-  async listInvoices(): Promise<InvoiceRecord[]> {
-    const res = await http.get<{ success: boolean; data: InvoiceRecord[] }>('/invoices');
+  async listInvoices(params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+    paymentStatus?: string;
+    channel?: string;
+  }): Promise<InvoiceRecord[]> {
+    const res = await http.get<{ success: boolean; data: InvoiceRecord[] }>('/invoices', {
+      params,
+    });
     return res.data.data;
   },
 
@@ -139,12 +148,14 @@ export const formsApi = {
     invoiceId: number,
     amount: number,
     paymentMethod: string = 'CASH',
+    referenceCode?: string,
+    note?: string,
     idempotencyKey?: string
   ): Promise<InvoiceRecord> {
     const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
     const res = await http.post<{ success: boolean; data: InvoiceRecord }>(
       `/invoices/${invoiceId}/pay-debt`,
-      { amount, paymentMethod },
+      { amount, paymentMethod, referenceCode, note },
       { headers }
     );
     return res.data.data;

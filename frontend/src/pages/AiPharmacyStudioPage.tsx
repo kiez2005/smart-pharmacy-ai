@@ -31,7 +31,9 @@ const SYMPTOM_PRESETS = [
 export const AiPharmacyStudioPage: React.FC = () => {
   const [ocrLoading, setOcrLoading] = useState<boolean>(false);
   const [ocrResult, setOcrResult] = useState<OcrPrescriptionResponse | null>(null);
-  const [patientName, setPatientName] = useState<string>('Khách lẻ theo đơn');
+  const [patientName, setPatientName] = useState<string>('');
+  const [patientPhone, setPatientPhone] = useState<string>('');
+  const [pharmacistVerified, setPharmacistVerified] = useState<boolean>(false);
   const [creatingInvoice, setCreatingInvoice] = useState<boolean>(false);
   const ocrFileRef = useRef<HTMLInputElement>(null);
 
@@ -49,8 +51,9 @@ export const AiPharmacyStudioPage: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     setOcrLoading(true);
+    setPharmacistVerified(false);
     try {
-      const res = await aiApi.scanPrescription(file);
+      const res = await aiApi.scanPrescription(file, '', false);
       setOcrResult(res);
       toast.success('Đã hoàn tất số hóa đơn thuốc và đối chiếu danh mục kho');
     } catch {
@@ -63,11 +66,12 @@ export const AiPharmacyStudioPage: React.FC = () => {
 
   const handlePresetOcr = async (presetHint: string, label: string) => {
     setOcrLoading(true);
+    setPharmacistVerified(false);
     try {
-      const res = await aiApi.scanPrescription(null, presetHint);
-      setOcrResult(res);
+      const res = await aiApi.scanPrescription(null, presetHint, true);
+      setOcrResult({ ...res, isDemo: true });
       setPatientName(label);
-      toast.success(`Đã nạp dữ liệu đơn thuốc: ${label}`);
+      toast.info(`[DEMO] Đã nạp mẫu đơn thuốc thử nghiệm: ${label}`);
     } catch {
       toast.error('Không thể nạp mẫu đơn thuốc');
     } finally {
@@ -77,6 +81,27 @@ export const AiPharmacyStudioPage: React.FC = () => {
 
   const handleCreateInvoiceFromOcr = async () => {
     if (!ocrResult) return;
+
+    // P0-05: Cấm tạo hóa đơn thật trực tiếp từ kết quả OCR Demo
+    if (ocrResult.isDemo) {
+      toast.error(
+        'Không được phép lập hóa đơn xuất kho thật từ dữ liệu OCR Demo! Vui lòng tải ảnh đơn thuốc thật của bệnh nhân.'
+      );
+      return;
+    }
+
+    if (!pharmacistVerified) {
+      toast.warning(
+        'Dược sĩ bắt buộc tích xác nhận đã kiểm tra tên thuốc, hàm lượng và liều dùng trước khi lập phiếu!'
+      );
+      return;
+    }
+
+    if (patientName.trim().length < 2 || patientPhone.trim().length < 8) {
+      toast.warning('Vui lòng nhập đầy đủ Họ tên và Số điện thoại thực của bệnh nhân!');
+      return;
+    }
+
     const validItems = ocrResult.items.filter((i) => i.matchedProduct !== null);
     if (validItems.length === 0) {
       toast.warning('Không có sản phẩm nào khớp trong kho');
@@ -86,9 +111,9 @@ export const AiPharmacyStudioPage: React.FC = () => {
     setCreatingInvoice(true);
     try {
       const created = await formsApi.createInvoice({
-        CustomerName: patientName || 'Khách hàng theo đơn',
-        CustomerPhone: '0988112233',
-        Note: 'Xuất bán từ phân hệ số hóa đơn thuốc OCR',
+        CustomerName: patientName.trim(),
+        CustomerPhone: patientPhone.trim(),
+        Note: 'Xuất bán từ phân hệ số hóa đơn thuốc OCR (Đã được Dược sĩ xác nhận)',
         PaymentMethod: 'VIETQR',
         items: validItems.map((it) => ({
           ProductID: it.matchedProduct!.ProductID,
@@ -290,21 +315,52 @@ export const AiPharmacyStudioPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="text"
-                  value={patientName}
-                  onChange={(e) => setPatientName(e.target.value)}
-                  placeholder="Tên bệnh nhân..."
-                  className="flex-1 h-9 rounded-md border border-zinc-200 px-3 text-[13px]"
-                />
+              <div className="space-y-2.5 pt-2 border-t border-zinc-100">
+                {ocrResult.isDemo && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 font-medium">
+                    ⚠️ Đang hiển thị Mẫu Demo thử nghiệm. Hệ thống khóa tạo hóa đơn thật từ dữ liệu Demo (P0-05).
+                  </div>
+                )}
+                <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pharmacistVerified}
+                    onChange={(e) => setPharmacistVerified(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-zinc-300 text-teal-600"
+                  />
+                  <span>
+                    Dược sĩ xác nhận đã kiểm tra khớp tên thuốc, hàm lượng và liều dùng với đơn gốc
+                  </span>
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={patientName}
+                    onChange={(e) => setPatientName(e.target.value)}
+                    placeholder="Họ tên bệnh nhân thực tế *"
+                    className="h-9 rounded-md border border-zinc-200 px-3 text-[13px]"
+                  />
+                  <input
+                    type="tel"
+                    value={patientPhone}
+                    onChange={(e) => setPatientPhone(e.target.value)}
+                    placeholder="Số điện thoại bệnh nhân *"
+                    className="h-9 rounded-md border border-zinc-200 px-3 text-[13px]"
+                  />
+                </div>
                 <button
                   type="button"
-                  disabled={creatingInvoice}
+                  disabled={creatingInvoice || Boolean(ocrResult.isDemo)}
                   onClick={() => void handleCreateInvoiceFromOcr()}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-md bg-zinc-900 px-4 text-[13px] font-medium text-white hover:bg-zinc-800 transition-colors"
+                  className="w-full inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-zinc-900 px-4 text-[13px] font-medium text-white hover:bg-zinc-800 disabled:opacity-50 transition-colors"
                 >
-                  <span>{creatingInvoice ? 'Đang xử lý...' : 'Tạo phiếu xuất kho'}</span>
+                  <span>
+                    {ocrResult.isDemo
+                      ? 'Mẫu Demo (Không lập hóa đơn thật)'
+                      : creatingInvoice
+                      ? 'Đang xử lý...'
+                      : 'Tạo phiếu xuất kho (Sau khi Dược sĩ duyệt)'}
+                  </span>
                   <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>

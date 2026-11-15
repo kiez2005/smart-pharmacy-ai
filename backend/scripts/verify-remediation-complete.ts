@@ -106,6 +106,15 @@ async function run() {
         Status: 'ACTIVE',
       },
     });
+    const adminUser = await prisma.user.create({
+      data: {
+        FullName: 'Quản trị Kiểm thử',
+        Email: `admin_${ts}@test.local`,
+        Password: pwHash,
+        Role: 'ADMIN',
+        Status: 'ACTIVE',
+      },
+    });
 
     const loginPharm = await httpReq(baseUrl, 'POST', '/auth/login', {
       body: { Email: pharmacist.Email, Password: 'Verify@12345' },
@@ -118,6 +127,12 @@ async function run() {
     });
     const cashierToken: string = loginCashier.json?.data?.token;
     assert(loginCashier.status === 200 && cashierToken, 'Cashier login must succeed');
+
+    const loginAdmin = await httpReq(baseUrl, 'POST', '/auth/login', {
+      body: { Email: adminUser.Email, Password: 'Verify@12345' },
+    });
+    const adminToken: string = loginAdmin.json?.data?.token;
+    assert(loginAdmin.status === 200 && adminToken, 'Admin login must succeed');
 
     // Create isolated test products for multi-lot FEFO (D1) & clinical safety (S1/S2)
     const paraA = await prisma.product.create({
@@ -508,12 +523,23 @@ async function run() {
       ? await prisma.onlineOrder.findUnique({ where: { OrderID: createdOrder.OrderID } })
       : null;
 
-    // Wrong tracking token & wrong phone should fail 403
+    // Wrong tracking token should fail 403; query-string token should fail 400 (P1-08); valid X-Tracking-Token header succeeds 200
+    const trackQueryForbidden =
+      createdOrder?.OrderCode && createdOrder?.TrackingToken
+        ? await httpReq(
+            baseUrl,
+            'GET',
+            `/online-orders/track?orderCode=${encodeURIComponent(createdOrder.OrderCode)}&trackingToken=${encodeURIComponent(createdOrder.TrackingToken)}`
+          )
+        : { status: 0 };
     const trackWrong = createdOrder?.OrderCode
       ? await httpReq(
           baseUrl,
           'GET',
-          `/online-orders/track?orderCode=${encodeURIComponent(createdOrder.OrderCode)}&trackingToken=TRK-WRONG`
+          `/online-orders/track?orderCode=${encodeURIComponent(createdOrder.OrderCode)}`,
+          {
+            headers: { 'X-Tracking-Token': 'TRK-WRONG' },
+          }
         )
       : { status: 0 };
     const trackValid =
@@ -521,7 +547,10 @@ async function run() {
         ? await httpReq(
             baseUrl,
             'GET',
-            `/online-orders/track?orderCode=${encodeURIComponent(createdOrder.OrderCode)}&trackingToken=${encodeURIComponent(createdOrder.TrackingToken)}`
+            `/online-orders/track?orderCode=${encodeURIComponent(createdOrder.OrderCode)}`,
+            {
+              headers: { 'X-Tracking-Token': createdOrder.TrackingToken },
+            }
           )
         : { status: 0, json: null };
 
@@ -1244,7 +1273,7 @@ async function run() {
 
     record(
       'RX-POLICY',
-      defaultPolicy.orphanTtlMs === 24 * 60 * 60 * 1000 &&
+      defaultPolicy.orphanTtlMs === 2 * 60 * 60 * 1000 &&
         defaultPolicy.closedOrderTtlMs === null &&
         defaultPolicy.maxRetentionMs === 730 * 24 * 60 * 60 * 1000 &&
         customPolicy.orphanTtlMs === 12 * 60 * 60 * 1000 &&
@@ -1300,6 +1329,39 @@ async function run() {
       },
     });
 
+    const highIdTestWithLot = await prisma.product.create({
+      data: {
+        ProductName: `Test Flag With StockLot ${ts}`,
+        ProductType: 'Vitamin & Khoáng chất',
+        Quantity: 5,
+        Unit: 'Hộp',
+        Price: 15000,
+        Description: 'Marked IsTestOnly: true but has StockLot/Movement -> must HIDE not DELETE',
+      },
+    });
+    await prisma.productPackaging.create({
+      data: {
+        ProductID: highIdTestWithLot.ProductID,
+        PackageUnit: 'Hộp',
+        SmallestUnit: 'Viên',
+        UnitsPerPackage: 10,
+        IsRx: false,
+        IsPublished: true,
+        IsTestOnly: true,
+      },
+    });
+    await prisma.stockLot.create({
+      data: {
+        ProductID: highIdTestWithLot.ProductID,
+        BatchNumber: `LOT-RECON-${ts}`,
+        ExpiryDate: '2029-12-31',
+        InitialQuantity: 5,
+        RemainingQuantity: 5,
+        ImportPrice: 10000,
+        Status: 'ACTIVE',
+      },
+    });
+
     const backendRoot = path.resolve(__dirname, '..');
     const dryRunOut = execSync('npx tsx scripts/reconcile-data.ts --cleanup-tests', {
       cwd: backendRoot,
@@ -1323,18 +1385,225 @@ async function run() {
     const testAfterApply = await prisma.product.findUnique({
       where: { ProductID: highIdTestProd.ProductID },
     });
+    const testWithLotAfterApply = await prisma.product.findUnique({
+      where: { ProductID: highIdTestWithLot.ProductID },
+      include: { packaging: true },
+    });
 
     record(
       'RECONCILE-SAFE',
       dryRunJson?.mode === 'DRY_RUN_PREVIEW' &&
         Array.isArray(dryRunJson?.candidates) &&
         !dryRunJson.candidates.some((c: any) => c.ProductID === highIdRealProd.ProductID) &&
-        dryRunJson.candidates.some((c: any) => c.ProductID === highIdTestProd.ProductID) &&
+        dryRunJson.candidates.some(
+          (c: any) => c.ProductID === highIdTestProd.ProductID && c.plannedAction === 'DELETE'
+        ) &&
+        dryRunJson.candidates.some(
+          (c: any) => c.ProductID === highIdTestWithLot.ProductID && c.plannedAction === 'HIDE'
+        ) &&
         applyJson?.mode === 'CLEANUP_APPLIED' &&
         Boolean(applyJson?.backupPath && fs.existsSync(applyJson.backupPath)) &&
         Boolean(realAfterApply && realAfterApply.packaging?.IsPublished === true) &&
-        testAfterApply === null,
-      `dryRunCandidates=${dryRunJson?.candidatesCount}, realPreserved=${Boolean(realAfterApply)}, testDeleted=${testAfterApply === null}, backupCreated=${Boolean(applyJson?.backupPath)}`
+        testAfterApply === null &&
+        Boolean(testWithLotAfterApply && testWithLotAfterApply.packaging?.IsPublished === false),
+      `dryRunCandidates=${dryRunJson?.candidatesCount}, realPreserved=${Boolean(realAfterApply)}, testDeleted=${testAfterApply === null}, testWithLotHidden=${Boolean(testWithLotAfterApply && !testWithLotAfterApply.packaging?.IsPublished)}, backupCreated=${Boolean(applyJson?.backupPath)}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST P0-P1-P2 BACKLOG: Security, Financial Ledger, VietQR Pending->Reconcile,
+    // Non-Deletable Documents, PO Reversal, RBAC Read Matrix, Import Guards & Header Token
+    // -------------------------------------------------------------------------
+    const { validateJwtSecret } = await import('../src/config/env');
+    let weakProdRejected = false;
+    try {
+      validateJwtSecret('smart_pharmacy_d18cnpm5_secret_key_2026', 'production');
+    } catch {
+      weakProdRejected = true;
+    }
+
+    // P0-02: Cashier blocked from creating WHOLESALE customer or editing DebtBalance; RETAIL customer blocked from CREDIT
+    const cashierWholesaleRes = await httpReq(baseUrl, 'POST', '/enterprise/customers', {
+      token: freshCashierToken,
+      body: {
+        FullName: 'Đại lý Trái Phép',
+        Phone: `098877${String(ts).slice(-4)}`,
+        CustomerType: 'WHOLESALE',
+        CreditLimit: 50000000,
+      },
+    });
+    const adminDirectDebtRes = await httpReq(baseUrl, 'POST', '/enterprise/customers', {
+      token: adminToken,
+      body: {
+        FullName: 'Khách Bơm Nợ',
+        Phone: `098866${String(ts).slice(-4)}`,
+        DebtBalance: 9999999,
+      },
+    });
+    const retailCustRes = await httpReq(baseUrl, 'POST', '/enterprise/customers', {
+      token: freshCashierToken,
+      body: {
+        FullName: 'Khách Lẻ Thật',
+        Phone: `098855${String(ts).slice(-4)}`,
+      },
+    });
+    const retailCustId = retailCustRes.json?.data?.CustomerID;
+    const retailCreditInvRes = await httpReq(baseUrl, 'POST', '/invoices', {
+      token: pharmToken,
+      body: {
+        CustomerName: 'Khách Lẻ Thật',
+        CustomerID: retailCustId,
+        OrderType: 'RETAIL',
+        Channel: 'POS',
+        PaymentMethod: 'CREDIT',
+        items: [{ ProductID: paraB.ProductID, Quantity: 1, Unit: 'Hộp' }],
+      },
+    });
+
+    // P0-03 & P2-02: VIETQR starts UNPAID (PaidAmount = 0) and requires ReferenceCode to reconcile
+    const vqrInvId = r1.json?.data?.InvoiceID;
+    const vqrInitialUnpaid =
+      r1.json?.data?.PaymentStatus === 'UNPAID' && r1.json?.data?.PaidAmount === 0;
+    const vqrReconcileNoRef = await httpReq(
+      baseUrl,
+      'POST',
+      `/invoices/${vqrInvId}/pay-debt`,
+      {
+        token: pharmToken,
+        body: {
+          amount: r1.json?.data?.TotalAmount || 100000,
+          paymentMethod: 'VIETQR',
+          referenceCode: '',
+        },
+      }
+    );
+    const vqrReconcileWithRef = await httpReq(
+      baseUrl,
+      'POST',
+      `/invoices/${vqrInvId}/pay-debt`,
+      {
+        token: pharmToken,
+        body: {
+          amount: r1.json?.data?.TotalAmount || 100000,
+          paymentMethod: 'VIETQR',
+          referenceCode: `FT26319${String(ts).slice(-4)}`,
+        },
+      }
+    );
+
+    // P0-04: Hard delete on invoices, payments, purchase-orders forbidden (403); PO cancel reverses stock
+    const delInvoiceRes = await httpReq(
+      baseUrl,
+      'DELETE',
+      `/enterprise/invoices/${vqrInvId}`,
+      { token: adminToken }
+    );
+    const delPaymentRes = await httpReq(baseUrl, 'DELETE', `/enterprise/payments/1`, {
+      token: adminToken,
+    });
+    const delPoRes = await httpReq(baseUrl, 'DELETE', `/enterprise/purchase-orders/1`, {
+      token: adminToken,
+    });
+
+    const prodBeforePo = await prisma.product.findUnique({
+      where: { ProductID: paraB.ProductID },
+    });
+    const createPoRes = await httpReq(baseUrl, 'POST', '/enterprise/purchase-orders', {
+      token: pharmToken,
+      body: {
+        SupplierID: supplier.SupplierID,
+        CreatedBy: 'Pharmacist Tester',
+        items: [
+          {
+            ProductID: paraB.ProductID,
+            BatchNumber: `LOT-PO-REV-${ts}`,
+            ExpiryDate: '2029-10-15',
+            Quantity: 4,
+            ImportPrice: 40000,
+          },
+        ],
+      },
+    });
+    const createdPoId = createPoRes.json?.data?.POID;
+    const prodAfterPo = await prisma.product.findUnique({
+      where: { ProductID: paraB.ProductID },
+    });
+    const cancelPoRes = await httpReq(
+      baseUrl,
+      'POST',
+      `/enterprise/purchase-orders/${createdPoId}/cancel`,
+      {
+        token: pharmToken,
+        body: { reason: 'Nhập nhầm số lượng lô kiểm thử, đảo phiếu nhập kho chuẩn GPP' },
+      }
+    );
+    const prodAfterPoCancel = await prisma.product.findUnique({
+      where: { ProductID: paraB.ProductID },
+    });
+    const poReversalOk =
+      createPoRes.status === 201 &&
+      cancelPoRes.status === 200 &&
+      prodAfterPo?.Quantity === (prodBeforePo?.Quantity || 0) + 4 &&
+      prodAfterPoCancel?.Quantity === prodBeforePo?.Quantity;
+
+    // P1-07: Payments ledger returns global summary KPIs
+    const paymentsLedgerRes = await httpReq(
+      baseUrl,
+      'GET',
+      '/enterprise/payments?page=1&limit=5',
+      { token: pharmToken }
+    );
+    const ledgerSummaryOk =
+      paymentsLedgerRes.status === 200 &&
+      typeof paymentsLedgerRes.json?.summary?.totalNet === 'number' &&
+      typeof paymentsLedgerRes.json?.summary?.pendingVietQrCount === 'number';
+
+    // P1-01: Cashier blocked from sensitive endpoints & Allergies redacted on customer list
+    const cashierDash = await httpReq(baseUrl, 'GET', '/enterprise/dashboard', {
+      token: freshCashierToken,
+    });
+    const cashierStockCard = await httpReq(
+      baseUrl,
+      'GET',
+      `/enterprise/products/${paraB.ProductID}/stock-card`,
+      { token: freshCashierToken }
+    );
+    const cashierCustomers = await httpReq(baseUrl, 'GET', '/enterprise/customers', {
+      token: freshCashierToken,
+    });
+    const cashierRedactedOk =
+      cashierCustomers.status === 200 &&
+      Array.isArray(cashierCustomers.json?.data) &&
+      cashierCustomers.json.data.every((c: any) => c.Allergies === undefined);
+
+    // P1-06: Import entity allowlist (400 on unknown)
+    const badImportEntityRes = await httpReq(
+      baseUrl,
+      'POST',
+      '/enterprise/import/unknown-entity',
+      { token: adminToken }
+    );
+
+    record(
+      'BACKLOG-P0-P1-P2',
+      weakProdRejected &&
+        cashierWholesaleRes.status === 403 &&
+        adminDirectDebtRes.status === 400 &&
+        retailCreditInvRes.status === 400 &&
+        vqrInitialUnpaid &&
+        vqrReconcileNoRef.status === 400 &&
+        vqrReconcileWithRef.status === 200 &&
+        vqrReconcileWithRef.json?.data?.PaymentStatus === 'PAID' &&
+        delInvoiceRes.status === 403 &&
+        delPaymentRes.status === 403 &&
+        delPoRes.status === 403 &&
+        poReversalOk &&
+        ledgerSummaryOk &&
+        cashierDash.status === 403 &&
+        cashierStockCard.status === 403 &&
+        cashierRedactedOk &&
+        badImportEntityRes.status === 400 &&
+        trackQueryForbidden.status === 400,
+      `weakJwtBlocked=${weakProdRejected}, cashierWholesale=${cashierWholesaleRes.status}, directDebt=${adminDirectDebtRes.status}, retailCredit=${retailCreditInvRes.status}, vqrUnpaid->Paid=${vqrInitialUnpaid}->${vqrReconcileWithRef.json?.data?.PaymentStatus}, hardDel=(${delInvoiceRes.status},${delPaymentRes.status},${delPoRes.status}), poReverse=${poReversalOk}, ledgerSummary=${ledgerSummaryOk}, cashierRBAC=(${cashierDash.status},${cashierStockCard.status},redacted=${cashierRedactedOk}), badImport=${badImportEntityRes.status}, queryTokenBlocked=${trackQueryForbidden.status}`
     );
   } finally {
     for (const f of uploadedFilesToClean) {

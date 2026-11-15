@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { enterpriseApi } from '../services/enterprise.api';
+import { formsApi } from '../services/forms.api';
 import { PaymentRecord } from '../types/enterprise';
 import {
   ColumnConfig,
@@ -39,6 +40,15 @@ export const PaymentsLedgerPage: React.FC = () => {
   const [methodFilter, setMethodFilter] = useState<string>('ALL');
   const [search, setSearch] = useState<string>('');
   const [previewQrPayment, setPreviewQrPayment] = useState<PaymentRecord | null>(null);
+  const [reconcileRefCode, setReconcileRefCode] = useState<string>('');
+  const [reconciling, setReconciling] = useState<boolean>(false);
+  const [serverSummary, setServerSummary] = useState<{
+    totalNet: number;
+    totalVietQr: number;
+    totalCashAndCard: number;
+    totalRefunded: number;
+    pendingVietQrCount?: number;
+  } | null>(null);
   const [activeKpiModal, setActiveKpiModal] = useState<'NET' | 'VIETQR' | 'CASH' | 'REFUND' | null>(null);
 
   // 11 Chức năng Data Grid
@@ -50,8 +60,11 @@ export const PaymentsLedgerPage: React.FC = () => {
   const loadPayments = async () => {
     setLoading(true);
     try {
-      const list = await enterpriseApi.getPayments();
-      setPayments(list);
+      const res = await enterpriseApi.getPaymentsLedgerFull({ page: 1, limit: 200 });
+      setPayments(res.data || []);
+      if (res.summary) {
+        setServerSummary(res.summary);
+      }
       setSelectedIds([]);
     } catch {
       toast.error('Không thể tải dữ liệu sổ quỹ thanh toán');
@@ -65,6 +78,9 @@ export const PaymentsLedgerPage: React.FC = () => {
   }, []);
 
   const stats = useMemo(() => {
+    if (serverSummary) {
+      return serverSummary;
+    }
     const paidList = payments.filter((p) => p.Status === 'PAID');
     const refundedList = payments.filter((p) => p.Status === 'REFUNDED');
 
@@ -78,7 +94,7 @@ export const PaymentsLedgerPage: React.FC = () => {
     const totalRefunded = refundedList.reduce((s, p) => s + p.PaidAmount, 0);
 
     return { totalNet, totalVietQr, totalCashAndCard, totalRefunded };
-  }, [payments]);
+  }, [payments, serverSummary]);
 
   const filtered = useMemo(() => {
     return payments.filter((p) => {
@@ -99,29 +115,52 @@ export const PaymentsLedgerPage: React.FC = () => {
     [filtered, page, pageSize]
   );
 
-  const handleDeleteOne = async (p: PaymentRecord) => {
-    if (!window.confirm(`Xác nhận xóa bút toán thanh toán ${p.TransactionCode}?`)) return;
-    try {
-      await enterpriseApi.deleteRecord('payments', p.PaymentID);
-      toast.success(`Đã xóa bút toán ${p.TransactionCode}`);
-      await loadPayments();
-    } catch {
-      toast.error('Không thể xóa bút toán');
-    }
+  const handleDeleteOne = async (_p: PaymentRecord) => {
+    toast.error(
+      'Nghiêm cấm xóa cứng bút toán Sổ quỹ đã ghi sổ! Vui lòng sử dụng nghiệp vụ Hủy/Hoàn trả hóa đơn để bảo toàn dấu vết kiểm toán (P0-04).'
+    );
   };
 
   const handleBulkDelete = async () => {
-    if (selectedIds.length === 0) {
-      toast.info('Vui lòng chọn ít nhất 1 bút toán trong bảng');
+    toast.error(
+      'Nghiêm cấm xóa cứng bút toán Sổ quỹ đã ghi sổ! Vui lòng sử dụng nghiệp vụ Hủy/Hoàn trả hóa đơn (P0-04).'
+    );
+  };
+
+  const handleReconcileVietQr = async (payment: PaymentRecord) => {
+    const cleanRef = reconcileRefCode.trim();
+    if (cleanRef.length < 3) {
+      toast.warning(
+        'Bắt buộc nhập Mã tham chiếu giao dịch ngân hàng (ReferenceCode / FT..., tối thiểu 3 ký tự) để đối soát VietQR!'
+      );
       return;
     }
-    if (!window.confirm(`Xác nhận xóa ${selectedIds.length} bút toán đã chọn?`)) return;
+    const targetAmount =
+      payment.invoice?.DebtAmount || payment.invoice?.TotalAmount || payment.PaidAmount || 0;
+    if (targetAmount <= 0) {
+      toast.info('Chứng từ này không còn số dư cần đối soát.');
+      return;
+    }
+
+    setReconciling(true);
     try {
-      const count = await enterpriseApi.bulkDelete('payments', selectedIds);
-      toast.success(`Đã xóa ${count} bút toán thanh toán`);
+      await formsApi.collectDebt(
+        payment.InvoiceID,
+        targetAmount,
+        payment.PaymentMethod || 'VIETQR',
+        cleanRef,
+        `Đối soát Sổ quỹ VietQR (${cleanRef})`
+      );
+      toast.success(
+        `Đã đối soát thực thu ${formatVND(targetAmount)} (Mã GD: ${cleanRef}) thành công!`
+      );
+      setReconcileRefCode('');
+      setPreviewQrPayment(null);
       await loadPayments();
-    } catch {
-      toast.error('Không thể xóa hàng loạt bút toán');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Không thể đối soát chứng từ thanh toán');
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -153,7 +192,18 @@ export const PaymentsLedgerPage: React.FC = () => {
         selectedCount={selectedIds.length}
         onClearSelection={() => setSelectedIds([])}
         onOpenCreate={() => {
-          if (payments.length > 0) setPreviewQrPayment(payments[0]);
+          const pendingVietQr =
+            payments.find(
+              (p) => p.PaymentMethod === 'VIETQR' && p.Status !== 'PAID' && p.Status !== 'REFUNDED'
+            ) ||
+            payments.find((p) => p.PaymentMethod === 'VIETQR') ||
+            payments[0];
+          if (pendingVietQr) {
+            setReconcileRefCode('');
+            setPreviewQrPayment(pendingVietQr);
+          } else {
+            toast.info('Chưa có chứng từ VietQR nào cần đối soát');
+          }
         }}
         onBulkDelete={() => void handleBulkDelete()}
         onBulkClone={() => toast.info('Bút toán ngân hàng VietQR là duy nhất, không nhân bản')}
@@ -422,6 +472,10 @@ export const PaymentsLedgerPage: React.FC = () => {
                             <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200/60">
                               Đã xuất quỹ hoàn
                             </span>
+                          ) : p.Status === 'UNPAID' || p.Status === 'PENDING' ? (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 border border-amber-200/80">
+                              Chờ đối soát NH
+                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/60">
                               <CheckCircle2 className="h-3 w-3" />
@@ -437,19 +491,14 @@ export const PaymentsLedgerPage: React.FC = () => {
                         <div className="inline-flex items-center justify-end gap-1">
                           <button
                             type="button"
-                            onClick={() => setPreviewQrPayment(p)}
-                            title="Xem chứng từ VietQR (Alt+V)"
-                            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+                            onClick={() => {
+                              setReconcileRefCode('');
+                              setPreviewQrPayment(p);
+                            }}
+                            title="Xem & Đối soát chứng từ VietQR (Alt+V)"
+                            className="rounded-md p-1.5 text-slate-500 hover:bg-teal-50 hover:text-teal-700"
                           >
                             <Eye className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteOne(p)}
-                            title="Xóa bút toán (Alt+H)"
-                            className="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       </td>
@@ -536,18 +585,54 @@ export const PaymentsLedgerPage: React.FC = () => {
                     Mã QR Chứng từ Đối soát Napas247
                   </div>
                   <img
-                    src={`https://img.vietqr.io/image/MB-0388889999-compact2.png?amount=${previewQrPayment.PaidAmount}&addInfo=${encodeURIComponent(
+                    src={`https://img.vietqr.io/image/MB-0388889999-compact2.png?amount=${
+                      previewQrPayment.PaidAmount || previewQrPayment.invoice?.TotalAmount || 0
+                    }&addInfo=${encodeURIComponent(
                       previewQrPayment.invoice?.InvoiceCode || 'PHARMACORE'
                     )}`}
                     alt="VietQR"
                     className="mx-auto h-44 w-44 sm:h-52 sm:w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xs"
                   />
                   <div className="text-xs text-slate-600">
-                    Giá trị bút toán:{' '}
+                    Thực thu hiện tại:{' '}
                     <strong className="text-base font-bold text-teal-700 tabular-nums">
                       {formatVND(previewQrPayment.PaidAmount)}
                     </strong>
                   </div>
+
+                  {/* P2-02: Form xác nhận đối soát thủ công có nhập Mã giao dịch ngân hàng (ReferenceCode) */}
+                  {(previewQrPayment.Status === 'UNPAID' ||
+                    previewQrPayment.Status === 'PENDING' ||
+                    (previewQrPayment.invoice?.DebtAmount || 0) > 0) && (
+                    <div className="pt-3 border-t border-slate-200 text-left space-y-2.5">
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-900">
+                        Chứng từ đang ở trạng thái <strong>Chờ đối soát ngân hàng (UNPAID)</strong>. Cần thu:{' '}
+                        <strong>
+                          {formatVND(
+                            previewQrPayment.invoice?.DebtAmount ||
+                              previewQrPayment.invoice?.TotalAmount ||
+                              0
+                          )}
+                        </strong>
+                        . Vui lòng nhập Mã tham chiếu ngân hàng (FT...) để ghi nhận thực thu:
+                      </div>
+                      <input
+                        type="text"
+                        value={reconcileRefCode}
+                        onChange={(e) => setReconcileRefCode(e.target.value)}
+                        placeholder="Nhập Mã GD ngân hàng (VD: FT2631988899)..."
+                        className="w-full h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-mono text-slate-900 focus:border-teal-600 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={reconciling}
+                        onClick={() => void handleReconcileVietQr(previewQrPayment)}
+                        className="w-full h-9 rounded-lg bg-emerald-600 px-4 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50 shadow-sm"
+                      >
+                        {reconciling ? 'Đang đối soát...' : 'Xác nhận Đối soát Thực thu (Ghi Sổ Quỹ)'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

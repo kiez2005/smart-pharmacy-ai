@@ -79,8 +79,38 @@ export const getInvoices = async (req: Request, res: Response): Promise<void> =>
     const page = Math.max(1, Number(req.query.page || 1));
     const limit = Math.min(100, Math.max(1, Number(req.query.limit || 50)));
     const skip = (page - 1) * limit;
-    const statusFilter = typeof req.query.status === 'string' && req.query.status !== 'ALL' ? req.query.status.trim() : undefined;
-    const whereClause = statusFilter ? { Status: statusFilter } : {};
+    const statusFilter =
+      typeof req.query.status === 'string' && req.query.status !== 'ALL'
+        ? req.query.status.trim()
+        : undefined;
+    const paymentStatusFilter =
+      typeof req.query.paymentStatus === 'string' && req.query.paymentStatus !== 'ALL'
+        ? req.query.paymentStatus.trim()
+        : undefined;
+    const channelFilter =
+      typeof req.query.channel === 'string' && req.query.channel !== 'ALL'
+        ? req.query.channel.trim()
+        : undefined;
+    const search = String(req.query.search || '').trim();
+    const isCashier = req.user?.Role === 'CASHIER';
+
+    const whereClause: Record<string, unknown> = {};
+    if (statusFilter) {
+      whereClause.Status = statusFilter;
+    }
+    if (paymentStatusFilter) {
+      whereClause.PaymentStatus = paymentStatusFilter;
+    }
+    if (channelFilter) {
+      whereClause.Channel = channelFilter;
+    }
+    if (search) {
+      whereClause.OR = [
+        { InvoiceCode: { contains: search } },
+        { CustomerName: { contains: search } },
+        { CustomerPhone: { contains: search } },
+      ];
+    }
 
     const [total, rawInvoices] = await Promise.all([
       prisma.invoice.count({ where: whereClause }),
@@ -97,7 +127,18 @@ export const getInvoices = async (req: Request, res: Response): Promise<void> =>
           paymentTransactions: {
             orderBy: { CreateDate: 'desc' },
           },
-          customer: true,
+          customer: isCashier
+            ? {
+                select: {
+                  CustomerID: true,
+                  CustomerCode: true,
+                  FullName: true,
+                  Phone: true,
+                  CustomerType: true,
+                  LoyaltyPoints: true,
+                },
+              }
+            : true,
         },
         orderBy: { CreateDate: 'desc' },
         skip,
@@ -107,6 +148,7 @@ export const getInvoices = async (req: Request, res: Response): Promise<void> =>
 
     const invoices = rawInvoices.map((inv) => ({
       ...inv,
+      ClinicalOverrideNote: isCashier ? undefined : inv.ClinicalOverrideNote,
       Status:
         inv.Status === 'PAID' || inv.Status === 'PARTIAL' || inv.Status === 'DEBT'
           ? 'COMPLETED'
@@ -343,40 +385,74 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       const pointsEarned =
         effectiveOrderType === 'RETAIL' ? Math.floor(afterDiscount / 10000) : 0;
 
-      // Xác định số tiền thực thu và công nợ còn lại
+      // P0-03: Hóa đơn VIETQR khởi tạo ở trạng thái UNPAID (PaidAmount = 0) chờ đối soát thực thu
+      // (không tự động ghi nhận PAID / CAPTURE trước khi xác nhận giao dịch ngân hàng).
       let actualPaid = finalTotal;
-      if (PaymentMethod === 'CREDIT' || PaymentMethod === 'COD') {
+      if (PaymentMethod === 'VIETQR') {
+        actualPaid = 0;
+      } else if (PaymentMethod === 'CREDIT' || PaymentMethod === 'COD') {
         actualPaid = PaidAmount !== undefined ? Math.min(finalTotal, PaidAmount) : 0;
       } else if (PaidAmount !== undefined) {
         actualPaid = Math.min(finalTotal, PaidAmount);
       }
       const debtAmount = Math.max(0, finalTotal - actualPaid);
 
-      if (PaymentMethod === 'CREDIT' && !CustomerID) {
-        throw new Error('Bắt buộc chọn hồ sơ Đại lý / Khách hàng khi ghi nhận công nợ!');
+      // P0-02: Phương thức ghi nợ CREDIT bắt buộc phải chọn khách hàng loại WHOLESALE (Đại lý B2B)
+      if (PaymentMethod === 'CREDIT') {
+        if (!CustomerID || !customerRecord) {
+          const err: any = new Error(
+            'Bắt buộc chọn hồ sơ Đại lý B2B (WHOLESALE) khi ghi nhận công nợ (CREDIT)!'
+          );
+          err.statusCode = 400;
+          err.code = 'CREDIT_CUSTOMER_REQUIRED';
+          throw err;
+        }
+        if (customerRecord.CustomerType !== 'WHOLESALE') {
+          const err: any = new Error(
+            'Phương thức ghi nợ công nợ (CREDIT) chỉ áp dụng cho Đại lý bán buôn (WHOLESALE) đã được cấp hạn mức công nợ!'
+          );
+          err.statusCode = 400;
+          err.code = 'RETAIL_CREDIT_FORBIDDEN';
+          throw err;
+        }
       }
 
-      // Kiểm tra hạn mức công nợ và cập nhật dư nợ khách hàng (chỉ cộng vào DebtBalance nếu là mua nợ CREDIT)
+      // Kiểm tra hạn mức công nợ và cập nhật dư nợ khách hàng nguyên tử (chỉ cộng vào DebtBalance nếu là mua nợ CREDIT)
       const customerDebtIncrease = PaymentMethod === 'CREDIT' ? debtAmount : 0;
       if (CustomerID && customerRecord) {
+        const updatedPoints = Math.max(0, customerRecord.LoyaltyPoints - UsedPoints + pointsEarned);
         if (customerDebtIncrease > 0) {
-          const nextDebt = (customerRecord.DebtBalance || 0) + customerDebtIncrease;
           const limit = customerRecord.CreditLimit || 50000000;
-          if (nextDebt > limit) {
-            throw new Error(
+          const maxAllowedCurrentDebt = limit - customerDebtIncrease;
+          const atomicDebtUpdate = await tx.customer.updateMany({
+            where: {
+              CustomerID,
+              CustomerType: 'WHOLESALE',
+              DebtBalance: { lte: maxAllowedCurrentDebt },
+            },
+            data: {
+              LoyaltyPoints: updatedPoints,
+              DebtBalance: { increment: customerDebtIncrease },
+            },
+          });
+
+          if (atomicDebtUpdate.count === 0) {
+            const nextDebt = (customerRecord.DebtBalance || 0) + customerDebtIncrease;
+            const err: any = new Error(
               `Vượt hạn mức công nợ đại lý! Dư nợ sau đơn này (${nextDebt.toLocaleString('vi-VN')} đ) vượt quá hạn mức cho phép (${limit.toLocaleString('vi-VN')} đ).`
             );
+            err.statusCode = 422;
+            err.code = 'CREDIT_LIMIT_EXCEEDED';
+            throw err;
           }
+        } else {
+          await tx.customer.update({
+            where: { CustomerID },
+            data: {
+              LoyaltyPoints: updatedPoints,
+            },
+          });
         }
-
-        const updatedPoints = customerRecord.LoyaltyPoints - UsedPoints + pointsEarned;
-        await tx.customer.update({
-          where: { CustomerID },
-          data: {
-            LoyaltyPoints: Math.max(0, updatedPoints),
-            DebtBalance: (customerRecord.DebtBalance || 0) + customerDebtIncrease,
-          },
-        });
       }
 
       const prefix =
@@ -660,8 +736,7 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
     const invoiceId = Number(req.params.id);
     const payAmount = Number(req.body?.amount || 0);
     const method = (req.body?.paymentMethod as string) || 'VIETQR';
-    const referenceCode =
-      (req.body?.referenceCode as string) || `RCPT-${String(Date.now()).slice(-6)}`;
+    const rawRefCode = typeof req.body?.referenceCode === 'string' ? req.body.referenceCode.trim() : '';
     const note = (req.body?.note as string) || '';
 
     if (isNaN(invoiceId) || payAmount <= 0) {
@@ -681,12 +756,12 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
         rawKey: rawIdemKey,
         scope: `COLLECT_DEBT:${invoiceId}`,
         actorKey,
-        payload: { invoiceId, payAmount, method },
+        payload: { invoiceId, payAmount, method, referenceCode: rawRefCode },
       },
-      async (tx) => {
+      async (tx): Promise<{ statusCode: number; body: any }> => {
         const invoice = await tx.invoice.findUnique({
           where: { InvoiceID: invoiceId },
-          include: { payment: true, customer: true, onlineOrder: true },
+          include: { payment: true, customer: true, onlineOrder: true, paymentTransactions: true },
         });
 
         if (!invoice) {
@@ -695,6 +770,42 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
         if (invoice.Status === 'REFUNDED' || invoice.Status === 'CANCELLED') {
           throw new Error('Hóa đơn đã hủy/hoàn trả, không thể thu tiền');
         }
+
+        const isVietQrReconcile =
+          method === 'VIETQR' || invoice.payment?.PaymentMethod === 'VIETQR';
+
+        // P0-03 & P2-02: Đối soát VietQR bắt buộc phải cung cấp mã tham chiếu giao dịch ngân hàng (ReferenceCode)
+        if (isVietQrReconcile && rawRefCode.length < 3) {
+          const err: any = new Error(
+            'Đối soát thanh toán VietQR bắt buộc phải nhập Mã tham chiếu giao dịch ngân hàng (ReferenceCode / FT..., tối thiểu 3 ký tự)!'
+          );
+          err.statusCode = 400;
+          err.code = 'VIETQR_REFERENCE_REQUIRED';
+          throw err;
+        }
+
+        const referenceCode = rawRefCode || `RCPT-${String(Date.now()).slice(-6)}`;
+
+        // Idempotency theo ReferenceCode trên cùng 1 hóa đơn
+        if (rawRefCode) {
+          const duplicateRef = invoice.paymentTransactions.find(
+            (pt) => pt.ReferenceCode === rawRefCode && pt.Status === 'COMPLETED'
+          );
+          if (duplicateRef) {
+            return {
+              statusCode: 200,
+              body: {
+                success: true,
+                message: `Giao dịch mã tham chiếu ${rawRefCode} đã được đối soát trước đó`,
+                data: {
+                  ...invoice,
+                  Status: 'COMPLETED',
+                },
+              },
+            };
+          }
+        }
+
         if (invoice.DebtAmount <= 0) {
           throw new Error('Hóa đơn này đã được thanh toán đủ, không còn số dư cần thu');
         }
@@ -705,7 +816,11 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
         const nextPaymentStatus = nextDebt === 0 ? 'PAID' : 'PARTIALLY_PAID';
 
         const isCodCollection = invoice.payment?.PaymentMethod === 'COD';
-        const entryType = isCodCollection ? 'COLLECT_COD' : 'DEBT_COLLECTION';
+        const entryType = isCodCollection
+          ? 'COLLECT_COD'
+          : invoice.payment?.PaymentMethod === 'VIETQR' && invoice.OrderType !== 'WHOLESALE'
+          ? 'CAPTURE'
+          : 'DEBT_COLLECTION';
 
         if (
           invoice.CustomerID &&
@@ -725,6 +840,7 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
             where: { PaymentID: invoice.payment.PaymentID },
             data: {
               PaidAmount: nextPaid,
+              TransactionCode: isVietQrReconcile && rawRefCode ? rawRefCode : invoice.payment.TransactionCode,
               Status: nextDebt === 0 ? 'COMPLETED' : 'PARTIAL',
             },
           });
@@ -741,7 +857,9 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
             ActorName: req.user?.FullName || 'Kế toán Thu ngân',
             Note:
               note ||
-              (isCodCollection
+              (isVietQrReconcile
+                ? `Đối soát VietQR mã GD ${referenceCode} cho hóa đơn ${invoice.InvoiceCode}`
+                : isCodCollection
                 ? `Đối soát tiền thu hộ COD cho đơn ${invoice.InvoiceCode}`
                 : `Thu công nợ B2B hóa đơn ${invoice.InvoiceCode}`),
             Status: 'COMPLETED',
@@ -788,13 +906,14 @@ export const collectInvoiceDebt = async (req: Request, res: Response): Promise<v
     );
 
     res.status(idemResult.statusCode).json(idemResult.body);
-  } catch (error) {
+  } catch (error: any) {
     if (error instanceof IdempotencyConflictError) {
       res.status(409).json({ success: false, message: error.message });
       return;
     }
-    res.status(400).json({
+    res.status(error?.statusCode || 400).json({
       success: false,
+      code: error?.code || 'COLLECT_DEBT_FAILED',
       message: error instanceof Error ? error.message : 'Không thể thu hồi công nợ',
     });
   }

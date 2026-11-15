@@ -1597,9 +1597,18 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
               </div>
 
               {completedInvoice.payment?.PaymentMethod === 'VIETQR' && (
-                <div className="rounded-xl border border-slate-200 p-3 text-center space-y-2 bg-slate-50">
-                  <div className="text-[11px] font-semibold text-slate-600">
-                    Quét mã VietQR Napas247 để đối soát tự động
+                <div className="rounded-xl border border-slate-200 p-3 text-center space-y-2.5 bg-slate-50">
+                  <div className="flex items-center justify-between text-[11px] font-semibold">
+                    <span className="text-slate-600">Quét mã VietQR Napas247</span>
+                    {completedInvoice.PaymentStatus === 'PAID' ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-200">
+                        Đã đối soát thực thu
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200">
+                        Chờ đối soát ngân hàng (UNPAID)
+                      </span>
+                    )}
                   </div>
                   <img
                     src={`https://img.vietqr.io/image/MB-0388889999-compact2.png?amount=${completedInvoice.TotalAmount}&addInfo=${encodeURIComponent(
@@ -1608,6 +1617,56 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                     alt="VietQR"
                     className="mx-auto h-44 w-44 sm:h-48 sm:w-48 rounded-lg border border-slate-200 bg-white p-1"
                   />
+                  {completedInvoice.PaymentStatus !== 'PAID' && (
+                    <div className="pt-2 border-t border-slate-200 text-left space-y-2">
+                      <p className="text-[11px] text-amber-800 bg-amber-50/90 border border-amber-200 rounded-lg p-2">
+                        Hóa đơn VietQR đang ở trạng thái <strong>UNPAID (Chưa thu tiền)</strong>. Sau khi khách chuyển khoản thành công, vui lòng nhập mã tham chiếu ngân hàng (FT...) để xác nhận thực thu vào Sổ quỹ:
+                      </p>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          id="pos-vietqr-ref-input"
+                          placeholder="Mã GD ngân hàng (VD: FT26319...)"
+                          className="flex-1 h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-mono text-slate-900 focus:border-teal-600 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const inputEl = document.getElementById(
+                              'pos-vietqr-ref-input'
+                            ) as HTMLInputElement | null;
+                            const refCode = (inputEl?.value || '').trim();
+                            if (refCode.length < 3) {
+                              toast.warning(
+                                'Vui lòng nhập Mã giao dịch ngân hàng (ReferenceCode / FT..., tối thiểu 3 ký tự)!'
+                              );
+                              return;
+                            }
+                            try {
+                              const reconciled = await formsApi.collectDebt(
+                                completedInvoice.InvoiceID,
+                                completedInvoice.DebtAmount || completedInvoice.TotalAmount,
+                                'VIETQR',
+                                refCode,
+                                `Đối soát VietQR tại quầy POS (${refCode})`
+                              );
+                              setCompletedInvoice(reconciled);
+                              toast.success(
+                                `Đã đối soát thực thu VietQR (${refCode}) cho hóa đơn ${reconciled.InvoiceCode}!`
+                              );
+                            } catch (err: any) {
+                              toast.error(
+                                err?.response?.data?.message || 'Không thể đối soát giao dịch VietQR'
+                              );
+                            }
+                          }}
+                          className="h-8 rounded-lg bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700 shrink-0 shadow-2xs"
+                        >
+                          Xác nhận đã nhận tiền
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

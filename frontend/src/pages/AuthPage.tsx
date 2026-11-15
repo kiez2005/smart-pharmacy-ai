@@ -79,13 +79,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({});
 
-  // Modal Đăng nhập / Cấp tài khoản mới
+  // Modal Cấp tài khoản mới (Chỉ dành cho ADMIN quản trị nhân sự)
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
-  const [mode, setMode] = useState<'LOGIN' | 'REGISTER'>('REGISTER');
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('trung.nguyen@pharmacore.vn');
-  const [password, setPassword] = useState('123456');
-  const [phone, setPhone] = useState('0988123456');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
 
   const loadStaff = async () => {
@@ -169,29 +168,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     e.preventDefault();
     setLoading(true);
     try {
-      if (mode === 'LOGIN') {
-        const res = await formsApi.login(email, password);
-        toast.success(`Đã đăng nhập phiên làm việc: ${res.user.FullName}`);
-        onAuthSuccess(res.user, res.token);
-        setShowAuthModal(false);
-      } else {
-        const res = await formsApi.register({
-          FullName: fullName,
-          Email: email,
-          Password: password,
-          Phone: phone,
-        });
-        toast.info(res.message || 'Đăng ký thành công! Tài khoản đang chờ Quản trị viên kích hoạt.');
-        setFullName('');
-        setEmail('');
-        setPassword('');
-        setShowAuthModal(false);
-        await loadStaff();
-      }
+      const res = await formsApi.register({
+        FullName: fullName,
+        Email: email,
+        Password: password,
+        Phone: phone,
+      });
+      toast.info(res.message || 'Đăng ký thành công! Tài khoản đang chờ Quản trị viên kích hoạt.');
+      setFullName('');
+      setEmail('');
+      setPassword('');
+      setPhone('');
+      setShowAuthModal(false);
+      await loadStaff();
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Không thể xác thực tài khoản';
+        'Không thể cấp tài khoản nhân sự';
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -241,7 +234,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         selectedCount={selectedIds.length}
         onClearSelection={() => setSelectedIds([])}
         onOpenCreate={() => {
-          setMode('REGISTER');
           setShowAuthModal(true);
         }}
         onBulkDelete={() => void handleBulkDelete()}
@@ -253,19 +245,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           }
         }}
         onReload={loadStaff}
-        extraFilters={
-          <button
-            type="button"
-            onClick={() => {
-              setMode('LOGIN');
-              setShowAuthModal(true);
-            }}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-teal-300 bg-teal-50 px-3.5 text-xs font-semibold text-teal-800 shadow-sm hover:bg-teal-100 transition-colors"
-          >
-            <KeyRound className="h-3.5 w-3.5 text-teal-600" />
-            <span>Đổi Ca Trực / Đăng Nhập</span>
-          </button>
-        }
       />
 
       {/* Phiên đăng nhập hiện tại */}
@@ -517,17 +496,18 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         </div>
       </div>
 
-      {/* Modal Đăng nhập / Cấp Tài khoản mới */}
+      {/* Modal Cấp Tài khoản Nhân sự Mới */}
       {showAuthModal && (
         <ModalPortal>
           <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-2 sm:p-4">
             <div className="w-full max-w-md max-h-[90vh] flex flex-col rounded-xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-5 py-3.5 bg-slate-50/70 shrink-0">
-              <h3 className="text-sm font-bold text-slate-900">
-                {mode === 'LOGIN'
-                  ? 'Xác thực Đăng nhập Ca trực'
-                  : 'Cấp Tài khoản Nhân sự Mới'}
-              </h3>
+              <div className="flex items-center gap-2">
+                <UserPlus className="h-4 w-4 text-teal-700" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Cấp Tài khoản Nhân sự Mới
+                </h3>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowAuthModal(false)}
@@ -538,93 +518,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             </div>
 
             <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1">
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
-                <button
-                  type="button"
-                  onClick={() => setMode('LOGIN')}
-                  className={`inline-flex items-center justify-center gap-1.5 h-8 rounded-lg py-1 text-xs font-semibold transition-colors ${
-                    mode === 'LOGIN' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600'
-                  }`}
-                >
-                  <KeyRound className="h-3.5 w-3.5" />
-                  <span>Đăng nhập ca trực</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('REGISTER')}
-                  className={`inline-flex items-center justify-center gap-1.5 h-8 rounded-lg py-1 text-xs font-semibold transition-colors ${
-                    mode === 'REGISTER' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-600'
-                  }`}
-                >
-                  <UserPlus className="h-3.5 w-3.5" />
-                  <span>Cấp tài khoản mới</span>
-                </button>
-              </div>
-
               <form onSubmit={handleSubmit} className="space-y-3 text-xs">
-                {mode === 'LOGIN' && (
-                  <div className="rounded-lg bg-teal-50/80 border border-teal-200/80 p-2.5 space-y-1.5">
-                    <div className="text-[11px] font-bold text-teal-900 flex items-center justify-between">
-                      <span>⚡ Chọn nhanh tài khoản demo (Mật khẩu: 123456):</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEmail('trung.d18cnpm5@epu.edu.vn');
-                          setPassword('123456');
-                        }}
-                        className="text-left px-2.5 py-1.5 rounded-lg bg-white border border-teal-200 text-[11px] hover:bg-teal-100/70 flex items-center justify-between transition-colors shadow-2xs"
-                      >
-                        <span className="font-semibold text-slate-800">1. DS. Nguyễn Văn Trung</span>
-                        <span className="rounded bg-rose-50 text-rose-700 px-1.5 py-0.5 font-bold text-[10px] border border-rose-200">
-                          ADMIN
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEmail('duc.d18cnpm5@epu.edu.vn');
-                          setPassword('123456');
-                        }}
-                        className="text-left px-2.5 py-1.5 rounded-lg bg-white border border-teal-200 text-[11px] hover:bg-teal-100/70 flex items-center justify-between transition-colors shadow-2xs"
-                      >
-                        <span className="font-semibold text-slate-800">2. DS. Đặng Minh Đức</span>
-                        <span className="rounded bg-teal-50 text-teal-700 px-1.5 py-0.5 font-bold text-[10px] border border-teal-200">
-                          PHARMACIST
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEmail('baongoc.pharmacore@epu.edu.vn');
-                          setPassword('123456');
-                        }}
-                        className="text-left px-2.5 py-1.5 rounded-lg bg-white border border-teal-200 text-[11px] hover:bg-teal-100/70 flex items-center justify-between transition-colors shadow-2xs"
-                      >
-                        <span className="font-semibold text-slate-800">3. DS. Lê Hoàng Bảo Ngọc</span>
-                        <span className="rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 font-bold text-[10px] border border-slate-200">
-                          CASHIER
-                        </span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {mode === 'REGISTER' && (
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      Họ và tên dược sĩ / nhân viên <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="VD: DS. Phạm Thu Hà"
-                      className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
-                    />
-                  </div>
-                )}
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Họ và tên dược sĩ / nhân viên <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="VD: DS. Phạm Thu Hà"
+                    className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  />
+                </div>
 
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
@@ -635,34 +542,36 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    placeholder="VD: ha.pham@pharmacore.vn"
                     className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                   />
                 </div>
 
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    Mật khẩu xác thực <span className="text-rose-500">*</span>
+                    Mật khẩu khởi tạo <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="password"
                     required
+                    minLength={6}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Tối thiểu 6 ký tự"
                     className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                   />
                 </div>
 
-                {mode === 'REGISTER' && (
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Số điện thoại</label>
-                    <input
-                      type="text"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
-                    />
-                  </div>
-                )}
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Số điện thoại</label>
+                  <input
+                    type="text"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="VD: 0988123456"
+                    className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  />
+                </div>
 
                 <div className="pt-2 flex justify-end gap-2">
                   <button
@@ -677,11 +586,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     disabled={loading}
                     className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 shadow-sm transition-colors"
                   >
-                    {loading
-                      ? 'Đang xử lý...'
-                      : mode === 'LOGIN'
-                      ? 'Xác thực Đăng nhập'
-                      : 'Cấp Tài khoản Nhân sự'}
+                    {loading ? 'Đang xử lý...' : 'Cấp Tài khoản Nhân sự'}
                   </button>
                 </div>
               </form>

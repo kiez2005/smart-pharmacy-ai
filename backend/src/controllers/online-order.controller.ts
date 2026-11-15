@@ -395,14 +395,25 @@ export const trackCustomerOnlineOrder = async (
     const orderCode = String(req.query.orderCode || '').trim().toUpperCase();
     const headerToken = String(req.headers['x-tracking-token'] || '').trim().toUpperCase();
     const queryToken = String(req.query.trackingToken || '').trim().toUpperCase();
-    const fallbackParam = String(req.query.phoneOrToken || '').trim().toUpperCase();
-    const trackingToken = headerToken || queryToken || (fallbackParam.startsWith('TRK-') ? fallbackParam : '');
+
+    // P1-08: Cấm truyền TrackingToken trên URL query string để không lộ token trong access log / browser history
+    if (queryToken && !headerToken) {
+      res.status(400).json({
+        success: false,
+        code: 'QUERY_TOKEN_FORBIDDEN',
+        message:
+          'Vì lý do bảo mật, không được truyền Mã tra cứu (TrackingToken) trên URL query string! Vui lòng gửi qua header X-Tracking-Token.',
+      });
+      return;
+    }
+
+    const trackingToken = headerToken;
 
     if (!orderCode || !trackingToken) {
       res.status(400).json({
         success: false,
         code: 'MISSING_TRACKING_CREDENTIALS',
-        message: 'Vui lòng cung cấp đủ Mã đơn hàng (WEB-...) và Mã tra cứu bảo mật (TRK-...).',
+        message: 'Vui lòng cung cấp đủ Mã đơn hàng (WEB-...) và header X-Tracking-Token (TRK-...).',
       });
       return;
     }
@@ -848,9 +859,11 @@ export const listOnlineOrdersForStaff = async (
       }),
     ]);
 
+    const isCashier = req.user?.Role === 'CASHIER';
+
     const formatted = orders.map((o) => {
       let clinicalWarnings: unknown[] = [];
-      if (o.ClinicalWarningsJson) {
+      if (!isCashier && o.ClinicalWarningsJson) {
         try {
           clinicalWarnings = JSON.parse(o.ClinicalWarningsJson);
         } catch {
@@ -858,6 +871,25 @@ export const listOnlineOrdersForStaff = async (
         }
       }
       const { TrackingTokenHash: _h, TrackingToken: _t, ...safeOrder } = o;
+
+      // P1-01: Thu ngân (CASHIER) chỉ xem thông tin đóng gói/giao nhận, không đọc tiền sử dị ứng/toa thuốc/cảnh báo lâm sàng
+      if (isCashier) {
+        return {
+          ...safeOrder,
+          PatientAllergies: undefined,
+          PrescriptionFileKey: null,
+          ClinicalWarningsJson: null,
+          clinicalWarnings: [],
+          customer: safeOrder.customer
+            ? {
+                ...safeOrder.customer,
+                Allergies: undefined,
+                ChronicCond: undefined,
+              }
+            : null,
+        };
+      }
+
       return {
         ...safeOrder,
         clinicalWarnings,
@@ -1097,22 +1129,35 @@ export const pharmacistReviewOnlineOrder = async (
         }
 
         if (order.PaymentMethod === 'CREDIT') {
-          if (!order.CustomerID || !order.customer) {
-            throw new Error('Đơn công nợ B2B phải gắn với hồ sơ Đại lý hợp lệ!');
-          }
-          const nextDebt = (order.customer.DebtBalance || 0) + order.TotalAmount;
-          const limit = order.customer.CreditLimit || 50000000;
-          if (nextDebt > limit) {
-            throw new Error(
-              `Vượt hạn mức công nợ đại lý B2B (${nextDebt.toLocaleString('vi-VN')} > ${limit.toLocaleString('vi-VN')} đ)!`
+          if (!order.CustomerID || !order.customer || order.customer.CustomerType !== 'WHOLESALE') {
+            const err: any = new Error(
+              'Đơn công nợ B2B (CREDIT) bắt buộc phải gắn với hồ sơ Đại lý bán buôn (WHOLESALE) hợp lệ!'
             );
+            err.statusCode = 400;
+            err.code = 'RETAIL_CREDIT_FORBIDDEN';
+            throw err;
           }
-          await tx.customer.update({
-            where: { CustomerID: order.CustomerID },
+          const limit = order.customer.CreditLimit || 50000000;
+          const maxAllowedDebt = limit - order.TotalAmount;
+          const atomicUpdate = await tx.customer.updateMany({
+            where: {
+              CustomerID: order.CustomerID,
+              CustomerType: 'WHOLESALE',
+              DebtBalance: { lte: maxAllowedDebt },
+            },
             data: {
-              DebtBalance: nextDebt,
+              DebtBalance: { increment: order.TotalAmount },
             },
           });
+          if (atomicUpdate.count === 0) {
+            const nextDebt = (order.customer.DebtBalance || 0) + order.TotalAmount;
+            const err: any = new Error(
+              `Vượt hạn mức công nợ đại lý B2B (${nextDebt.toLocaleString('vi-VN')} > ${limit.toLocaleString('vi-VN')} đ)!`
+            );
+            err.statusCode = 422;
+            err.code = 'CREDIT_LIMIT_EXCEEDED';
+            throw err;
+          }
         }
 
         const invoiceItemsData: Array<{

@@ -11,7 +11,11 @@ import {
   uploadPrescriptionImage,
 } from '../controllers/online-order.controller';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware';
-import { publicReadLimiter, publicWriteLimiter } from '../middlewares/rate-limit.middleware';
+import {
+  prescriptionUploadLimiter,
+  publicReadLimiter,
+  publicWriteLimiter,
+} from '../middlewares/rate-limit.middleware';
 import { prescriptionUploadMiddleware } from '../services/prescription-storage.service';
 
 const router = Router();
@@ -22,7 +26,7 @@ const router = Router();
 router.get('/catalog', publicReadLimiter, getPublicStorefrontCatalog);
 router.post(
   '/prescriptions',
-  publicWriteLimiter,
+  prescriptionUploadLimiter,
   prescriptionUploadMiddleware.single('prescription'),
   uploadPrescriptionImage
 );

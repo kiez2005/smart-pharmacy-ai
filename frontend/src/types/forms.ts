@@ -28,7 +28,7 @@ export interface PaymentRecord {
   PaymentMethod: 'CASH' | 'VIETQR' | 'CARD' | 'CREDIT' | 'COD' | string;
   TransactionCode?: string;
   PaidAmount: number;
-  Status: 'PAID' | 'REFUNDED' | 'PENDING' | 'PARTIAL' | string;
+  Status: 'PAID' | 'REFUNDED' | 'PENDING' | 'PARTIAL' | 'UNPAID' | string;
   PaymentDate: string;
   invoice?: {
     InvoiceID: number;
@@ -38,6 +38,11 @@ export interface PaymentRecord {
     CustomerName: string;
     CustomerPhone?: string;
     Status: string;
+    TotalAmount?: number;
+    PaidAmount?: number;
+    DebtAmount?: number;
+    RefundedAmount?: number;
+    PaymentStatus?: string;
   };
 }
 

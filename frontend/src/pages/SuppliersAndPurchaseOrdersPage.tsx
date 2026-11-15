@@ -725,20 +725,55 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                       {formatVND(po.TotalCost)}
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/70">
-                        <CheckCircle2 className="h-3 w-3" />
-                        Đã cộng tồn kho
-                      </span>
+                      {po.Status === 'CANCELLED' ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200/70">
+                          Đã đảo / Hủy phiếu
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/70">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Đã cộng tồn kho
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => setViewingPo(po)}
-                        className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-teal-700 shadow-sm hover:bg-teal-50 transition-colors"
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        <span>Biên bản GPP</span>
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setViewingPo(po)}
+                          className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-teal-700 shadow-sm hover:bg-teal-50 transition-colors"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          <span>Biên bản GPP</span>
+                        </button>
+                        {po.Status !== 'CANCELLED' && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const reason = window.prompt(
+                                `Nhập lý do hủy / đảo phiếu nhập kho ${po.POCode} (tối thiểu 5 ký tự):`,
+                                'Nhập sai số lượng/lô — Xuất trả nhà cung cấp'
+                              );
+                              if (!reason || reason.trim().length < 5) return;
+                              try {
+                                await enterpriseApi.cancelPurchaseOrder(po.POID, reason.trim());
+                                toast.success(
+                                  `Đã đảo phiếu nhập ${po.POCode} và hoàn giảm tồn kho nguyên tử!`
+                                );
+                                await loadAll();
+                              } catch (err: any) {
+                                toast.error(
+                                  err?.response?.data?.message ||
+                                    'Không thể hủy phiếu nhập (lô thuốc có thể đã được xuất bán)'
+                                );
+                              }
+                            }}
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition-colors"
+                          >
+                            <span>Đảo phiếu</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

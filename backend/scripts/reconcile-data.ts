@@ -34,7 +34,7 @@ function parseCliOptions(argv: string[]): ReconcileCliOptions {
   };
 }
 
-function createDatabaseBackupIfFile(): string | null {
+async function createDatabaseBackupIfFile(): Promise<string | null> {
   const dbUrl = resolveSqliteDatabaseUrl(process.env.DATABASE_URL);
   if (!dbUrl.startsWith('file:')) return null;
   const dbPath = dbUrl.slice('file:'.length);
@@ -43,8 +43,22 @@ function createDatabaseBackupIfFile(): string | null {
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupPath = `${dbPath}.bak-reconcile-${stamp}`;
-  fs.copyFileSync(dbPath, backupPath);
-  return backupPath;
+
+  // P1-04: Ưu tiên dùng SQLite VACUUM INTO để tạo bản sao lưu nhất quán nguyên tử kể cả khi CSDL đang bật WAL
+  try {
+    const escapedBackupPath = backupPath.replace(/'/g, "''");
+    await prisma.$executeRawUnsafe(`VACUUM INTO '${escapedBackupPath}'`);
+    return backupPath;
+  } catch {
+    fs.copyFileSync(dbPath, backupPath);
+    if (fs.existsSync(`${dbPath}-wal`)) {
+      fs.copyFileSync(`${dbPath}-wal`, `${backupPath}-wal`);
+    }
+    if (fs.existsSync(`${dbPath}-shm`)) {
+      fs.copyFileSync(`${dbPath}-shm`, `${backupPath}-shm`);
+    }
+    return backupPath;
+  }
 }
 
 function hashTrackingToken(rawToken: string): string {
@@ -67,6 +81,7 @@ async function main() {
           onlineOrderItems: true,
           purchaseOrderItems: true,
           stockMovements: true,
+          stockLots: true,
           reservations: true,
         },
       },
@@ -75,7 +90,7 @@ async function main() {
   });
 
   // Chỉ nhận diện dữ liệu test theo cờ IsTestOnly đã gắn tường minh hoặc danh sách --test-ids khai báo rõ.
-  // Tuyệt đối không dùng ngưỡng ProductID >= N hoặc regex tên thuốc để tránh xóa/ẩn nhầm thuốc thật.
+  // P1-04: Chỉ cho phép DELETE khi refCount === 0 VÀ chưa phát sinh bất kỳ biến động kho / lô tồn / tồn kho nào!
   const testCandidates = allProducts
     .filter(
       (product) =>
@@ -87,10 +102,26 @@ async function main() {
         product._count.onlineOrderItems +
         product._count.purchaseOrderItems +
         product._count.reservations;
-      const action: 'DELETE' | 'HIDE' = refCount === 0 ? 'DELETE' : 'HIDE';
+      const stockMovementsCount = product._count.stockMovements;
+      const stockLotsCount = product._count.stockLots;
+      const currentBaseQty = product.Quantity;
+      const currentLooseQty = product.packaging?.LooseUnits ?? 0;
+
+      const canHardDelete =
+        refCount === 0 &&
+        stockMovementsCount === 0 &&
+        stockLotsCount === 0 &&
+        currentBaseQty === 0 &&
+        currentLooseQty === 0;
+
+      const action: 'DELETE' | 'HIDE' = canHardDelete ? 'DELETE' : 'HIDE';
       return {
         product,
         refCount,
+        stockMovementsCount,
+        stockLotsCount,
+        currentBaseQty,
+        currentLooseQty,
         action,
       };
     });
@@ -109,6 +140,10 @@ async function main() {
             IsTestOnlyFlag: Boolean(c.product.packaging?.IsTestOnly),
             explicitIdMatch: opts.explicitTestIds.has(c.product.ProductID),
             refCount: c.refCount,
+            stockMovementsCount: c.stockMovementsCount,
+            stockLotsCount: c.stockLotsCount,
+            currentBaseQty: c.currentBaseQty,
+            currentLooseQty: c.currentLooseQty,
             plannedAction: c.action,
           })),
         },
@@ -127,7 +162,7 @@ async function main() {
   const reconciledLots = 0;
 
   if (opts.cleanupTests && opts.apply && testCandidates.length > 0) {
-    backupPath = createDatabaseBackupIfFile();
+    backupPath = await createDatabaseBackupIfFile();
     for (const candidate of testCandidates) {
       const { product, action } = candidate;
       if (action === 'DELETE') {

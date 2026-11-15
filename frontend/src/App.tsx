@@ -194,9 +194,20 @@ export const App: React.FC = () => {
     {
       groupLabel: 'Phân khu 1: Quản trị Kho & Dược phẩm',
       items: [
-        { id: 'DASHBOARD', label: 'Tổng quan điều hành', icon: LayoutDashboard },
+        {
+          id: 'DASHBOARD',
+          label: 'Tổng quan điều hành',
+          icon: LayoutDashboard,
+          roles: ['ADMIN', 'PHARMACIST'],
+        },
         { id: 'PRODUCTS', label: 'Danh mục dược phẩm', icon: Package, badge: 'GPP/GDP' },
-        { id: 'STOCK_CARD', label: 'Thẻ kho & Kiểm kê', icon: FileSpreadsheet, badge: 'FEFO' },
+        {
+          id: 'STOCK_CARD',
+          label: 'Thẻ kho & Kiểm kê',
+          icon: FileSpreadsheet,
+          badge: 'FEFO',
+          roles: ['ADMIN', 'PHARMACIST'],
+        },
         {
           id: 'IMPORTS',
           label: 'Nhà cung cấp & Nhập kho',
@@ -211,13 +222,18 @@ export const App: React.FC = () => {
         { id: 'POS', label: 'Bán lẻ POS & Bán buôn B2B', icon: ShoppingCart, badge: 'POS/B2B' },
         { id: 'STAFF_ORDERS', label: 'Đơn online (Xử lý & Duyệt)', icon: Truck, badge: 'ONLINE' },
         { id: 'INVOICES', label: 'Hóa đơn, Công nợ & Hoàn trả', icon: Receipt },
-        { id: 'PAYMENTS', label: 'Sổ quỹ Thu - Chi & VietQR', icon: Wallet },
+        {
+          id: 'PAYMENTS',
+          label: 'Sổ quỹ Thu - Chi & VietQR',
+          icon: Wallet,
+          roles: ['ADMIN', 'PHARMACIST'],
+        },
         { id: 'CUSTOMERS', label: 'Bệnh nhân & Đại lý B2B', icon: Users },
         {
           id: 'AUTH',
           label: 'Nhân sự & Phân quyền',
           icon: Shield,
-          roles: ['ADMIN', 'PHARMACIST', 'CASHIER'],
+          roles: ['ADMIN'],
         },
       ],
     },
@@ -247,6 +263,25 @@ export const App: React.FC = () => {
       ],
     },
   ];
+
+  // P2-01: Tự động điều hướng về màn hình hợp lệ nếu vai trò hiện tại không có quyền truy cập tab đang chọn
+  useEffect(() => {
+    if (!currentUser) return;
+    if (currentUser.Role === 'CASHIER') {
+      const allowedCashierTabs: ActiveTab[] = [
+        'POS',
+        'PRODUCTS',
+        'STAFF_ORDERS',
+        'INVOICES',
+        'CUSTOMERS',
+      ];
+      if (!allowedCashierTabs.includes(activeTab)) {
+        setActiveTab('POS');
+      }
+    } else if (currentUser.Role === 'PHARMACIST' && activeTab === 'AUTH') {
+      setActiveTab('DASHBOARD');
+    }
+  }, [currentUser, activeTab]);
 
   const isNavItemVisible = (item: { roles?: Array<'ADMIN' | 'PHARMACIST' | 'CASHIER'> }) => {
     if (!item.roles || !currentUser) return true;
@@ -377,8 +412,14 @@ export const App: React.FC = () => {
 
           <div className="flex items-center gap-1.5">
             <div
-              onClick={() => setActiveTab('AUTH')}
-              className="cursor-pointer flex flex-1 min-w-0 items-center gap-2.5 rounded-lg bg-white px-2.5 py-2 border border-slate-200/90 shadow-2xs hover:border-teal-300 transition-colors"
+              onClick={() => {
+                if (currentUser.Role === 'ADMIN') {
+                  setActiveTab('AUTH');
+                }
+              }}
+              className={`${
+                currentUser.Role === 'ADMIN' ? 'cursor-pointer hover:border-teal-300' : 'cursor-default'
+              } flex flex-1 min-w-0 items-center gap-2.5 rounded-lg bg-white px-2.5 py-2 border border-slate-200/90 shadow-2xs transition-colors`}
             >
               <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-xs font-bold text-white">
                 {currentUser.FullName.slice(0, 2).toUpperCase()}
@@ -493,10 +534,14 @@ export const App: React.FC = () => {
             <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center gap-2">
               <div
                 onClick={() => {
-                  setActiveTab('AUTH');
-                  setIsMobileMenuOpen(false);
+                  if (currentUser.Role === 'ADMIN') {
+                    setActiveTab('AUTH');
+                    setIsMobileMenuOpen(false);
+                  }
                 }}
-                className="cursor-pointer flex flex-1 min-w-0 items-center gap-2.5 rounded-lg bg-white p-2 border border-slate-200 shadow-2xs"
+                className={`${
+                  currentUser.Role === 'ADMIN' ? 'cursor-pointer' : 'cursor-default'
+                } flex flex-1 min-w-0 items-center gap-2.5 rounded-lg bg-white p-2 border border-slate-200 shadow-2xs`}
               >
                 <div className="h-8 w-8 shrink-0 rounded-full bg-teal-600 text-xs font-bold text-white flex items-center justify-center">
                   {currentUser.FullName.slice(0, 2).toUpperCase()}
@@ -592,7 +637,7 @@ export const App: React.FC = () => {
         {/* Workspace Content (Lazy-loaded Code-split Modules) */}
         <main className="flex-1 p-3.5 sm:p-5 md:p-6 max-w-[1480px] w-full mx-auto">
           <Suspense fallback={<TabLoadingFallback />}>
-            {activeTab === 'DASHBOARD' && (
+            {activeTab === 'DASHBOARD' && currentUser.Role !== 'CASHIER' && (
               <DashboardPage
                 onOpenStockCard={handleOpenStockCard}
                 onNavigateToImports={() => setActiveTab('IMPORTS')}
@@ -602,7 +647,7 @@ export const App: React.FC = () => {
             {activeTab === 'PRODUCTS' && (
               <ProductManagementPage onOpenStockCard={handleOpenStockCard} />
             )}
-            {activeTab === 'STOCK_CARD' && (
+            {activeTab === 'STOCK_CARD' && currentUser.Role !== 'CASHIER' && (
               <ProductStockCardPage
                 productId={selectedStockCardProductId}
                 onBack={() => setActiveTab('PRODUCTS')}
@@ -620,7 +665,7 @@ export const App: React.FC = () => {
             )}
             {activeTab === 'STAFF_ORDERS' && <StaffOnlineOrdersPage />}
             {activeTab === 'INVOICES' && <InvoicesManagementPage />}
-            {activeTab === 'PAYMENTS' && <PaymentsLedgerPage />}
+            {activeTab === 'PAYMENTS' && currentUser.Role !== 'CASHIER' && <PaymentsLedgerPage />}
             {activeTab === 'CUSTOMERS' && <CustomersPage />}
             {activeTab === 'AI_OCR' && currentUser.Role !== 'CASHIER' && (
               <PrescriptionOcrPage onTransferToPos={handleTransferOcrToPos} />
@@ -629,7 +674,7 @@ export const App: React.FC = () => {
               <ClinicalAiAndInteractionPage />
             )}
             {activeTab === 'CONTACT' && currentUser.Role !== 'CASHIER' && <ContactPage />}
-            {activeTab === 'AUTH' && (
+            {activeTab === 'AUTH' && currentUser.Role === 'ADMIN' && (
               <AuthPage
                 currentUser={currentUser}
                 onAuthSuccess={(user, token) => {

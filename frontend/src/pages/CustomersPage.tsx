@@ -51,7 +51,7 @@ export const CustomersPage: React.FC = () => {
     CompanyName: '',
     TaxCode: '',
     Address: '',
-    CreditLimit: 50000000,
+    CreditLimit: 0,
     Phone: '',
     Email: '',
     BirthYear: 1985,
@@ -63,7 +63,7 @@ export const CustomersPage: React.FC = () => {
   const loadCustomers = async () => {
     setLoading(true);
     try {
-      const list = await enterpriseApi.getCustomers();
+      const list = await enterpriseApi.getCustomers({ limit: 200 });
       setCustomers(list);
       setSelectedIds([]);
       if (selectedCustomer) {
@@ -90,7 +90,7 @@ export const CustomersPage: React.FC = () => {
       CompanyName: '',
       TaxCode: '',
       Address: '',
-      CreditLimit: 50000000,
+      CreditLimit: customerTypeFilter === 'WHOLESALE' ? 50000000 : 0,
       Phone: '',
       Email: '',
       BirthYear: 1990,
@@ -109,7 +109,7 @@ export const CustomersPage: React.FC = () => {
       CompanyName: cust.CompanyName || '',
       TaxCode: cust.TaxCode || '',
       Address: cust.Address || '',
-      CreditLimit: cust.CreditLimit ?? 50000000,
+      CreditLimit: cust.CustomerType === 'WHOLESALE' ? (cust.CreditLimit ?? 50000000) : 0,
       Phone: cust.Phone,
       Email: cust.Email || '',
       BirthYear: cust.BirthYear || 1990,
@@ -124,19 +124,39 @@ export const CustomersPage: React.FC = () => {
     e.preventDefault();
     if (!formData.FullName.trim() || !formData.Phone.trim()) return;
     try {
+      const savedUserRaw = localStorage.getItem('pharmacore_user');
+      const currentRole = savedUserRaw ? JSON.parse(savedUserRaw)?.Role : 'CASHIER';
+      const isCashier = currentRole === 'CASHIER';
+
+      const payload: Partial<CustomerRecord> = isCashier
+        ? {
+            FullName: formData.FullName.trim(),
+            Phone: formData.Phone.trim(),
+            Email: formData.Email.trim(),
+            BirthYear: formData.BirthYear,
+            Gender: formData.Gender,
+            Address: formData.Address.trim(),
+          }
+        : {
+            ...formData,
+            CreditLimit: formData.CustomerType === 'WHOLESALE' ? formData.CreditLimit : 0,
+          };
+
       if (editingCustomer) {
-        const updated = await enterpriseApi.updateCustomer(editingCustomer.CustomerID, formData);
+        const updated = await enterpriseApi.updateCustomer(editingCustomer.CustomerID, payload);
         toast.success(`Đã cập nhật hồ sơ bệnh nhân ${updated.FullName}`);
         setSelectedCustomer(updated);
       } else {
-        const created = await enterpriseApi.createCustomer(formData);
+        const created = await enterpriseApi.createCustomer(payload as any);
         toast.success(`Đã mở hồ sơ bệnh nhân mới ${created.CustomerCode}`);
         setSelectedCustomer(created);
       }
       setShowModal(false);
       await loadCustomers();
-    } catch {
-      toast.error('Số điện thoại đã tồn tại hoặc dữ liệu không hợp lệ');
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.message || 'Số điện thoại đã tồn tại hoặc dữ liệu không hợp lệ'
+      );
     }
   };
 

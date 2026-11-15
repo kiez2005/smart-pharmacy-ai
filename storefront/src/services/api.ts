@@ -78,24 +78,32 @@ export const storeApi = {
     return res.data?.data;
   },
 
-  // Tra cứu đơn hàng bảo mật bằng OrderCode + TrackingToken (TRK-... - A5)
+  // Tra cứu đơn hàng bảo mật bằng OrderCode + header X-Tracking-Token (TRK-... - P1-08)
   async trackOrder(orderCode: string, trackingToken: string): Promise<OnlineOrderRecord> {
     const res = await axios.get(`${API_BASE}/online-orders/track`, {
-      params: { orderCode, trackingToken },
+      params: { orderCode: orderCode.trim() },
+      headers: {
+        'X-Tracking-Token': trackingToken.trim(),
+      },
     });
     return res.data?.data;
   },
 
-  // Khách tự hủy đơn khi đơn còn PENDING_REVIEW bằng TrackingToken (A5)
+  // Khách tự hủy đơn khi đơn còn PENDING_REVIEW bằng header X-Tracking-Token (P1-08)
   async cancelOrder(
     orderId: number,
     trackingToken: string,
     reason?: string
   ): Promise<OnlineOrderRecord> {
-    const res = await axios.post(`${API_BASE}/online-orders/${orderId}/customer-cancel`, {
-      trackingToken,
-      reason,
-    });
+    const res = await axios.post(
+      `${API_BASE}/online-orders/${orderId}/customer-cancel`,
+      { reason },
+      {
+        headers: {
+          'X-Tracking-Token': trackingToken.trim(),
+        },
+      }
+    );
     return res.data?.data;
   },
 

@@ -9,11 +9,52 @@ import { deriveIsRxClassification } from './packaging.service';
 const UPLOAD_ROOT = path.resolve(process.cwd(), 'uploads', 'prescriptions');
 
 const DEFAULT_QUOTA_MB = 200;
-const DEFAULT_ORPHAN_TTL_HOURS = 24;
+const DEFAULT_ORPHAN_TTL_HOURS = 2; // P1-03: Rút ngắn TTL file orphan mặc định xuống 2 giờ để giải phóng sớm file chưa gắn đơn
 const DEFAULT_CLOSED_ORDER_TTL_HOURS = 0; // 0 = disabled by default so dispensed/closed orders follow long-term archive policy
 const DEFAULT_RETENTION_DAYS = 730; // 2 years per Vietnam pharmacy prescription archive SOP
 const SAFE_RX_FILE_KEY_REGEX = /^rx-[a-f0-9]{32}\.(jpg|png|webp)$/i;
 const CLOSED_ORDER_STATUSES = new Set(['REJECTED', 'CANCELLED', 'EXPIRED', 'DELIVERED']);
+
+// P1-03: Giữ chỗ dung lượng nguyên tử (in-flight reservation) và giới hạn quota theo IP
+let inFlightReservedBytes = 0;
+const IP_WINDOW_MS = 15 * 60 * 1000;
+const ipUploadWindowMap = new Map<string, { windowStartMs: number; bytesUploaded: number; filesCount: number }>();
+
+function checkAndRecordIpUploadQuota(ipKey: string, sizeBytes: number): void {
+  const now = Date.now();
+  const maxIpMb = Number(process.env.PRESCRIPTION_PER_IP_QUOTA_MB ?? 18);
+  const maxIpBytes = Math.max(3, maxIpMb) * 1024 * 1024;
+  const maxIpFiles = Number(process.env.PRESCRIPTION_PER_IP_MAX_FILES ?? 10);
+
+  // Dọn các mục hết hạn
+  if (ipUploadWindowMap.size > 500) {
+    for (const [k, v] of ipUploadWindowMap.entries()) {
+      if (now - v.windowStartMs > IP_WINDOW_MS) {
+        ipUploadWindowMap.delete(k);
+      }
+    }
+  }
+
+  const current = ipUploadWindowMap.get(ipKey);
+  if (!current || now - current.windowStartMs > IP_WINDOW_MS) {
+    if (sizeBytes > maxIpBytes) {
+      throw new Error('PER_IP_UPLOAD_QUOTA_EXCEEDED');
+    }
+    ipUploadWindowMap.set(ipKey, {
+      windowStartMs: now,
+      bytesUploaded: sizeBytes,
+      filesCount: 1,
+    });
+    return;
+  }
+
+  if (current.filesCount + 1 > maxIpFiles || current.bytesUploaded + sizeBytes > maxIpBytes) {
+    throw new Error('PER_IP_UPLOAD_QUOTA_EXCEEDED');
+  }
+
+  current.bytesUploaded += sizeBytes;
+  current.filesCount += 1;
+}
 
 export interface PrescriptionRetentionPolicy {
   orphanTtlMs: number | null;
@@ -118,7 +159,10 @@ export function detectImageMimeFromMagicBytes(buffer: Buffer): { mime: string; e
 export interface PrescriptionStorageStats {
   fileCount: number;
   totalBytes: number;
+  inFlightReservedBytes: number;
   quotaBytes: number;
+  usagePercent: number;
+  isNearCapacityWarning: boolean;
   retentionPolicy: PrescriptionRetentionPolicy;
 }
 
@@ -154,7 +198,18 @@ export function getPrescriptionStorageStats(): PrescriptionStorageStats {
     }
   }
 
-  return { fileCount, totalBytes, quotaBytes, retentionPolicy };
+  const effectiveUsed = totalBytes + inFlightReservedBytes;
+  const usagePercent = quotaBytes > 0 ? Math.round((effectiveUsed / quotaBytes) * 10000) / 100 : 0;
+
+  return {
+    fileCount,
+    totalBytes,
+    inFlightReservedBytes,
+    quotaBytes,
+    usagePercent,
+    isNearCapacityWarning: usagePercent >= 80,
+    retentionPolicy,
+  };
 }
 
 export function detectPrescriptionMimeFromKey(fileKey: string): string {
@@ -175,7 +230,8 @@ export async function handlePrescriptionUploadHttp(req: Request, res: Response):
       return;
     }
 
-    const saved = saveValidatedPrescriptionFile(req.file.buffer);
+    const clientIp = String(req.ip || req.socket?.remoteAddress || 'unknown');
+    const saved = saveValidatedPrescriptionFile(req.file.buffer, clientIp);
     res.status(201).json({
       success: true,
       data: saved,
@@ -186,6 +242,14 @@ export async function handlePrescriptionUploadHttp(req: Request, res: Response):
         success: false,
         code: 'INVALID_FILE_TYPE',
         message: 'Tệp không phải ảnh hợp lệ (chỉ chấp nhận JPEG, PNG, WEBP tối đa 3MB).',
+      });
+      return;
+    }
+    if (error instanceof Error && error.message === 'PER_IP_UPLOAD_QUOTA_EXCEEDED') {
+      res.status(429).json({
+        success: false,
+        code: 'PER_IP_UPLOAD_QUOTA_EXCEEDED',
+        message: 'Bạn đã vượt hạn mức tải lên toa thuốc trong phiên ngắn hạn. Vui lòng thử lại sau 15 phút.',
       });
       return;
     }
@@ -223,7 +287,10 @@ export async function handlePrescriptionDownloadHttp(req: Request, res: Response
   res.sendFile(safePath);
 }
 
-export function saveValidatedPrescriptionFile(buffer: Buffer): {
+export function saveValidatedPrescriptionFile(
+  buffer: Buffer,
+  clientIp?: string
+): {
   fileKey: string;
   mime: string;
   sizeBytes: number;
@@ -233,21 +300,31 @@ export function saveValidatedPrescriptionFile(buffer: Buffer): {
     throw new Error('INVALID_PRESCRIPTION_IMAGE');
   }
 
+  if (clientIp) {
+    checkAndRecordIpUploadQuota(clientIp, buffer.length);
+  }
+
   const stats = getPrescriptionStorageStats();
-  if (stats.totalBytes + buffer.length > stats.quotaBytes) {
+  if (stats.totalBytes + inFlightReservedBytes + buffer.length > stats.quotaBytes) {
     throw new Error('PRESCRIPTION_STORAGE_QUOTA_EXCEEDED');
   }
 
-  const safeRandom = crypto.randomBytes(16).toString('hex');
-  const fileKey = `rx-${safeRandom}.${detected.ext}`;
-  const fullPath = path.join(UPLOAD_ROOT, fileKey);
-  fs.writeFileSync(fullPath, buffer, { mode: 0o600 });
+  // P1-03: Giữ chỗ dung lượng nguyên tử trước khi ghi xuống đĩa để chống vượt quota khi upload đồng thời
+  inFlightReservedBytes += buffer.length;
+  try {
+    const safeRandom = crypto.randomBytes(16).toString('hex');
+    const fileKey = `rx-${safeRandom}.${detected.ext}`;
+    const fullPath = path.join(UPLOAD_ROOT, fileKey);
+    fs.writeFileSync(fullPath, buffer, { mode: 0o600 });
 
-  return {
-    fileKey,
-    mime: detected.mime,
-    sizeBytes: buffer.length,
-  };
+    return {
+      fileKey,
+      mime: detected.mime,
+      sizeBytes: buffer.length,
+    };
+  } finally {
+    inFlightReservedBytes = Math.max(0, inFlightReservedBytes - buffer.length);
+  }
 }
 
 export function resolveSafePrescriptionFilePath(fileKey: string): string | null {

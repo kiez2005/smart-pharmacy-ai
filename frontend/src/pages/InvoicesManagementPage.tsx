@@ -99,30 +99,15 @@ export const InvoicesManagementPage: React.FC = () => {
   };
 
   const handleDeleteOne = async (inv: InvoiceRecord) => {
-    if (!window.confirm(`Xác nhận xóa chứng từ hóa đơn ${inv.InvoiceCode}?`)) return;
-    try {
-      await enterpriseApi.deleteRecord('invoices', inv.InvoiceID);
-      toast.success(`Đã xóa hóa đơn ${inv.InvoiceCode}`);
-      if (selectedInvoice?.InvoiceID === inv.InvoiceID) setSelectedInvoice(null);
-      await loadInvoices();
-    } catch {
-      toast.error('Không thể xóa chứng từ hóa đơn');
-    }
+    toast.error(
+      `Nghiêm cấm xóa cứng hóa đơn đã ghi sổ (${inv.InvoiceCode})! Vui lòng dùng nút "Hủy & Hoàn Kho" để bảo toàn dấu vết kiểm toán (P0-04).`
+    );
   };
 
   const handleBulkDelete = async () => {
-    if (selectedIds.length === 0) {
-      toast.info('Vui lòng chọn ít nhất 1 hóa đơn trong bảng');
-      return;
-    }
-    if (!window.confirm(`Xác nhận xóa ${selectedIds.length} hóa đơn đã chọn?`)) return;
-    try {
-      const count = await enterpriseApi.bulkDelete('invoices', selectedIds);
-      toast.success(`Đã xóa ${count} hóa đơn`);
-      await loadInvoices();
-    } catch {
-      toast.error('Không thể xóa hàng loạt hóa đơn');
-    }
+    toast.error(
+      'Nghiêm cấm xóa cứng chứng từ hóa đơn đã ghi sổ! Vui lòng dùng nghiệp vụ Hủy/Hoàn trả hóa đơn (P0-04).'
+    );
   };
 
   const handleCloneOne = async (inv: InvoiceRecord) => {

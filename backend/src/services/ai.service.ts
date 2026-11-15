@@ -15,6 +15,8 @@ import { CLINICAL_ADVISORY_DISCLAIMER, CLINICAL_RULE_VERSION } from './clinical-
 
 export interface OcrPrescriptionResult {
   engine: 'python-opencv-ocr' | 'node-fallback-ocr';
+  isDemo: boolean;
+  requiresPharmacistVerification: true;
   opencvPreprocessing: {
     processedBase64: string | null;
     dimensions: string;
@@ -273,6 +275,8 @@ class AiGatewayService {
 
         return {
           engine: 'python-opencv-ocr',
+          isDemo: Boolean(isDemo),
+          requiresPharmacistVerification: true,
           opencvPreprocessing: {
             processedBase64: pyData.opencv_preprocessing.processed_base64,
             dimensions: pyData.opencv_preprocessing.dimensions,
@@ -360,6 +364,8 @@ class AiGatewayService {
 
     return {
       engine: 'node-fallback-ocr',
+      isDemo: Boolean(isDemo),
+      requiresPharmacistVerification: true,
       opencvPreprocessing: {
         processedBase64: b64Preview,
         dimensions: 'Auto-detected',
@@ -371,7 +377,9 @@ class AiGatewayService {
         ],
       },
       rawOcrText:
-        'BỆNH VIỆN ĐẠI HỌC Y - ĐƠN THUỐC NGOẠI TRÚ\n' +
+        (isDemo
+          ? '[DEMO MẪU THỬ NGHIỆM] BỆNH VIỆN ĐẠI HỌC Y - ĐƠN THUỐC NGOẠI TRÚ\n'
+          : 'BẢN NHÁP BÓC TÁCH ĐƠN THUỐC (CẦN DƯỢC SĨ XÁC NHẬN)\n') +
         hydratedItems
           .map((d, i) => `${i + 1}. ${d.keyword} — SL: ${d.quantity} (${d.dosage})`)
           .join('\n'),
