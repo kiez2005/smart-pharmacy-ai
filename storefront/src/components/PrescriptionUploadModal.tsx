@@ -23,6 +23,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
   const [mode, setMode] = useState<'RX' | 'B2B_QUOTE'>(initialMode);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [taxCode, setTaxCode] = useState('');
   const [note, setNote] = useState('');
@@ -96,6 +97,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
         requestType: mode,
         fullName: fullName.trim(),
         phone: phone.trim(),
+        email: email.trim() || undefined,
         companyName: companyName.trim() || undefined,
         taxCode: taxCode.trim() || undefined,
         prescriptionFileKey: fileKey || undefined,
@@ -246,6 +248,19 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                     className="w-full h-9 rounded-xl border border-slate-300 px-3 focus:border-teal-600 focus:outline-none"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Email / Gmail nhận phản hồi tư vấn của Dược sĩ (nên nhập)
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="vd: tenban@gmail.com (để nhận đơn tư vấn & liều dùng qua email)"
+                  className="w-full h-9 rounded-xl border border-slate-300 px-3 focus:border-teal-600 focus:outline-none"
+                />
               </div>
 
               {isB2B && (

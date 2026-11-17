@@ -87,3 +87,51 @@ export interface OnlineOrderRecord {
   CreateDate: string;
   items: OnlineOrderItemRecord[];
 }
+
+export interface StorefrontChatCitation {
+  docId: number;
+  productId: number | null;
+  docType: string;
+  title: string;
+  section: string;
+  sourceName: string;
+  sourceRef: string | null;
+  snippet: string;
+}
+
+export interface PatientTriageContext {
+  ageGroup: 'ADULT' | 'CHILD' | 'ELDERLY';
+  pregnantOrBreastfeeding: boolean;
+  allergies: string;
+  chronicConditions: string;
+}
+
+export interface StorefrontChatResponse {
+  engine: string;
+  modelUsed: string;
+  provider?: string;
+  fallbackUsed?: boolean;
+  mode: 'DRUG_QA' | 'SYMPTOM_CONSULTATION';
+  groundingMode?: 'FAST_PATH' | 'LOCAL_HDSD' | 'GENERAL_MEDICAL' | 'INSUFFICIENT';
+  triageLevel?: 'RED_FLAG' | 'CAUTION' | 'SELF_CARE';
+  suspectedCondition: string;
+  answer: string;
+  citations: StorefrontChatCitation[];
+  suggestedProducts: Product[];
+  warnings: string[];
+  shouldConsultPharmacist: boolean;
+  insufficientKnowledge: boolean;
+  emergencyAlert: boolean;
+  isAdvisoryOnly: true;
+  disclaimer: string;
+}
+
+export interface StorefrontChatTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  isStreaming?: boolean;
+  data?: StorefrontChatResponse;
+  errorCode?: 'AI_UNAVAILABLE' | 'RATE_LIMITED' | 'GENERIC_ERROR';
+  errorMessage?: string;
+}

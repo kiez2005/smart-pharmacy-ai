@@ -6,6 +6,9 @@ import {
   getPublicStorefrontCatalog,
   listOnlineOrdersForStaff,
   pharmacistReviewOnlineOrder,
+  storefrontAssistantChat,
+  storefrontAssistantChatStream,
+  storefrontAssistantSpeechToText,
   trackCustomerOnlineOrder,
   updateOnlineOrderStage,
   uploadPrescriptionImage,
@@ -15,7 +18,9 @@ import {
   prescriptionUploadLimiter,
   publicReadLimiter,
   publicWriteLimiter,
+  storefrontAiChatLimiter,
 } from '../middlewares/rate-limit.middleware';
+import { audioUploadMiddleware } from '../middlewares/upload.middleware';
 import { prescriptionUploadMiddleware } from '../services/prescription-storage.service';
 
 const router = Router();
@@ -33,6 +38,14 @@ router.post(
 router.post('/', publicWriteLimiter, createCustomerOnlineOrder);
 router.get('/track', publicReadLimiter, trackCustomerOnlineOrder);
 router.post('/:id/customer-cancel', publicWriteLimiter, customerCancelOnlineOrder);
+router.post('/assistant/chat', storefrontAiChatLimiter, storefrontAssistantChat);
+router.post('/assistant/chat-stream', storefrontAiChatLimiter, storefrontAssistantChatStream);
+router.post(
+  '/assistant/speech-to-text',
+  storefrontAiChatLimiter,
+  audioUploadMiddleware.single('file'),
+  storefrontAssistantSpeechToText
+);
 
 // ============================================================================
 // 2. STAFF RBAC ENDPOINTS CHO DƯỢC SĨ & ĐIỀU PHỐI VIÊN (A5 Private Rx + Review)

@@ -1,5 +1,7 @@
 import { Prisma, Product } from '@prisma/client';
 import { prisma } from '../config/prisma';
+import { aiGatewayService } from './ai.service';
+import { triggerPythonAiReindex } from './knowledge.service';
 import { deriveIsRxClassification, packagingService } from './packaging.service';
 import {
   PaginatedProductResponse,
@@ -38,90 +40,128 @@ class ProductService {
       processingTimeMs: 0,
     };
 
-    // Nếu có từ khóa tìm kiếm -> Ưu tiên Meilisearch IDs, hoặc fallback truy vấn cột rút gọn giới hạn kích thước
+    let rrfOrderMap: Map<number, number> | null = null;
+
+    // Nếu có từ khóa tìm kiếm -> Ưu tiên Hybrid Search (BM25 + FastEmbed RRF), fallback Meilisearch/Fuse nếu Python AI tắt
     if (search) {
-      const meiliHit = await searchService.searchMeilisearchIds(search, 100);
-      if (meiliHit) {
-        baseWhere.ProductID = { in: meiliHit.matchedIds };
+      const hybridHit = await aiGatewayService.searchHybrid(search, {
+        limit: 100,
+        onlyStorefrontPublished: false,
+        includeTest: false,
+      });
+
+      if (hybridHit.available) {
+        const matchedIds = hybridHit.results.map((r) => r.ProductID);
+        const numericId = Number(search.trim());
+        if (Number.isInteger(numericId) && numericId > 0 && !matchedIds.includes(numericId)) {
+          matchedIds.unshift(numericId);
+        }
+        rrfOrderMap = new Map(matchedIds.map((id, idx) => [id, idx]));
+        baseWhere.ProductID = { in: matchedIds.length > 0 ? matchedIds : [-1] };
         searchMeta = {
-          engine: 'meilisearch',
-          processingTimeMs: meiliHit.processingTimeMs,
+          engine: hybridHit.semanticAvailable ? 'hybrid-rrf' : 'bm25-keyword-only',
+          processingTimeMs: Math.round(performance.now() - startTime),
+          semanticAvailable: hybridHit.semanticAvailable,
+          semanticDegraded: !hybridHit.semanticAvailable,
+          ...(hybridHit.semanticAvailable
+            ? {}
+            : { warning: 'Model Embedding ngữ nghĩa đang tạm gián đoạn — đang dùng BM25 từ khóa.' }),
         };
       } else {
-        const searchTrimmed = search.trim();
-        const numericId = Number(searchTrimmed);
-        const searchTokens = Array.from(
-          new Set(
-            searchTrimmed
-              .split(/\s+/)
-              .map((t) => t.trim())
-              .filter((t) => t.length >= 2)
-          )
-        ).slice(0, 5);
+        const meiliHit = await searchService.searchMeilisearchIds(search, 100);
+        if (meiliHit) {
+          baseWhere.ProductID = { in: meiliHit.matchedIds };
+          searchMeta = {
+            engine: 'meilisearch',
+            processingTimeMs: meiliHit.processingTimeMs,
+            semanticAvailable: false,
+            semanticDegraded: true,
+            warning: 'Python AI Hybrid Search đang tắt — fallback về Meilisearch từ khóa.',
+          };
+        } else {
+          const searchTrimmed = search.trim();
+          const numericId = Number(searchTrimmed);
+          const searchTokens = Array.from(
+            new Set(
+              searchTrimmed
+                .split(/\s+/)
+                .map((t) => t.trim())
+                .filter((t) => t.length >= 2)
+            )
+          ).slice(0, 5);
 
-        const textConditions: Record<string, unknown>[] = [
-          { ProductName: { contains: searchTrimmed } },
-          { Description: { contains: searchTrimmed } },
-          { ProductType: { contains: searchTrimmed } },
-          ...searchTokens.flatMap((token) => [
-            { ProductName: { contains: token } },
-            { ProductType: { contains: token } },
-            ...(token.length >= 4 ? [{ ProductName: { contains: token.slice(0, 3) } }] : []),
-          ]),
-        ];
-        if (Number.isInteger(numericId) && numericId > 0) {
-          textConditions.push({ ProductID: numericId });
-        }
+          const textConditions: Record<string, unknown>[] = [
+            { ProductName: { contains: searchTrimmed } },
+            { Description: { contains: searchTrimmed } },
+            { ProductType: { contains: searchTrimmed } },
+            ...searchTokens.flatMap((token) => [
+              { ProductName: { contains: token } },
+              { ProductType: { contains: token } },
+              ...(token.length >= 4 ? [{ ProductName: { contains: token.slice(0, 3) } }] : []),
+            ]),
+          ];
+          if (Number.isInteger(numericId) && numericId > 0) {
+            textConditions.push({ ProductID: numericId });
+          }
 
-        const slimSelect = {
-          ProductID: true,
-          ProductName: true,
-          Description: true,
-          ProductType: true,
-          Unit: true,
-        } as const;
+          const slimSelect = {
+            ProductID: true,
+            ProductName: true,
+            Description: true,
+            ProductType: true,
+            Unit: true,
+          } as const;
 
-        let candidateProducts = await prisma.product.findMany({
-          where: {
-            AND: [baseWhere, { OR: textConditions }],
-          },
-          select: slimSelect,
-          take: 150,
-          orderBy: { ProductID: 'asc' },
-        });
-
-        if (candidateProducts.length < 10) {
-          const existingIds = candidateProducts.map((p) => p.ProductID);
-          const supplement = await prisma.product.findMany({
+          let candidateProducts = await prisma.product.findMany({
             where: {
-              AND: [
-                baseWhere,
-                ...(existingIds.length > 0 ? [{ ProductID: { notIn: existingIds } }] : []),
-              ],
+              AND: [baseWhere, { OR: textConditions }],
             },
             select: slimSelect,
-            take: Math.max(0, 250 - candidateProducts.length),
+            take: 150,
             orderBy: { ProductID: 'asc' },
           });
-          candidateProducts = [...candidateProducts, ...supplement];
-        }
 
-        const searchResult = await searchService.searchProducts(searchTrimmed, candidateProducts);
-        baseWhere.ProductID = { in: searchResult.matchedIds };
-        searchMeta = {
-          engine: searchResult.engine,
-          processingTimeMs: searchResult.processingTimeMs,
-        };
+          if (candidateProducts.length < 10) {
+            const existingIds = candidateProducts.map((p) => p.ProductID);
+            const supplement = await prisma.product.findMany({
+              where: {
+                AND: [
+                  baseWhere,
+                  ...(existingIds.length > 0 ? [{ ProductID: { notIn: existingIds } }] : []),
+                ],
+              },
+              select: slimSelect,
+              take: Math.max(0, 250 - candidateProducts.length),
+              orderBy: { ProductID: 'asc' },
+            });
+            candidateProducts = [...candidateProducts, ...supplement];
+          }
+
+          const searchResult = await searchService.searchProducts(searchTrimmed, candidateProducts);
+          baseWhere.ProductID = { in: searchResult.matchedIds };
+          searchMeta = {
+            engine: searchResult.engine,
+            processingTimeMs: searchResult.processingTimeMs,
+            semanticAvailable: false,
+            semanticDegraded: true,
+            warning: 'Python AI Hybrid Search đang tắt — fallback về Fuse từ khóa/fuzzy.',
+          };
+        }
       }
     }
 
-    const [total, items, allTypes, allUnits] = await Promise.all([
+    const useRelevanceSort = Boolean(rrfOrderMap && sortBy === 'ProductID');
+    const [total, rawItems, allTypes, allUnits] = await Promise.all([
       prisma.product.count({ where: baseWhere }),
       prisma.product.findMany({
         where: baseWhere,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { [sortBy]: sortOrder },
+        ...(useRelevanceSort
+          ? {}
+          : {
+              skip: (page - 1) * limit,
+              take: limit,
+              orderBy: { [sortBy]: sortOrder },
+            }),
         include: {
           packaging: true,
           stockLots: {
@@ -133,6 +173,12 @@ class ProductService {
       prisma.product.findMany({ select: { ProductType: true }, distinct: ['ProductType'] }),
       prisma.product.findMany({ select: { Unit: true }, distinct: ['Unit'] }),
     ]);
+
+    const items = useRelevanceSort && rrfOrderMap
+      ? [...rawItems]
+          .sort((a, b) => (rrfOrderMap!.get(a.ProductID) ?? 9999) - (rrfOrderMap!.get(b.ProductID) ?? 9999))
+          .slice((page - 1) * limit, page * limit)
+      : rawItems;
 
     if (!search) {
       searchMeta = {
@@ -554,8 +600,9 @@ class ProductService {
     try {
       const all = await this.getAllProducts();
       await searchService.syncProducts(all);
+      await triggerPythonAiReindex();
     } catch {
-      // Không làm gián đoạn luồng chính nếu Meilisearch tắt
+      // Không làm gián đoạn luồng chính nếu Meilisearch hoặc Python AI tắt
     }
   }
 }

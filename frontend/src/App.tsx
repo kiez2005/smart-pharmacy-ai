@@ -23,6 +23,7 @@ import {
   MapPin,
 } from 'lucide-react';
 import type { PosCartItem } from './pages/PosTerminalPage';
+import type { OcrTransferMeta } from './pages/PrescriptionOcrPage';
 import { LoginPage } from './pages/LoginPage';
 import { ModalPortal } from './components/common/ModalPortal';
 import { UserProfile } from './types/forms';
@@ -112,6 +113,8 @@ export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('DASHBOARD');
   const [selectedStockCardProductId, setSelectedStockCardProductId] = useState<number>(1);
   const [posInitialCart, setPosInitialCart] = useState<PosCartItem[] | undefined>(undefined);
+  const [posOcrMeta, setPosOcrMeta] = useState<OcrTransferMeta | undefined>(undefined);
+  const [pendingOcrFileKey, setPendingOcrFileKey] = useState<string | null>(null);
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
@@ -168,8 +171,9 @@ export const App: React.FC = () => {
     setActiveTab('STOCK_CARD');
   };
 
-  const handleTransferOcrToPos = (items: PosCartItem[]) => {
+  const handleTransferOcrToPos = (items: PosCartItem[], ocrMeta?: OcrTransferMeta) => {
     setPosInitialCart(items);
+    setPosOcrMeta(ocrMeta);
     setActiveTab('POS');
   };
 
@@ -659,7 +663,11 @@ export const App: React.FC = () => {
             {activeTab === 'POS' && (
               <PosTerminalPage
                 initialCartItems={posInitialCart}
-                onClearInitialCart={() => setPosInitialCart(undefined)}
+                initialOcrMeta={posOcrMeta}
+                onClearInitialCart={() => {
+                  setPosInitialCart(undefined);
+                  setPosOcrMeta(undefined);
+                }}
                 onNavigateToInvoices={() => setActiveTab('INVOICES')}
               />
             )}
@@ -668,12 +676,23 @@ export const App: React.FC = () => {
             {activeTab === 'PAYMENTS' && currentUser.Role !== 'CASHIER' && <PaymentsLedgerPage />}
             {activeTab === 'CUSTOMERS' && <CustomersPage />}
             {activeTab === 'AI_OCR' && currentUser.Role !== 'CASHIER' && (
-              <PrescriptionOcrPage onTransferToPos={handleTransferOcrToPos} />
+              <PrescriptionOcrPage
+                onTransferToPos={handleTransferOcrToPos}
+                initialAttachmentFileKey={pendingOcrFileKey}
+                onClearInitialAttachment={() => setPendingOcrFileKey(null)}
+              />
             )}
             {activeTab === 'AI_CLINICAL' && currentUser.Role !== 'CASHIER' && (
               <ClinicalAiAndInteractionPage />
             )}
-            {activeTab === 'CONTACT' && currentUser.Role !== 'CASHIER' && <ContactPage />}
+            {activeTab === 'CONTACT' && currentUser.Role !== 'CASHIER' && (
+              <ContactPage
+                onScanAttachmentWithOcr={(fileKey) => {
+                  setPendingOcrFileKey(fileKey);
+                  setActiveTab('AI_OCR');
+                }}
+              />
+            )}
             {activeTab === 'AUTH' && currentUser.Role === 'ADMIN' && (
               <AuthPage
                 currentUser={currentUser}

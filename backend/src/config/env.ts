@@ -69,3 +69,14 @@ export const CORS_ORIGINS: string[] = (
 export const JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || '12h';
 export const RESERVATION_TTL_MINUTES: number = Math.max(5, Number(process.env.RESERVATION_TTL_MINUTES || 15));
 export const TRACKING_TOKEN_TTL_DAYS: number = Math.max(1, Number(process.env.TRACKING_TOKEN_TTL_DAYS || 30));
+
+// Cấu hình Gmail SMTP / Custom SMTP cho phản hồi email thật từ Hộp thư Dược sĩ
+export const SMTP_HOST: string = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+export const SMTP_PORT: number = Math.max(1, Number(process.env.SMTP_PORT || 465));
+export const SMTP_SECURE: boolean =
+  (process.env.SMTP_SECURE || (SMTP_PORT === 465 ? 'true' : 'false')).trim().toLowerCase() !== 'false';
+export const GMAIL_USER: string = (process.env.GMAIL_USER || process.env.SMTP_USER || '').trim();
+export const GMAIL_APP_PASSWORD: string = (process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || '')
+  .replace(/\s+/g, '')
+  .trim();
+export const MAIL_FROM_NAME: string = (process.env.MAIL_FROM_NAME || 'Nhà Thuốc PharmaCore Direct').trim();

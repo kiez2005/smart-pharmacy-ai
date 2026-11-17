@@ -8,6 +8,7 @@ import {
   ShoppingBag,
   FilePlus2,
   Package,
+  MessageCircleHeart,
 } from 'lucide-react';
 import { Product, UnitMode } from '../types';
 import {
@@ -25,6 +26,7 @@ interface ProductDetailModalProps {
   onClose: () => void;
   onAddToCart: (product: Product, mode: UnitMode, quantity: number) => void;
   onOpenPrescriptionModal: () => void;
+  onAskAiAboutProduct?: (product: Product) => void;
 }
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
@@ -32,6 +34,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onClose,
   onAddToCart,
   onOpenPrescriptionModal,
+  onAskAiAboutProduct,
 }) => {
   const spec = getPackagingSpec(product);
   const [unitMode, setUnitMode] = useState<UnitMode>('BASE');
@@ -238,6 +241,17 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 >
                   <FilePlus2 className="h-4 w-4" />
                   <span>Gửi Toa Nhờ Tư Vấn</span>
+                </button>
+              )}
+
+              {onAskAiAboutProduct && (
+                <button
+                  type="button"
+                  onClick={() => onAskAiAboutProduct(product)}
+                  className="h-10 px-3.5 rounded-xl border border-teal-300 bg-teal-50 text-teal-800 text-xs sm:text-sm font-bold hover:bg-teal-100 inline-flex items-center justify-center gap-1.5"
+                >
+                  <MessageCircleHeart className="h-4 w-4 text-teal-600" />
+                  <span>Hỏi AI về thuốc này</span>
                 </button>
               )}
             </div>

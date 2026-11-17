@@ -36,6 +36,7 @@ import {
 import { toast } from 'sonner';
 import { ExportFormat, Product, ProductFormValues } from '../types/product';
 import { productApi } from '../services/product.api';
+import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { ProductFormModal } from '../components/product/ProductFormModal';
 import { ProductDetailModal } from '../components/product/ProductDetailModal';
 import { ColumnVisibilityMenu } from '../components/product/ColumnVisibilityMenu';
@@ -70,6 +71,9 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
   const [searchEngineInfo, setSearchEngineInfo] = useState<{
     engine: string;
     processingTimeMs: number;
+    semanticAvailable?: boolean;
+    semanticDegraded?: boolean;
+    warning?: string;
   } | null>(null);
 
   // Chọn dòng & Ẩn/Hiện cột
@@ -87,7 +91,15 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
-  const [isListeningVoice, setIsListeningVoice] = useState<boolean>(false);
+  const voiceSearch = useVoiceRecorder({
+    language: 'vi',
+    onTranscript: (text) => {
+      setSearchInput(text.replace(/\.$/, ''));
+      setPage(1);
+      toast.success(`Faster-Whisper đã điền từ khóa: "${text}"`);
+    },
+    onError: (msg) => toast.error(msg),
+  });
   const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [importingFile, setImportingFile] = useState<boolean>(false);
   const [activeMetricModal, setActiveMetricModal] = useState<
@@ -291,39 +303,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
   };
 
   const handleVoiceSearch = () => {
-    const SpeechRecognition =
-      (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown })
-        .SpeechRecognition ||
-      (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      toast.error('Trình duyệt không hỗ trợ nhận diện giọng nói');
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const recognition = new (SpeechRecognition as any)();
-    recognition.lang = 'vi-VN';
-    recognition.interimResults = false;
-
-    recognition.onstart = () => {
-      setIsListeningVoice(true);
-      toast.info('Đang nghe... Hãy đọc tên thuốc hoặc hoạt chất');
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      const transcript = String(event.results?.[0]?.[0]?.transcript || '').trim();
-      if (transcript) {
-        setSearchInput(transcript.replace(/\.$/, ''));
-      }
-    };
-
-    recognition.onend = () => {
-      setIsListeningVoice(false);
-    };
-
-    recognition.start();
+    voiceSearch.toggleRecording();
   };
 
   // Phím tắt toàn cục
@@ -912,11 +892,14 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
               <button
                 type="button"
                 onClick={handleVoiceSearch}
-                title="Tìm kiếm bằng giọng nói"
+                disabled={voiceSearch.isTranscribing}
+                title={voiceSearch.isRecording ? 'Bấm để dừng thu âm' : 'Tìm kiếm bằng giọng nói (Faster-Whisper)'}
                 className={`absolute right-1 top-1 h-7 w-7 rounded-md inline-flex items-center justify-center transition-colors ${
-                  isListeningVoice
+                  voiceSearch.isRecording
                     ? 'bg-rose-500 text-white animate-pulse'
-                    : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'
+                    : voiceSearch.isTranscribing
+                      ? 'bg-indigo-100 text-indigo-700'
+                      : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'
                 }`}
               >
                 <Mic className="h-3.5 w-3.5" />
@@ -974,8 +957,21 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
 
           <div className="flex items-center gap-2">
             {debouncedSearch && searchEngineInfo && (
-              <span className="text-xs text-slate-400 tabular-nums">
-                {total} kết quả ({searchEngineInfo.processingTimeMs}ms)
+              <span
+                className={`rounded px-2 py-0.5 text-[11px] font-medium tabular-nums ${
+                  searchEngineInfo.semanticDegraded
+                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                    : 'bg-teal-50 text-teal-800 border border-teal-200'
+                }`}
+                title={searchEngineInfo.warning || ''}
+              >
+                {total} kết quả •{' '}
+                {searchEngineInfo.engine === 'hybrid-rrf'
+                  ? 'Hybrid Semantic + Từ khóa'
+                  : searchEngineInfo.semanticDegraded
+                    ? 'Chỉ Từ khóa (Semantic tắt)'
+                    : searchEngineInfo.engine}{' '}
+                ({searchEngineInfo.processingTimeMs}ms)
               </span>
             )}
             <ColumnVisibilityMenu

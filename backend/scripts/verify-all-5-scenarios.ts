@@ -313,48 +313,95 @@ async function runScenarioTests() {
   // --------------------------------------------------------------------------
   // KỊCH BẢN 5: OCR TỪ CHỐI ẢNH TRẮNG & THUỐC NGOÀI DANH MỤC
   // --------------------------------------------------------------------------
-  console.log('--- [KỊCH BẢN 5]: OCR Từ chối ảnh trắng & Phân loại Thuốc ngoài danh mục ---');
+  console.log('--- [KỊCH BẢN 5]: OCR Thật (OpenCV + RapidOCR), Từ chối ảnh trắng & Khóa dòng chưa xác nhận ---');
   try {
-    // 1. Thử nghiệm gửi ảnh trắng đồng nhất vào OCR
-    const whiteBuffer = Buffer.alloc(1000, 255); // Ảnh toàn màu trắng
+    const { execFileSync } = await import('child_process');
+    const os = await import('os');
+    const path = await import('path');
+    const fs = await import('fs');
+
+    // 1. Gửi ảnh PNG trắng đồng nhất -> phải bị từ chối rõ ràng (422), không trả preset giả
+    const blankPngPath = path.join(os.tmpdir(), `rx-blank-${Date.now()}.png`);
+    const samplePngPath = path.join(os.tmpdir(), `rx-sample-${Date.now()}.png`);
+
+    execFileSync(
+      'py',
+      [
+        '-3.10',
+        '-c',
+        `import cv2, numpy as np
+blank = np.full((600, 900, 3), 255, dtype=np.uint8)
+cv2.imwrite(r"${blankPngPath}", blank)
+img = np.full((600, 1050, 3), 255, dtype=np.uint8)
+cv2.putText(img, "DON THUOC NGOAI TRU", (50, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (20,20,20), 2)
+cv2.putText(img, "1. Panadol Extra 500mg/65mg x 2 Hop", (50, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.95, (10,10,10), 2)
+cv2.putText(img, "2. Amoxicillin 500mg Domesco x 1 Hop", (50, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.95, (10,10,10), 2)
+cv2.imwrite(r"${samplePngPath}", img)`,
+      ],
+      { stdio: 'pipe' }
+    );
+
+    const blankBuffer = fs.readFileSync(blankPngPath);
     let rejectedAsExpected = false;
     try {
-      await aiGatewayService.processPrescriptionOcr(
-        whiteBuffer,
-        'anh-trang-test.png',
-        '',
-        false // real upload
-      );
+      await aiGatewayService.processPrescriptionOcr(blankBuffer, 'anh-trang-test.png');
     } catch (ocrErr: any) {
       rejectedAsExpected = true;
-      console.log(`  ✓ 5.1 OCR từ chối ảnh trắng thành công với thông điệp: "${ocrErr.message}"`);
+      console.log(`  ✓ 5.1 RapidOCR từ chối ảnh trắng thành công: "${ocrErr.message}"`);
     }
-
     if (!rejectedAsExpected) {
       throw new Error('OCR không từ chối ảnh trắng đồng nhất!');
     }
 
-    // 2. Thử nghiệm bóc tách văn bản có chứa thuốc ngoài danh mục kho
-    const customPrescriptionText = `1. Thuốc Cefixim 200mg Kháng Sinh Mới — 1 Hộp (Uống 1 viên sau ăn sáng)
-2. Panadol Extra 500mg/65mg — 1 Hộp (Uống 1 viên khi sốt > 38.5°C)`;
-
-    const sampleBuffer = Buffer.from('dummy-image-data-with-valid-variance-bytes-123456789012345678901234567890'.repeat(15));
+    // 2. Chạy OCR thật trên ảnh đơn thuốc rõ nét -> trả Top-K candidates, confirmed = false
+    const sampleBuffer = fs.readFileSync(samplePngPath);
     const ocrResult = await aiGatewayService.processPrescriptionOcr(
       sampleBuffer,
-      'don-thuoc-thuc-te.png',
-      customPrescriptionText,
-      false
+      'don-thuoc-thuc-te.png'
     );
 
-    const uncategorizedItem = ocrResult.items.find((i) => i.status === 'NOT_FOUND');
-    const inStockItem = ocrResult.items.find((i) => i.status === 'IN_STOCK');
-
-    if (!uncategorizedItem || !inStockItem) {
-      throw new Error('Không phân loại được thuốc ngoài danh mục và thuốc trong kho');
+    if (!ocrResult.draftId || ocrResult.lines.length < 2 || ocrResult.allLinesConfirmed) {
+      throw new Error(`Kết quả OCR thật không hợp lệ: lines=${ocrResult.lines.length}, allConfirmed=${ocrResult.allLinesConfirmed}`);
     }
 
-    console.log(`  ✓ 5.2 Phát hiện chính xác thuốc ngoài danh mục: "${uncategorizedItem.keyword}" (Trạng thái: NOT_FOUND / Cảnh báo vàng)`);
-    console.log(`  ✓ 5.3 Đối chiếu chính xác thuốc trong kho: "${inStockItem.matchedProduct?.ProductName}" (Trạng thái: IN_STOCK / Cảnh báo xanh)`);
+    const panadolLine = ocrResult.lines.find((l) =>
+      l.candidates.some((c) => c.ProductName.toLowerCase().includes('panadol'))
+    );
+    const amoxLine = ocrResult.lines.find((l) =>
+      l.candidates.some((c) => c.ProductName.toLowerCase().includes('amoxicillin'))
+    );
+    if (!panadolLine || !amoxLine || ocrResult.lines.some((l) => l.confirmed || l.selectedProductId !== null)) {
+      throw new Error('OCR chưa trả đủ Top-K ứng viên hoặc đã tự ý xác nhận dòng thay Dược sĩ');
+    }
+
+    // 3. Thử verify khi thiếu 1 dòng chưa confirmed -> phải bị chặn 400
+    let partialBlocked = false;
+    try {
+      await aiGatewayService.verifyOcrDraftLines(ocrResult.draftId, [
+        {
+          lineId: panadolLine.lineId,
+          selectedProductId: panadolLine.candidates[0].ProductID,
+          quantity: 2,
+          confirmed: true,
+        },
+        {
+          lineId: amoxLine.lineId,
+          selectedProductId: null,
+          quantity: 1,
+          confirmed: false,
+        },
+      ]);
+    } catch {
+      partialBlocked = true;
+    }
+    if (!partialBlocked) {
+      throw new Error('Backend cho phép xác nhận khi vẫn còn dòng chưa chọn/xác nhận!');
+    }
+
+    fs.unlinkSync(blankPngPath);
+    fs.unlinkSync(samplePngPath);
+    console.log(`  ✓ 5.2 RapidOCR thật tách ${ocrResult.lines.length} dòng & trả Top-K (${panadolLine.candidates[0].ProductName}, ${amoxLine.candidates[0].ProductName}) với confirmed=false`);
+    console.log('  ✓ 5.3 Đã khóa chặt không cho chuyển dòng chưa xác nhận vào hóa đơn');
 
     console.log('👉 [KỊCH BẢN 5]: ĐẠT 100% (PASSED)\n');
     passedTests++;

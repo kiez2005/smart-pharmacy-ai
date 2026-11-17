@@ -10,9 +10,23 @@ import {
   X,
   Sparkles,
   ShieldCheck,
+  Mail,
+  MailCheck,
+  AlertTriangle,
+  Image as ImageIcon,
+  Maximize2,
+  ExternalLink,
+  ScanLine,
+  BookOpen,
+  RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ContactRecord } from '../types/forms';
+import {
+  ContactAiDraftResponse,
+  ContactRecord,
+  MailConfigStatus,
+} from '../types/forms';
+import { extractAiErrorMessage } from '../services/ai.api';
 import { formsApi } from '../services/forms.api';
 import { enterpriseApi } from '../services/enterprise.api';
 import {
@@ -21,6 +35,24 @@ import {
   EnterpriseToolbar,
 } from '../components/common/EnterpriseDataToolbar';
 import { ModalPortal } from '../components/common/ModalPortal';
+
+const INLINE_RX_KEY_RE = /\brx-[a-f0-9]{32}\.(?:jpg|png|webp)\b/i;
+
+function getEffectiveAttachmentKey(c: ContactRecord | null | undefined): string | null {
+  if (!c) return null;
+  if (c.AttachmentFileKey) return c.AttachmentFileKey;
+  const m = String(c.Message || '').match(INLINE_RX_KEY_RE);
+  return m ? m[0] : null;
+}
+
+function isPlaceholderCustomerEmail(email: string | null | undefined): boolean {
+  const low = String(email || '').trim().toLowerCase();
+  return !low || !low.includes('@') || ['@pharmacore.vn', '@test.local', '@example.com'].some((d) => low.endsWith(d));
+}
+
+interface ContactPageProps {
+  onScanAttachmentWithOcr?: (fileKey: string) => void;
+}
 
 const CONTACT_COLUMNS: ColumnConfig[] = [
   { id: 'ContactID', label: 'Mã phiếu' },
@@ -45,13 +77,34 @@ const CLINICAL_REPLY_TEMPLATES = [
   },
 ];
 
-export const ContactPage: React.FC = () => {
+export const ContactPage: React.FC<ContactPageProps> = ({ onScanAttachmentWithOcr }) => {
   const [contacts, setContacts] = useState<ContactRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [search, setSearch] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [selectedContact, setSelectedContact] = useState<ContactRecord | null>(null);
   const [replyText, setReplyText] = useState<string>('');
+  const [recipientEmail, setRecipientEmail] = useState<string>('');
+  const [sendGmail, setSendGmail] = useState<boolean>(true);
+  const [submittingReply, setSubmittingReply] = useState<boolean>(false);
+
+  // Cấu hình & Kiểm tra Gmail SMTP thật
+  const [mailStatus, setMailStatus] = useState<MailConfigStatus | null>(null);
+  const [verifyingMail, setVerifyingMail] = useState<boolean>(false);
+  const [testMailTarget, setTestMailTarget] = useState<string>('');
+  const [sendingTestMail, setSendingTestMail] = useState<boolean>(false);
+
+  // Ảnh đính kèm bảo mật (tải qua JWT Blob URL)
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
+  const [attachmentLoading, setAttachmentLoading] = useState<boolean>(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [zoomAttachment, setZoomAttachment] = useState<boolean>(false);
+
+  // AI Gợi ý trả lời lâm sàng
+  const [aiStyle, setAiStyle] = useState<'STANDARD' | 'CONCISE' | 'FOLLOWUP_CARE'>('STANDARD');
+  const [draftingAi, setDraftingAi] = useState<boolean>(false);
+  const [aiDraftMeta, setAiDraftMeta] = useState<ContactAiDraftResponse | null>(null);
+  const [aiDraftError, setAiDraftError] = useState<string | null>(null);
 
   // 11 Chức năng Data Grid
   const [page, setPage] = useState<number>(1);
@@ -69,6 +122,32 @@ export const ContactPage: React.FC = () => {
     Message: '',
   });
 
+  const openContactDrawer = (c: ContactRecord) => {
+    setSelectedContact(c);
+    setReplyText(c.ReplyNote || '');
+    setRecipientEmail(c.Email || '');
+    setSendGmail(!isPlaceholderCustomerEmail(c.Email));
+    setAiDraftMeta(null);
+    setAiDraftError(null);
+    setZoomAttachment(false);
+  };
+
+  const loadMailStatus = async (verify = false) => {
+    if (verify) setVerifyingMail(true);
+    try {
+      const st = await formsApi.getContactMailStatus(verify);
+      setMailStatus(st);
+      if (verify) {
+        if (st.liveVerified) toast.success(st.verifyMessage || 'Kết nối Gmail SMTP thành công');
+        else toast.warning(st.verifyMessage || 'Chưa kết nối được Gmail SMTP');
+      }
+    } catch {
+      // ignore initial status fetch failure
+    } finally {
+      if (verify) setVerifyingMail(false);
+    }
+  };
+
   const loadContacts = async () => {
     setLoading(true);
     try {
@@ -80,6 +159,7 @@ export const ContactPage: React.FC = () => {
         if (updated) {
           setSelectedContact(updated);
           setReplyText(updated.ReplyNote || '');
+          setRecipientEmail(updated.Email || '');
         }
       }
     } catch {
@@ -91,8 +171,61 @@ export const ContactPage: React.FC = () => {
 
   useEffect(() => {
     void loadContacts();
+    void loadMailStatus(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const activeAttachmentKey = getEffectiveAttachmentKey(selectedContact);
+
+  useEffect(() => {
+    if (!activeAttachmentKey) {
+      setAttachmentUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      setAttachmentError(null);
+      setAttachmentLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    setAttachmentLoading(true);
+    setAttachmentError(null);
+
+    formsApi
+      .fetchPrescriptionImageBlobUrl(activeAttachmentKey)
+      .then((url) => {
+        createdUrl = url;
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+        } else {
+          setAttachmentUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAttachmentUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return null;
+          });
+          setAttachmentError(
+            `Không tải được ảnh (${activeAttachmentKey}). Tệp có thể đã quá hạn lưu trữ hoặc không tồn tại.`
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAttachmentLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [activeAttachmentKey]);
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,23 +234,78 @@ export const ContactPage: React.FC = () => {
       toast.success('Đã tiếp nhận phiếu yêu cầu tư vấn mới');
       setShowCreateModal(false);
       setFormData({ FullName: '', Email: '', Phone: '', Subject: '', Message: '' });
-      setSelectedContact(created);
-      setReplyText('');
+      openContactDrawer(created);
       await loadContacts();
     } catch {
       toast.error('Vui lòng kiểm tra lại thông tin liên hệ');
     }
   };
 
+  const handleAiDraftReply = async () => {
+    if (!selectedContact) return;
+    setDraftingAi(true);
+    setAiDraftError(null);
+    try {
+      const draft = await formsApi.draftContactAiReply(selectedContact.ContactID, {
+        style: aiStyle,
+        includeAttachmentOcr: Boolean(activeAttachmentKey),
+      });
+      setAiDraftMeta(draft);
+      setReplyText(draft.draftReply);
+      toast.success(
+        `AI (${draft.modelUsed}) đã soạn xong bản nháp${draft.detectedRxSummary ? ' kèm đọc ảnh toa thuốc' : ''}! Vui lòng rà soát trước khi gửi.`
+      );
+    } catch (err) {
+      const msg = extractAiErrorMessage(err, 'Không thể tạo gợi ý AI lúc này');
+      setAiDraftError(msg);
+      toast.error(msg);
+    } finally {
+      setDraftingAi(false);
+    }
+  };
+
+  const handleSendTestMail = async () => {
+    setSendingTestMail(true);
+    try {
+      const res = await formsApi.sendContactTestMail(testMailTarget.trim() || undefined);
+      toast.success(res.message);
+    } catch (err) {
+      toast.error(extractAiErrorMessage(err, 'Gửi email thử nghiệm thất bại'));
+    } finally {
+      setSendingTestMail(false);
+    }
+  };
+
   const handleReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedContact || !replyText.trim()) return;
+    const trimmedEmail = recipientEmail.trim();
+    if (sendGmail && isPlaceholderCustomerEmail(trimmedEmail)) {
+      toast.warning(
+        'Phiếu đang dùng email placeholder nội bộ. Hãy nhập Gmail thật của khách hoặc tắt tùy chọn gửi Gmail.'
+      );
+      return;
+    }
+
+    setSubmittingReply(true);
     try {
-      await formsApi.replyContact(selectedContact.ContactID, replyText.trim());
-      toast.success('Đã lưu phản hồi chuyên môn của dược sĩ lâm sàng');
+      const result = await formsApi.replyContact(selectedContact.ContactID, {
+        ReplyNote: replyText.trim(),
+        sendEmail: sendGmail,
+        ...(trimmedEmail ? { RecipientEmail: trimmedEmail } : {}),
+      });
+      if (result.mailResult?.status === 'SENT') {
+        toast.success(result.message || `Đã gửi Gmail thật tới ${result.mailResult.toEmail}`);
+      } else if (result.mailResult?.status === 'FAILED' || result.mailResult?.status === 'SKIPPED_NOT_CONFIGURED') {
+        toast.warning(result.message || 'Đã lưu phản hồi nhưng chưa gửi được Gmail');
+      } else {
+        toast.success(result.message || 'Đã lưu phản hồi chuyên môn của dược sĩ lâm sàng');
+      }
       await loadContacts();
-    } catch {
-      toast.error('Không thể lưu phản hồi');
+    } catch (err) {
+      toast.error(extractAiErrorMessage(err, 'Không thể lưu hoặc gửi phản hồi'));
+    } finally {
+      setSubmittingReply(false);
     }
   };
 
@@ -231,10 +419,7 @@ export const ContactPage: React.FC = () => {
         onViewSelected={() => {
           if (selectedIds.length === 1) {
             const found = contacts.find((c) => c.ContactID === selectedIds[0]);
-            if (found) {
-              setSelectedContact(found);
-              setReplyText(found.ReplyNote || '');
-            }
+            if (found) openContactDrawer(found);
           }
         }}
         onCloneSelected={() => {
@@ -276,6 +461,79 @@ export const ContactPage: React.FC = () => {
           </div>
         }
       />
+
+      {/* Thanh Trạng thái Kết nối Gmail SMTP Thật */}
+      {mailStatus && (
+        <div
+          className={`rounded-xl border px-4 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 text-xs ${
+            mailStatus.configured
+              ? 'border-emerald-200 bg-emerald-50/70 text-emerald-950'
+              : 'border-amber-200 bg-amber-50/80 text-amber-950'
+          }`}
+        >
+          <div className="flex items-start gap-2.5">
+            {mailStatus.configured ? (
+              <MailCheck className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            )}
+            <div>
+              {mailStatus.configured ? (
+                <>
+                  <div className="font-bold">
+                    Gmail SMTP sẵn sàng ({mailStatus.senderEmail} · {mailStatus.host}:{mailStatus.port})
+                  </div>
+                  <div className="text-[11px] text-emerald-800/80 mt-0.5">
+                    {mailStatus.verifyMessage || 'Khi dược sĩ bấm phản hồi, hệ thống gửi email thật tới hộp thư khách hàng.'}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-bold">
+                    Chưa cấu hình Gmail SMTP thật (thiếu {mailStatus.missingVars.join(', ')} trong{' '}
+                    <code className="font-mono bg-amber-100 px-1 rounded">backend/.env</code>)
+                  </div>
+                  <div className="text-[11px] text-amber-900/80 mt-0.5">
+                    Hệ thống chỉ lưu phản hồi nội bộ cho tới khi bạn điền Gmail &amp; Google App Password 16 ký tự (tuyệt đối không gửi giả lập).
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={verifyingMail}
+              onClick={() => void loadMailStatus(true)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${verifyingMail ? 'animate-spin' : ''}`} />
+              <span>Kiểm tra kết nối</span>
+            </button>
+            {mailStatus.configured && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="email"
+                  value={testMailTarget}
+                  onChange={(e) => setTestMailTarget(e.target.value)}
+                  placeholder={mailStatus.senderEmail || 'Gmail nhận thử...'}
+                  className="h-8 w-44 rounded-lg border border-slate-300 bg-white px-2.5 text-[11px] text-slate-900 focus:border-teal-600 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={sendingTestMail}
+                  onClick={() => void handleSendTestMail()}
+                  className="inline-flex h-8 items-center gap-1 rounded-lg bg-teal-600 px-3 text-[11px] font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+                >
+                  <Mail className="h-3.5 w-3.5" />
+                  <span>{sendingTestMail ? 'Đang gửi...' : 'Gửi thử Gmail'}</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 4 Thẻ KPI Tư vấn Dược lâm sàng */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
@@ -381,13 +639,12 @@ export const ContactPage: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                pagedContacts.map((c) => (
+                pagedContacts.map((c) => {
+                  const rowFileKey = getEffectiveAttachmentKey(c);
+                  return (
                   <tr
                     key={c.ContactID}
-                    onClick={() => {
-                      setSelectedContact(c);
-                      setReplyText(c.ReplyNote || '');
-                    }}
+                    onClick={() => openContactDrawer(c)}
                     className="cursor-pointer transition-colors hover:bg-slate-50/80"
                   >
                     <td
@@ -420,8 +677,16 @@ export const ContactPage: React.FC = () => {
                     )}
                     {visibleColumns.Subject !== false && (
                       <td className="py-3 px-4 max-w-md">
-                        <div className="font-semibold text-slate-900 line-clamp-1">
-                          {c.Subject}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-slate-900 line-clamp-1">
+                            {c.Subject}
+                          </span>
+                          {rowFileKey && (
+                            <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 border border-indigo-200/70 shrink-0">
+                              <ImageIcon className="h-3 w-3" />
+                              Có ảnh đính kèm
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
                           {c.Message}
@@ -435,17 +700,29 @@ export const ContactPage: React.FC = () => {
                     )}
                     {visibleColumns.Status !== false && (
                       <td className="py-3 px-4 whitespace-nowrap">
-                        {c.Status === 'REPLIED' ? (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/70">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Đã phản hồi
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200/70">
-                            <Clock className="h-3 w-3" />
-                            Chờ dược sĩ
-                          </span>
-                        )}
+                        <div className="flex flex-col items-start gap-1">
+                          {c.Status === 'REPLIED' ? (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/70">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Đã phản hồi
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200/70">
+                              <Clock className="h-3 w-3" />
+                              Chờ dược sĩ
+                            </span>
+                          )}
+                          {c.ReplyEmailStatus === 'SENT' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700">
+                              <MailCheck className="h-3 w-3" /> Đã gửi Gmail
+                            </span>
+                          )}
+                          {c.ReplyEmailStatus === 'FAILED' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-600">
+                              <AlertTriangle className="h-3 w-3" /> Lỗi gửi mail
+                            </span>
+                          )}
+                        </div>
                       </td>
                     )}
                     <td
@@ -455,10 +732,7 @@ export const ContactPage: React.FC = () => {
                       <div className="inline-flex items-center justify-end gap-0.5">
                         <button
                           type="button"
-                          onClick={() => {
-                            setSelectedContact(c);
-                            setReplyText(c.ReplyNote || '');
-                          }}
+                          onClick={() => openContactDrawer(c)}
                           title="Xem & Phản hồi chuyên môn (Alt+V)"
                           className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
                         >
@@ -483,7 +757,8 @@ export const ContactPage: React.FC = () => {
                       </div>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -499,13 +774,13 @@ export const ContactPage: React.FC = () => {
         />
       </div>
 
-      {/* SLIDE-OVER RIGHT DRAWER: Chi tiết Câu hỏi & Phản hồi Dược sĩ Lâm sàng */}
+      {/* SLIDE-OVER RIGHT DRAWER: Chi tiết Câu hỏi, Ảnh đính kèm, AI Gợi ý & Gửi Gmail thật */}
       {selectedContact && (
         <ModalPortal>
           <div className="fixed inset-0 z-[9999] flex justify-end bg-slate-950/60 backdrop-blur-xs">
             <form
               onSubmit={handleReply}
-              className="w-full max-w-full sm:max-w-lg bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-right duration-200"
+              className="w-full max-w-full sm:max-w-xl bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-right duration-200"
             >
             <div>
               <div className="flex items-center justify-between border-b border-slate-200 px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50/70 sticky top-0 z-10 shrink-0">
@@ -526,21 +801,21 @@ export const ContactPage: React.FC = () => {
                 </button>
               </div>
 
-              <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-xs">
+              <div className="p-4 sm:p-6 space-y-4 text-xs">
                 <div className="rounded-xl bg-slate-50 p-4 border border-slate-200 space-y-2">
-                  <div className="flex justify-between">
+                  <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Người bệnh:</span>
                     <strong className="text-slate-900">{selectedContact.FullName}</strong>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Số điện thoại / Email:</span>
-                    <span className="font-mono text-slate-800">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-500">SĐT / Email gốc:</span>
+                    <span className="font-mono text-slate-800 text-right break-all">
                       {selectedContact.Phone} · {selectedContact.Email}
                     </span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between gap-2">
                     <span className="text-slate-500">Chủ đề:</span>
-                    <strong className="text-teal-700">{selectedContact.Subject}</strong>
+                    <strong className="text-teal-700 text-right">{selectedContact.Subject}</strong>
                   </div>
                 </div>
 
@@ -548,16 +823,180 @@ export const ContactPage: React.FC = () => {
                   <div className="font-bold text-slate-800 mb-1.5">
                     Nội dung câu hỏi triệu chứng / liều dùng:
                   </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-slate-800 leading-relaxed">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 text-slate-800 leading-relaxed whitespace-pre-wrap break-words">
                     {selectedContact.Message}
                   </div>
                 </div>
 
+                {/* KHỐI ẢNH ĐÍNH KÈM BẢO MẬT (TẢI QUA JWT BLOB URL) */}
+                {activeAttachmentKey && (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 font-bold text-indigo-950">
+                        <ImageIcon className="h-4 w-4 text-indigo-600" />
+                        <span>Ảnh đơn thuốc / triệu chứng đính kèm</span>
+                      </div>
+                      <span className="font-mono text-[10px] text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                        {activeAttachmentKey}
+                      </span>
+                    </div>
+
+                    {attachmentLoading ? (
+                      <div className="h-36 rounded-lg bg-white/80 border border-indigo-100 animate-pulse flex items-center justify-center text-indigo-700 font-medium">
+                        Đang giải mã &amp; tải ảnh bảo mật...
+                      </div>
+                    ) : attachmentUrl ? (
+                      <div className="space-y-2.5">
+                        <div className="relative rounded-lg border border-indigo-200 bg-white p-2 overflow-hidden">
+                          <img
+                            src={attachmentUrl}
+                            alt="Ảnh đính kèm của khách hàng"
+                            onClick={() => setZoomAttachment(true)}
+                            className="max-h-56 w-full object-contain rounded cursor-zoom-in"
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setZoomAttachment(true)}
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-indigo-300 bg-white px-2.5 text-[11px] font-semibold text-indigo-800 hover:bg-indigo-100"
+                          >
+                            <Maximize2 className="h-3.5 w-3.5" />
+                            <span>Phóng to</span>
+                          </button>
+                          <a
+                            href={attachmentUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            <span>Mở tab mới</span>
+                          </a>
+                          {onScanAttachmentWithOcr && (
+                            <button
+                              type="button"
+                              onClick={() => onScanAttachmentWithOcr(activeAttachmentKey)}
+                              className="inline-flex h-8 items-center gap-1 rounded-lg bg-indigo-600 px-3 text-[11px] font-semibold text-white hover:bg-indigo-700 shadow-2xs"
+                            >
+                              <ScanLine className="h-3.5 w-3.5" />
+                              <span>Quét toa sang AI OCR</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-700 text-[11px] flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                        <span>{attachmentError || 'Không thể hiển thị ảnh đính kèm.'}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* AI GỢI Ý SOẠN PHẢN HỒI LÂM SÀNG (HUMAN-IN-THE-LOOP) */}
+                <div className="rounded-xl border border-teal-200 bg-gradient-to-br from-teal-50/80 to-emerald-50/50 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 font-bold text-teal-900">
+                      <Sparkles className="h-4 w-4 text-teal-600" />
+                      <span>AI Gợi ý Trả lời Lâm sàng Nhanh</span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={draftingAi}
+                      onClick={() => void handleAiDraftReply()}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-teal-600 px-3 text-[11px] font-bold text-white hover:bg-teal-700 disabled:opacity-50 shadow-2xs"
+                    >
+                      <Sparkles className={`h-3.5 w-3.5 ${draftingAi ? 'animate-spin' : ''}`} />
+                      <span>{draftingAi ? 'AI đang soạn gợi ý...' : 'AI Soạn Gợi Ý'}</span>
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { id: 'STANDARD' as const, label: 'Đầy đủ chuyên môn & HDSD' },
+                      { id: 'CONCISE' as const, label: 'Ngắn gọn gửi Gmail' },
+                      { id: 'FOLLOWUP_CARE' as const, label: 'Hỏi thêm triệu chứng / tái khám' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setAiStyle(opt.id)}
+                        className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold border transition-colors ${
+                          aiStyle === opt.id
+                            ? 'border-teal-600 bg-teal-600 text-white'
+                            : 'border-teal-200 bg-white text-teal-800 hover:bg-teal-50'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {aiDraftError && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-700 flex items-start gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                      <span>{aiDraftError}</span>
+                    </div>
+                  )}
+
+                  {aiDraftMeta && (
+                    <div className="rounded-lg border border-teal-200/80 bg-white/90 p-2.5 space-y-2 text-[11px]">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span className="font-semibold text-teal-800">
+                          Đã điền bản nháp ({aiDraftMeta.modelUsed}) — Dược sĩ kiểm duyệt trước khi gửi
+                        </span>
+                      </div>
+
+                      {aiDraftMeta.detectedRxSummary && aiDraftMeta.detectedRxSummary.lines.length > 0 && (
+                        <div className="rounded bg-indigo-50/80 border border-indigo-200 p-2 text-indigo-950">
+                          <div className="font-bold mb-1">Thuốc AI nhận diện từ ảnh đính kèm:</div>
+                          <ul className="list-disc pl-4 space-y-0.5">
+                            {aiDraftMeta.detectedRxSummary.lines.map((l, idx) => (
+                              <li key={idx}>
+                                <strong>{l.drug}</strong> · SL {l.quantity} {l.unit}
+                                {l.dosage ? ` — ${l.dosage}` : ''}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {aiDraftMeta.warnings.length > 0 && (
+                        <div className="rounded bg-amber-50 border border-amber-200 p-2 text-amber-900">
+                          <div className="font-bold">Lưu ý AI cảnh báo cho Dược sĩ:</div>
+                          <ul className="list-disc pl-4 mt-0.5 space-y-0.5">
+                            {aiDraftMeta.warnings.map((w, i) => (
+                              <li key={i}>{w}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {aiDraftMeta.citations.length > 0 && (
+                        <div className="text-slate-600">
+                          <div className="inline-flex items-center gap-1 font-semibold text-slate-800 mb-1">
+                            <BookOpen className="h-3 w-3 text-teal-600" />
+                            <span>Nguồn Dược thư tham chiếu để đối chiếu:</span>
+                          </div>
+                          <div className="space-y-1">
+                            {aiDraftMeta.citations.map((cit) => (
+                              <div key={cit.docId} className="rounded bg-slate-50 border border-slate-200 px-2 py-1">
+                                <span className="font-mono font-bold text-teal-700">[DOC-{cit.docId}]</span>{' '}
+                                <strong>{cit.title}</strong> — {cit.sourceName}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Mẫu Phản hồi Lâm sàng Nhanh 1-Click */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 font-bold text-teal-800">
-                    <Sparkles className="h-3.5 w-3.5 text-teal-600" />
-                    <span>Mẫu Phản hồi Chuyên môn Nhanh (1-Click):</span>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                    <span>Hoặc chọn nhanh mẫu câu có sẵn:</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {CLINICAL_REPLY_TEMPLATES.map((tpl) => (
@@ -565,7 +1004,7 @@ export const ContactPage: React.FC = () => {
                         key={tpl.label}
                         type="button"
                         onClick={() => setReplyText(tpl.text)}
-                        className="rounded-lg border border-teal-200 bg-teal-50/70 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-600 hover:text-white transition-colors"
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-teal-600 hover:text-white hover:border-teal-600 transition-colors"
                       >
                         + {tpl.label}
                       </button>
@@ -573,18 +1012,76 @@ export const ContactPage: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Soạn nội dung tư vấn */}
                 <div>
                   <label className="block font-bold text-slate-800 mb-1.5">
-                    Nội dung tư vấn của Dược sĩ phụ trách (DS. Nguyễn Văn Trung):
+                    Nội dung tư vấn của Dược sĩ phụ trách:
                   </label>
                   <textarea
-                    rows={5}
+                    rows={6}
                     required
                     value={replyText}
                     onChange={(e) => setReplyText(e.target.value)}
                     placeholder="Nhập hướng dẫn liều dùng, thời điểm uống thuốc và lưu ý chống chỉ định..."
                     className="w-full rounded-xl border border-slate-300 p-3 text-xs text-slate-900 focus:border-teal-600 focus:outline-none leading-relaxed"
                   />
+                </div>
+
+                {/* Cấu hình Gửi Gmail Thật cho Khách hàng */}
+                <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="inline-flex items-center gap-2 font-bold text-sky-950 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={sendGmail}
+                        onChange={(e) => setSendGmail(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-teal-600"
+                      />
+                      <Mail className="h-3.5 w-3.5 text-sky-700" />
+                      <span>Gửi phản hồi qua Gmail thật cho khách hàng</span>
+                    </label>
+                  </div>
+
+                  {sendGmail && (
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-semibold text-slate-700">
+                        Gmail khách hàng nhận thư:
+                      </label>
+                      <input
+                        type="email"
+                        required={sendGmail}
+                        value={recipientEmail}
+                        onChange={(e) => setRecipientEmail(e.target.value)}
+                        placeholder="vd: khachhang@gmail.com"
+                        className="w-full h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 focus:border-teal-600 focus:outline-none"
+                      />
+                      {isPlaceholderCustomerEmail(recipientEmail) && (
+                        <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <span>
+                            Phiếu hiện mang email nội bộ ({recipientEmail || 'trống'}). Hãy nhập Gmail thật khách cung cấp hoặc bỏ tích gửi Gmail để chỉ lưu nội bộ.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedContact.ReplyEmailStatus && (
+                    <div
+                      className={`rounded-lg px-2.5 py-1.5 text-[11px] border ${
+                        selectedContact.ReplyEmailStatus === 'SENT'
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                          : selectedContact.ReplyEmailStatus === 'FAILED'
+                            ? 'bg-rose-50 border-rose-200 text-rose-800'
+                            : 'bg-slate-100 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      <strong>Trạng thái email lần gần nhất:</strong> {selectedContact.ReplyEmailStatus}
+                      {selectedContact.ReplyEmailTo ? ` -> ${selectedContact.ReplyEmailTo}` : ''}
+                      {selectedContact.ReplyEmailMessageId ? ` (ID: ${selectedContact.ReplyEmailMessageId})` : ''}
+                      {selectedContact.ReplyEmailError ? ` — ${selectedContact.ReplyEmailError}` : ''}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -599,14 +1096,45 @@ export const ContactPage: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm"
+                disabled={submittingReply}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm disabled:opacity-50"
               >
                 <Send className="h-3.5 w-3.5" />
-                <span>Lưu & Gửi Phản Hồi Tư Vấn</span>
+                <span>
+                  {submittingReply
+                    ? 'Đang xử lý...'
+                    : sendGmail
+                      ? 'Lưu & Gửi Gmail Thật'
+                      : 'Lưu Phản Hồi Nội Bộ'}
+                </span>
               </button>
             </div>
           </form>
         </div>
+        </ModalPortal>
+      )}
+
+      {/* Lightbox Phóng To Ảnh Đính Kèm */}
+      {zoomAttachment && attachmentUrl && (
+        <ModalPortal>
+          <div
+            onClick={() => setZoomAttachment(false)}
+            className="fixed inset-0 z-[10000] bg-slate-950/90 flex items-center justify-center p-4"
+          >
+            <button
+              type="button"
+              onClick={() => setZoomAttachment(false)}
+              className="fixed top-4 right-4 rounded-full bg-white/15 p-2.5 text-white hover:bg-white/25"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img
+              src={attachmentUrl}
+              alt="Ảnh đính kèm phóng to"
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-[90vh] max-w-[92vw] object-contain rounded-xl shadow-2xl bg-white"
+            />
+          </div>
         </ModalPortal>
       )}
 

@@ -13,8 +13,10 @@ import {
   Layers,
   ChevronLeft,
   ChevronRight,
+  MessageCircleHeart,
 } from 'lucide-react';
 import { Product } from '../types';
+import { PublicCatalogSearchMeta } from '../services/api';
 import {
   formatVND,
   getPackagingSpec,
@@ -32,12 +34,14 @@ interface HomePageProps {
   onPageChange: (nextPage: number) => void;
   loading: boolean;
   search: string;
+  searchMeta?: PublicCatalogSearchMeta;
   onRefresh: () => void;
   onSelectProduct: (product: Product) => void;
   onQuickAdd: (product: Product) => void;
   onOpenPrescriptionModal: () => void;
   onOpenB2BQuoteModal: () => void;
   onOpenTrackingModal: () => void;
+  onOpenAiChat?: () => void;
 }
 
 const SYMPTOM_FILTERS = [
@@ -75,12 +79,14 @@ export const HomePage: React.FC<HomePageProps> = ({
   onPageChange,
   loading,
   search,
+  searchMeta,
   onRefresh,
   onSelectProduct,
   onQuickAdd,
   onOpenPrescriptionModal,
   onOpenB2BQuoteModal,
   onOpenTrackingModal,
+  onOpenAiChat,
 }) => {
   const [rxFilter, setRxFilter] = useState<'ALL' | 'OTC' | 'RX'>('ALL');
   const [symptomFilter, setSymptomFilter] = useState<string>('ALL_SYMPTOM');
@@ -94,17 +100,11 @@ export const HomePage: React.FC<HomePageProps> = ({
   );
 
   const filteredProducts = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
     const activeSymptom = SYMPTOM_FILTERS.find((s) => s.id === symptomFilter);
 
     return products.filter((p) => {
       if (rxFilter === 'OTC' && p.IsRx) return false;
       if (rxFilter === 'RX' && !p.IsRx) return false;
-
-      if (keyword) {
-        const hay = `${p.ProductName} ${p.ProductType} ${p.Description}`.toLowerCase();
-        if (!hay.includes(keyword)) return false;
-      }
 
       if (activeSymptom && activeSymptom.keywords.length > 0) {
         const hay = `${p.ProductName} ${p.ProductType} ${p.Description}`.toLowerCase();
@@ -114,7 +114,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       return true;
     });
-  }, [products, rxFilter, search, symptomFilter]);
+  }, [products, rxFilter, symptomFilter]);
 
   return (
     <main className="mx-auto max-w-7xl px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-5 sm:space-y-6">
@@ -149,6 +149,16 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <SearchCheck className="h-4 w-4" />
                 Tra cứu đơn
               </button>
+              {onOpenAiChat && (
+                <button
+                  type="button"
+                  onClick={onOpenAiChat}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200/60 bg-emerald-500/35 px-3.5 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-bold text-white hover:bg-emerald-500/50 backdrop-blur-xs transition-colors"
+                >
+                  <MessageCircleHeart className="h-4 w-4 text-emerald-100" />
+                  Hỏi Dược sĩ AI
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onOpenB2BQuoteModal}
@@ -264,10 +274,26 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       {/* Catalog Grid */}
       <section className="space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-base font-bold text-slate-900">
-            Danh mục dược phẩm ({total})
-          </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-bold text-slate-900">
+              Danh mục dược phẩm ({total})
+            </h2>
+            {search.trim() && searchMeta && (
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                  searchMeta.semanticDegraded
+                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                    : 'bg-teal-50 text-teal-800 border border-teal-200'
+                }`}
+                title={searchMeta.warning || ''}
+              >
+                {searchMeta.engine === 'hybrid-rrf'
+                  ? 'Hybrid Search: Từ khóa + Ngữ nghĩa'
+                  : searchMeta.warning || 'Chỉ khớp từ khóa'}
+              </span>
+            )}
+          </div>
           <span className="text-xs text-slate-500">
             Trang <strong>{page}</strong> / {totalPages}
           </span>

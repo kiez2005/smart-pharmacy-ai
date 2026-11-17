@@ -26,6 +26,7 @@
     "jsonwebtoken": "^9.0.2",
     "meilisearch": "^0.48.0",
     "multer": "^1.4.5-lts.1",
+    "nodemailer": "^10.6.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -35,6 +36,7 @@
     "@types/jsonwebtoken": "^9.0.9",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.13.5",
+    "@types/nodemailer": "^8.0.2",
     "prisma": "^7.10.1",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3"

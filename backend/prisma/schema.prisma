@@ -32,6 +32,7 @@ model Product {
   stockMovements     StockMovement[]
   onlineOrderItems   OnlineOrderItem[]
   reservations       InventoryReservation[]
+  knowledgeDocuments KnowledgeDocument[]
 
   @@index([ProductType, CreateDate])
   @@index([ProductName])
@@ -423,19 +424,27 @@ model IdempotencyRecord {
 // 8. BẢNG TƯ VẤN DƯỢC LÂM SÀNG & CSKH (CONTACT)
 // ============================================================================
 model Contact {
-  ContactID   Int      @id @default(autoincrement())
-  FullName    String
-  Email       String
-  Phone       String
-  Subject     String
-  Message     String
-  Priority    String   @default("NORMAL") // HIGH | NORMAL | LOW
-  ReplyNote   String?
-  Status      String   @default("NEW")    // NEW | REPLIED | CLOSED
-  CreateDate  DateTime @default(now())
+  ContactID           Int       @id @default(autoincrement())
+  FullName            String
+  Email               String
+  Phone               String
+  Subject             String
+  Message             String
+  AttachmentFileKey   String?   // Khóa ảnh đơn thuốc / triệu chứng đính kèm bảo mật (rx-*.jpg)
+  Priority            String    @default("NORMAL") // HIGH | NORMAL | LOW
+  ReplyNote           String?
+  RepliedByUserID     Int?
+  RepliedByName       String?
+  RepliedAt           DateTime?
+  ReplyEmailStatus    String?   // SENT | FAILED | SKIPPED_NOT_CONFIGURED | SKIPPED_PLACEHOLDER_EMAIL | LOCAL_ONLY
+  ReplyEmailTo        String?
+  ReplyEmailMessageId String?
+  ReplyEmailError     String?
+  Status              String    @default("NEW")    // NEW | REPLIED | CLOSED
+  CreateDate          DateTime  @default(now())
 
-  UserID      Int?
-  user        User?    @relation(fields: [UserID], references: [UserID])
+  UserID              Int?
+  user                User?     @relation(fields: [UserID], references: [UserID])
 
   @@index([Status, CreateDate])
 }
@@ -498,4 +507,45 @@ model ClinicalAuditLog {
   @@index([ContextType, CreateDate])
   @@index([InvoiceID])
   @@index([OnlineOrderID])
+}
+
+// ============================================================================
+// 11. KHO TRI THỨC TỜ HƯỚNG DẪN SỬ DỤNG & DƯỢC THƯ KIỂM CHỨNG (RAG SOURCES)
+// ============================================================================
+model KnowledgeDocument {
+  DocID       Int      @id @default(autoincrement())
+  ProductID   Int?
+  DocType     String   @default("LEAFLET") // LEAFLET | GUIDELINE | FAQ
+  Title       String
+  Section     String   // Thành phần & Chỉ định | Liều dùng & Cách dùng | Chống chỉ định & Thận trọng | Tương tác & Tác dụng phụ | Bảo quản | Phác đồ OTC tham khảo
+  Content     String
+  SourceName  String   // VD: Dược thư Quốc gia Việt Nam 2022 / Tờ HDSD SĐK ...
+  SourceRef   String?  // Số đăng ký / Link tham chiếu / Tên file gốc
+  VerifiedBy  String   @default("Hội đồng Dược lâm sàng PharmaCore")
+  VerifiedAt  DateTime @default(now())
+  IsActive    Boolean  @default(true)
+  CreateDate  DateTime @default(now())
+  UpdateDate  DateTime @updatedAt
+
+  product     Product? @relation(fields: [ProductID], references: [ProductID], onDelete: SetNull)
+
+  @@index([ProductID, IsActive])
+  @@index([DocType, IsActive])
+}
+
+// ============================================================================
+// 12. PHIÊN NHÁP OCR CẦN DƯỢC SĨ XÁC NHẬN TỪNG DÒNG (OCR VERIFICATION DRAFT)
+// ============================================================================
+model OcrDraft {
+  DraftID          String   @id
+  CreatedByUserID  Int?
+  OriginalFilename String?
+  RawOcrText       String
+  LinesJson        String   // JSON các dòng OCR + ứng viên + trạng thái confirmed
+  Status           String   @default("PENDING_REVIEW") // PENDING_REVIEW | CONFIRMED | CONVERTED
+  InvoiceID        Int?
+  CreateDate       DateTime @default(now())
+  UpdateDate       DateTime @updatedAt
+
+  @@index([Status, CreateDate])
 }

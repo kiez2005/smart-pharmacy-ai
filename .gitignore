@@ -17,8 +17,16 @@ build/
 # SQLite database files (generated automatically via npm run db:push && npm run db:seed)
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 **/prisma/*.db
 **/prisma/*.db-journal
+**/prisma/*.db-wal
+**/prisma/*.db-shm
+
+# Runtime patient/prescription uploads
+backend/uploads/
+**/uploads/prescriptions/
 
 # Python AI Service
 __pycache__/

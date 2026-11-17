@@ -25,7 +25,9 @@ import {
   validatePrescriptionForProducts,
 } from '../services/prescription-storage.service';
 import { TRACKING_TOKEN_TTL_DAYS } from '../config/env';
+import { AiServiceError, aiGatewayService } from '../services/ai.service';
 import { calculateServerShippingFee } from './invoice.controller';
+import { mapToPublicCatalogItem } from '../utils/public-catalog.dto';
 
 export function hashTrackingToken(rawToken: string): string {
   return crypto.createHash('sha256').update(rawToken.trim()).digest('hex');
@@ -665,52 +667,129 @@ export const getPublicStorefrontCatalog = async (
       );
     }
 
+    let searchMeta: {
+      engine: 'hybrid-rrf' | 'bm25-keyword-only' | 'keyword-degraded' | 'sql-catalog';
+      semanticAvailable: boolean;
+      semanticDegraded: boolean;
+      warning?: string;
+    } = {
+      engine: 'sql-catalog',
+      semanticAvailable: true,
+      semanticDegraded: false,
+    };
+
+    let hybridOrderMap: Map<number, number> | null = null;
+
     if (rawSearch) {
+      const hybridHit = await aiGatewayService.searchHybrid(rawSearch, {
+        limit: 60,
+        onlyStorefrontPublished: true,
+        includeTest: false,
+      });
+
       const lowerPat = `%${escapeLike(searchLower)}%`;
       const rawPat = `%${escapeLike(rawSearch)}%`;
-      conditions.push(
-        Prisma.sql`(
-          LOWER(p.ProductName) LIKE ${lowerPat} ESCAPE '\\'
-          OR LOWER(p.Description) LIKE ${lowerPat} ESCAPE '\\'
-          OR LOWER(p.ProductType) LIKE ${lowerPat} ESCAPE '\\'
-          OR p.ProductName LIKE ${rawPat} ESCAPE '\\'
-          OR p.Description LIKE ${rawPat} ESCAPE '\\'
-          OR p.ProductType LIKE ${rawPat} ESCAPE '\\'
-        )`
-      );
+      const likeCondition = Prisma.sql`(
+        LOWER(p.ProductName) LIKE ${lowerPat} ESCAPE '\\'
+        OR LOWER(p.Description) LIKE ${lowerPat} ESCAPE '\\'
+        OR LOWER(p.ProductType) LIKE ${lowerPat} ESCAPE '\\'
+        OR p.ProductName LIKE ${rawPat} ESCAPE '\\'
+        OR p.Description LIKE ${rawPat} ESCAPE '\\'
+        OR p.ProductType LIKE ${rawPat} ESCAPE '\\'
+      )`;
+
+      if (hybridHit.available) {
+        const hybridIds = hybridHit.results.map((r) => r.ProductID);
+        hybridOrderMap = new Map(hybridIds.map((id, idx) => [id, idx]));
+        searchMeta = {
+          engine: hybridHit.semanticAvailable ? 'hybrid-rrf' : 'bm25-keyword-only',
+          semanticAvailable: hybridHit.semanticAvailable,
+          semanticDegraded: !hybridHit.semanticAvailable,
+          ...(hybridHit.semanticAvailable
+            ? {}
+            : { warning: 'Tìm kiếm ngữ nghĩa tạm gián đoạn — đang dùng BM25 từ khóa.' }),
+        };
+
+        if (hybridIds.length > 0) {
+          conditions.push(
+            Prisma.sql`(p.ProductID IN (${Prisma.join(hybridIds)}) OR ${likeCondition})`
+          );
+        } else {
+          conditions.push(likeCondition);
+        }
+      } else {
+        conditions.push(likeCondition);
+        searchMeta = {
+          engine: 'keyword-degraded',
+          semanticAvailable: false,
+          semanticDegraded: true,
+          warning: 'Tìm kiếm ngữ nghĩa tạm gián đoạn — đang hiển thị kết quả khớp từ khóa.',
+        };
+      }
     }
 
     const whereSql = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
 
-    const countRows = await prisma.$queryRaw<Array<{ total: bigint | number }>>(
-      Prisma.sql`
-        SELECT COUNT(*) AS total
-        FROM Product p
-        INNER JOIN ProductPackaging pk ON pk.ProductID = p.ProductID
-        ${whereSql}
-      `
-    );
+    let total = 0;
+    let totalPages = 1;
+    let safePage = 1;
+    let pageProductIds: number[] = [];
 
-    const total = Number(countRows[0]?.total ?? 0);
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    const safePage = Math.min(page, totalPages);
-    const offset = (safePage - 1) * limit;
+    if (hybridOrderMap) {
+      const matchedIdRows = await prisma.$queryRaw<Array<{ ProductID: number }>>(
+        Prisma.sql`
+          SELECT p.ProductID
+          FROM Product p
+          INNER JOIN ProductPackaging pk ON pk.ProductID = p.ProductID
+          ${whereSql}
+          ORDER BY p.ProductID ASC
+        `
+      );
+      const sortedIds = matchedIdRows
+        .map((r) => Number(r.ProductID))
+        .sort((a, b) => {
+          const rankA = hybridOrderMap!.get(a) ?? 999999;
+          const rankB = hybridOrderMap!.get(b) ?? 999999;
+          if (rankA !== rankB) return rankA - rankB;
+          return a - b;
+        });
 
-    const pageIdRows =
-      total > 0
-        ? await prisma.$queryRaw<Array<{ ProductID: number }>>(
-            Prisma.sql`
-              SELECT p.ProductID
-              FROM Product p
-              INNER JOIN ProductPackaging pk ON pk.ProductID = p.ProductID
-              ${whereSql}
-              ORDER BY p.ProductID ASC
-              LIMIT ${limit} OFFSET ${offset}
-            `
-          )
-        : [];
+      total = sortedIds.length;
+      totalPages = Math.max(1, Math.ceil(total / limit));
+      safePage = Math.min(page, totalPages);
+      const offset = (safePage - 1) * limit;
+      pageProductIds = sortedIds.slice(offset, offset + limit);
+    } else {
+      const countRows = await prisma.$queryRaw<Array<{ total: bigint | number }>>(
+        Prisma.sql`
+          SELECT COUNT(*) AS total
+          FROM Product p
+          INNER JOIN ProductPackaging pk ON pk.ProductID = p.ProductID
+          ${whereSql}
+        `
+      );
 
-    const pageProductIds = pageIdRows.map((row) => Number(row.ProductID));
+      total = Number(countRows[0]?.total ?? 0);
+      totalPages = Math.max(1, Math.ceil(total / limit));
+      safePage = Math.min(page, totalPages);
+      const offset = (safePage - 1) * limit;
+
+      const pageIdRows =
+        total > 0
+          ? await prisma.$queryRaw<Array<{ ProductID: number }>>(
+              Prisma.sql`
+                SELECT p.ProductID
+                FROM Product p
+                INNER JOIN ProductPackaging pk ON pk.ProductID = p.ProductID
+                ${whereSql}
+                ORDER BY p.ProductID ASC
+                LIMIT ${limit} OFFSET ${offset}
+              `
+            )
+          : [];
+
+      pageProductIds = pageIdRows.map((row) => Number(row.ProductID));
+    }
 
     const [pageProducts, categoriesRows] = await Promise.all([
       pageProductIds.length > 0
@@ -759,40 +838,12 @@ export const getPublicStorefrontCatalog = async (
       }),
     ]);
 
-    const pagedItems = pageProducts.map((p) => {
-      const reservedBase = p.packaging?.ReservedBaseQty || 0;
-      const physicalAvailable = Math.max(0, p.Quantity - reservedBase);
-      const lotSum = p.stockLots.reduce((sum, l) => sum + l.RemainingQuantity, 0);
-      const sellableBoxes = Math.max(0, Math.min(physicalAvailable, lotSum));
-      const stockStatus: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK' =
-        sellableBoxes <= 0 ? 'OUT_OF_STOCK' : sellableBoxes <= 15 ? 'LOW_STOCK' : 'IN_STOCK';
+    const orderRankMap = new Map(pageProductIds.map((id, idx) => [id, idx]));
+    const orderedPageProducts = [...pageProducts].sort(
+      (a, b) => (orderRankMap.get(a.ProductID) ?? 9999) - (orderRankMap.get(b.ProductID) ?? 9999)
+    );
 
-      return {
-        ProductID: p.ProductID,
-        ProductName: p.ProductName,
-        PathImage: p.PathImage,
-        ProductType: p.ProductType,
-        Unit: p.Unit,
-        Price: p.Price,
-        Description: p.Description,
-        IsRx: p.packaging ? Boolean(p.packaging.IsRx) : deriveIsRxClassification(p),
-        StockStatus: stockStatus,
-        InStock: sellableBoxes > 0,
-        MaxOrderQty: sellableBoxes > 0 ? Math.min(sellableBoxes, 20) : 0,
-        packaging: p.packaging
-          ? {
-              PackageUnit: p.packaging.PackageUnit,
-              BlisterUnit: p.packaging.BlisterUnit,
-              BlistersPerPackage: p.packaging.BlistersPerPackage,
-              SmallestUnit: p.packaging.SmallestUnit,
-              UnitsPerPackage: p.packaging.UnitsPerPackage,
-              UnitsPerBlister: p.packaging.UnitsPerBlister,
-              AllowFractionalSale: p.packaging.AllowFractionalSale,
-              IsRx: p.packaging.IsRx,
-            }
-          : null,
-      };
-    });
+    const pagedItems = orderedPageProducts.map(mapToPublicCatalogItem);
 
     res.json({
       success: true,
@@ -803,6 +854,7 @@ export const getPublicStorefrontCatalog = async (
         limit,
         totalPages,
         categories: categoriesRows.map((c) => c.ProductType),
+        searchMeta,
       },
     });
   } catch {
@@ -1561,5 +1613,165 @@ export const updateOnlineOrderStage = async (req: Request, res: Response): Promi
       success: false,
       message: error instanceof Error ? error.message : 'Không thể cập nhật trạng thái đơn Online',
     });
+  }
+};
+
+const patientContextSchema = z
+  .object({
+    ageGroup: z.enum(['ADULT', 'CHILD', 'ELDERLY']).optional(),
+    pregnantOrBreastfeeding: z.boolean().optional(),
+    allergies: z.string().trim().max(150).optional(),
+    chronicConditions: z.string().trim().max(150).optional(),
+  })
+  .optional();
+
+const storefrontChatSchema = z.object({
+  message: z
+    .string()
+    .trim()
+    .min(2, 'Vui lòng nhập câu hỏi tối thiểu 2 ký tự')
+    .max(500, 'Câu hỏi tối đa 500 ký tự'),
+  mode: z.enum(['DRUG_QA', 'SYMPTOM_CONSULTATION']).optional(),
+  productIdContext: z.coerce.number().int().positive().optional(),
+  patientContext: patientContextSchema,
+  history: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().trim().max(400),
+      })
+    )
+    .max(4)
+    .optional()
+    .default([]),
+});
+
+function handleStorefrontAiError(res: Response, error: unknown): void {
+  if (error instanceof AiServiceError) {
+    res.status(error.statusCode).json({
+      success: false,
+      code: error.code,
+      model: error.model,
+      message: error.message,
+    });
+    return;
+  }
+  res.status(503).json({
+    success: false,
+    code: 'STOREFRONT_AI_UNAVAILABLE',
+    message: 'Trợ lý AI hiện tạm gián đoạn. Vui lòng chọn "Gặp Dược sĩ" để được gọi lại miễn phí.',
+  });
+}
+
+function parseStorefrontChatInput(req: Request, res: Response) {
+  const parsed = storefrontChatSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      success: false,
+      code: 'INVALID_CHAT_QUERY',
+      message: 'Nội dung câu hỏi chưa hợp lệ (2–500 ký tự).',
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return null;
+  }
+  return parsed.data;
+}
+
+/**
+ * 10a. STOREFRONT PUBLIC AI CHAT (JSON) - POST /api/online-orders/assistant/chat
+ * Công khai có rate-limit & A6 DTO Allowlist (không lộ tồn kho thô/giá sỉ).
+ */
+export const storefrontAssistantChat = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const input = parseStorefrontChatInput(req, res);
+    if (!input) return;
+
+    const result = await aiGatewayService.chatForStorefront({
+      message: input.message,
+      mode: input.mode,
+      history: input.history,
+      productIdContext: input.productIdContext,
+      patientContext: input.patientContext,
+    });
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    handleStorefrontAiError(res, error);
+  }
+};
+
+/**
+ * 10b. STOREFRONT PUBLIC AI CHAT (SSE STREAMING) - POST /api/online-orders/assistant/chat-stream
+ */
+export const storefrontAssistantChatStream = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const input = parseStorefrontChatInput(req, res);
+    if (!input) return;
+
+    await aiGatewayService.streamChatToExpressRes(
+      {
+        message: input.message,
+        mode: input.mode,
+        history: input.history,
+        audience: 'CUSTOMER',
+        onlyStorefrontPublished: true,
+        productIdContext: input.productIdContext,
+        patientContext: input.patientContext,
+      },
+      res
+    );
+  } catch (error) {
+    if (!res.headersSent) {
+      handleStorefrontAiError(res, error);
+    } else {
+      res.end();
+    }
+  }
+};
+
+/**
+ * 10c. STOREFRONT PUBLIC VOICE STT (FASTER-WHISPER) - POST /api/online-orders/assistant/speech-to-text
+ */
+export const storefrontAssistantSpeechToText = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      res.status(400).json({
+        success: false,
+        code: 'MISSING_AUDIO_FILE',
+        message: 'Vui lòng ghi âm giọng nói trước khi gửi.',
+      });
+      return;
+    }
+    if (req.file.size > 5 * 1024 * 1024) {
+      res.status(413).json({
+        success: false,
+        code: 'AUDIO_TOO_LARGE',
+        message: 'Đoạn ghi âm Storefront tối đa 5MB.',
+      });
+      return;
+    }
+
+    const language = String(req.body?.language || 'vi').slice(0, 8);
+    const result = await aiGatewayService.speechToText(
+      req.file.buffer,
+      req.file.originalname,
+      req.file.mimetype,
+      language
+    );
+
+    res.json({
+      success: true,
+      data: {
+        text: result.text,
+        language: result.language,
+        processingTimeSec: result.processingTimeSec,
+        modelUsed: result.modelUsed,
+      },
+    });
+  } catch (error) {
+    handleStorefrontAiError(res, error);
   }
 };

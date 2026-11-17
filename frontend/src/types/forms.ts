@@ -238,6 +238,13 @@ export interface CreateInvoicePayload {
   ClinicalOverrideNote?: string;
   PatientAllergies?: string;
   PrescriptionFileKey?: string;
+  ocrDraftId?: string;
+  ocrVerification?: {
+    draftId: string;
+    confirmedLines: number;
+    skippedLines?: number;
+    unconfirmedCount: number;
+  };
   PaymentMethod: 'CASH' | 'VIETQR' | 'CARD' | 'CREDIT' | 'COD';
   items: Array<{
     ProductID: number;
@@ -254,7 +261,61 @@ export interface ContactRecord {
   Phone: string;
   Subject: string;
   Message: string;
-  ReplyNote?: string;
+  AttachmentFileKey?: string | null;
+  Priority?: 'HIGH' | 'NORMAL' | 'LOW';
+  ReplyNote?: string | null;
+  RepliedByName?: string | null;
+  RepliedAt?: string | null;
+  ReplyEmailStatus?:
+    | 'SENT'
+    | 'FAILED'
+    | 'SKIPPED_NOT_CONFIGURED'
+    | 'SKIPPED_PLACEHOLDER_EMAIL'
+    | 'LOCAL_ONLY'
+    | null;
+  ReplyEmailTo?: string | null;
+  ReplyEmailMessageId?: string | null;
+  ReplyEmailError?: string | null;
   Status: 'NEW' | 'REPLIED' | 'CLOSED';
   CreateDate: string;
+}
+
+export interface MailConfigStatus {
+  configured: boolean;
+  provider: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  senderEmail: string | null;
+  senderName: string;
+  missingVars: string[];
+  liveVerified?: boolean;
+  verifyMessage?: string;
+}
+
+export interface ContactAiDraftResponse {
+  draftReply: string;
+  rawAnswerWithCitations: string;
+  citations: Array<{
+    docId: number;
+    title: string;
+    section: string;
+    sourceName: string;
+    snippet: string;
+  }>;
+  warnings: string[];
+  suspectedCondition: string;
+  detectedRxSummary: {
+    sectionMode: string;
+    lines: Array<{
+      drug: string;
+      strengthTokens: string[];
+      quantity: number;
+      unit: string;
+      dosage: string;
+      confidence: number;
+    }>;
+  } | null;
+  modelUsed: string;
+  engine: string;
 }

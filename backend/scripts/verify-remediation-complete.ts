@@ -64,7 +64,7 @@ async function httpReq(
 
 async function run() {
   process.env.DISABLE_AUTO_LISTEN = '1';
-  process.env.AI_SERVICE_URL = 'http://127.0.0.1:59999';
+  process.env.AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
   const { app } = await import('../src/index');
   const { prisma } = await import('../src/config/prisma');
   const { productService } = await import('../src/services/product.service');
@@ -610,14 +610,15 @@ async function run() {
     );
 
     // -------------------------------------------------------------------------
-    // TEST S3: AI Clinical Advisory Metadata & Zero Fake similarityScore
+    // TEST S3: AI Clinical Qwen RAG Citations & Zero Fake similarityScore
     // -------------------------------------------------------------------------
     const s3Diagnose = await httpReq(baseUrl, 'POST', '/ai/diagnose-chat', {
       token: pharmToken,
-      body: { message: 'Bệnh nhân sốt 38.5 độ đau đầu' },
+      body: { message: 'Panadol Extra 500mg dùng cho triệu chứng gì và chống chỉ định ra sao?' },
     });
-    const recItems = s3Diagnose.json?.data?.recommendedProducts || [];
+    const recItems = s3Diagnose.json?.data?.suggestedProducts || [];
     const hasFakeSimilarity = recItems.some((item: any) => 'similarityScore' in item);
+    const hasCitations = Array.isArray(s3Diagnose.json?.data?.citations) && s3Diagnose.json.data.citations.length > 0;
     const s3Interact = await httpReq(baseUrl, 'POST', '/enterprise/drug-interactions', {
       token: pharmToken,
       body: { productIds: [paraA.ProductID, paraB.ProductID], patientAllergies: '' },
@@ -627,11 +628,13 @@ async function run() {
       s3Diagnose.status === 200 &&
         s3Diagnose.json?.data?.isAdvisoryOnly === true &&
         Boolean(s3Diagnose.json?.data?.disclaimer) &&
+        (s3Diagnose.json?.data?.modelUsed === 'qwen2.5:7b' || /^gemini-/.test(String(s3Diagnose.json?.data?.modelUsed || ''))) &&
+        hasCitations &&
         !hasFakeSimilarity &&
         s3Interact.json?.data?.isAdvisoryOnly === true &&
         Boolean(s3Interact.json?.data?.warnings?.[0]?.ruleId) &&
         Boolean(s3Interact.json?.data?.warnings?.[0]?.source),
-      `Diagnose advisory=${s3Diagnose.json?.data?.isAdvisoryOnly}, noSimilarityScore=${!hasFakeSimilarity}, interactRule=${s3Interact.json?.data?.warnings?.[0]?.ruleId}`
+      `model=${s3Diagnose.json?.data?.modelUsed}, citations=${s3Diagnose.json?.data?.citations?.length}, noSimilarityScore=${!hasFakeSimilarity}, interactRule=${s3Interact.json?.data?.warnings?.[0]?.ruleId}`
     );
 
     // -------------------------------------------------------------------------
@@ -878,7 +881,7 @@ async function run() {
     );
 
     // -------------------------------------------------------------------------
-    // TEST ISSUE-4: AI Chat RBAC (Block CASHIER) & Fail-Closed Pharmacist Handoff
+    // TEST ISSUE-4: AI Chat RBAC (Block CASHIER) & Strict Pharmacist Handoff When Ungrounded
     // -------------------------------------------------------------------------
     const reLoginCashier = await httpReq(baseUrl, 'POST', '/auth/login', {
       body: { Email: cashier.Email, Password: 'Verify@12345' },
@@ -888,23 +891,22 @@ async function run() {
       token: freshCashierToken,
       body: { message: 'Đau đầu sốt cao buồn nôn' },
     });
-    const aiOfflinePharmRes = await httpReq(baseUrl, 'POST', '/ai/diagnose-chat', {
+    const aiOutOfScopeRes = await httpReq(baseUrl, 'POST', '/ai/diagnose-chat', {
       token: pharmToken,
-      body: { message: 'Triệu chứng lạ chưa xác định xyz123' },
+      body: { message: 'Thuốc ngoài hành tinh Zylopharma-9999XYZ trị bệnh gì?' },
     });
-    const aiData = aiOfflinePharmRes.json?.data;
+    const aiData = aiOutOfScopeRes.json?.data;
 
     record(
       'ISSUE-4',
       aiCashierRes.status === 403 &&
-        aiOfflinePharmRes.status === 200 &&
-        aiData?.engine === 'pharmacist-handoff' &&
-        aiData?.aiServiceAvailable === false &&
-        aiData?.requiresPharmacistConsultation === true &&
-        Array.isArray(aiData?.recommendedProducts) &&
-        aiData.recommendedProducts.length === 0 &&
-        !/cảm cúm/i.test(aiData?.preliminaryDiagnosis || ''),
-      `cashier=${aiCashierRes.status}, offlineEngine=${aiData?.engine}, recs=${aiData?.recommendedProducts?.length}, handoff=${aiData?.requiresPharmacistConsultation}`
+        aiOutOfScopeRes.status === 200 &&
+        aiData?.insufficientKnowledge === true &&
+        aiData?.shouldConsultPharmacist === true &&
+        Array.isArray(aiData?.suggestedProducts) &&
+        aiData.suggestedProducts.length === 0 &&
+        !/cảm cúm/i.test(aiData?.answer || ''),
+      `cashier=${aiCashierRes.status}, model=${aiData?.modelUsed}, insufficient=${aiData?.insufficientKnowledge}, handoff=${aiData?.shouldConsultPharmacist}`
     );
 
     // -------------------------------------------------------------------------
@@ -1222,6 +1224,8 @@ async function run() {
     // -------------------------------------------------------------------------
     // TEST SEARCH-SLIM: Bounded Search Candidates & Slim AI Payload
     // -------------------------------------------------------------------------
+    const { triggerPythonAiReindex } = await import('../src/services/knowledge.service');
+    await triggerPythonAiReindex();
     const exactSearch = await productService.listProducts({
       page: 1,
       limit: 50,
@@ -1240,15 +1244,15 @@ async function run() {
       sortOrder: 'asc',
       search: `paracetamon alpha ${ts}`,
     });
-    const aiDiagnoseSlim = await aiGatewayService.diagnoseAndRecommend('Sốt nhẹ đau đầu cảm');
+    const aiDiagnoseSlim = await aiGatewayService.diagnoseAndRecommend('Panadol Extra 500mg dùng thế nào?');
 
     record(
       'SEARCH-SLIM',
       exactSearch.items.some((p) => p.ProductID === paraA.ProductID) &&
         typoSearch.items.some((p) => p.ProductID === paraA.ProductID) &&
-        aiDiagnoseSlim.engine === 'pharmacist-handoff' &&
-        aiDiagnoseSlim.requiresPharmacistConsultation === true,
-      `exactHits=${exactSearch.items.length}, typoHits=${typoSearch.items.length}, aiEngine=${aiDiagnoseSlim.engine}`
+        (aiDiagnoseSlim.modelUsed === 'qwen2.5:7b' || /^gemini-/.test(String(aiDiagnoseSlim.modelUsed || ''))) &&
+        aiDiagnoseSlim.citations.length > 0,
+      `exactHits=${exactSearch.items.length}, typoHits=${typoSearch.items.length}, model=${aiDiagnoseSlim.modelUsed}, citations=${aiDiagnoseSlim.citations.length}`
     );
 
     // -------------------------------------------------------------------------

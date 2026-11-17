@@ -30,6 +30,7 @@ import { Product } from '../types/product';
 import { CustomerRecord, DrugInteractionResult } from '../types/enterprise';
 import { InvoiceRecord } from '../types/forms';
 import { ModalPortal } from '../components/common/ModalPortal';
+import type { OcrTransferMeta } from './PrescriptionOcrPage';
 
 export type RetailUnitMode = 'CARTON' | 'BASE' | 'BLISTER' | 'PILL';
 
@@ -42,12 +43,14 @@ export interface PosCartItem {
 
 interface PosTerminalPageProps {
   initialCartItems?: PosCartItem[];
+  initialOcrMeta?: OcrTransferMeta;
   onClearInitialCart?: () => void;
   onNavigateToInvoices?: () => void;
 }
 
 export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   initialCartItems,
+  initialOcrMeta,
   onClearInitialCart,
   onNavigateToInvoices,
 }) => {
@@ -79,6 +82,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   const [prescriptionFileKey, setPrescriptionFileKey] = useState<string>('');
   const [prescriptionFileName, setPrescriptionFileName] = useState<string>('');
   const [prescriptionUploading, setPrescriptionUploading] = useState<boolean>(false);
+  const [activeOcrMeta, setActiveOcrMeta] = useState<OcrTransferMeta | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
 
   const hasRxInCart = useMemo(
@@ -90,6 +94,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
     if (!hasRxInCart) {
       setPrescriptionFileKey('');
       setPrescriptionFileName('');
+      setActiveOcrMeta(null);
     }
   }, [hasRxInCart]);
 
@@ -130,10 +135,13 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
   useEffect(() => {
     if (initialCartItems && initialCartItems.length > 0) {
       setCart(initialCartItems.map((i) => ({ ...i, unitMode: i.unitMode || 'BASE' })));
-      toast.success(`Đã nạp ${initialCartItems.length} thuốc từ Đơn thuốc OCR vào Quầy POS!`);
+      if (initialOcrMeta) {
+        setActiveOcrMeta(initialOcrMeta);
+      }
+      toast.success(`Đã nạp ${initialCartItems.length} thuốc từ Đơn thuốc OCR đã xác nhận vào Quầy POS!`);
       onClearInitialCart?.();
     }
-  }, [initialCartItems, onClearInitialCart]);
+  }, [initialCartItems, initialOcrMeta, onClearInitialCart]);
 
   const selectedCustomer = useMemo(
     () => customers.find((c) => c.CustomerID === selectedCustomerId) || null,
@@ -537,6 +545,12 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
           ClinicalOverrideCode: clinicalOverrideCode || undefined,
           ClinicalOverrideNote: clinicalOverrideNote.trim() || undefined,
           PrescriptionFileKey: prescriptionFileKey || undefined,
+          ...(activeOcrMeta
+            ? {
+                ocrDraftId: activeOcrMeta.draftId,
+                ocrVerification: activeOcrMeta,
+              }
+            : {}),
           items: cart.map((i) => ({
             ProductID: i.product.ProductID,
             Quantity: i.quantity,
@@ -556,6 +570,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
       setWalkInAllergies('');
       setPrescriptionFileKey('');
       setPrescriptionFileName('');
+      setActiveOcrMeta(null);
       toast.success(
         orderType === 'WHOLESALE'
           ? `Đã xuất Hóa đơn Bán buôn B2B ${created.InvoiceCode} và trừ kho theo Thùng/Hộp!`

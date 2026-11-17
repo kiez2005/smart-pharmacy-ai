@@ -1,30 +1,42 @@
-"""
-AI MICROSERVICE (PYTHON + FASTAPI + OPENCV + SCIKIT-LEARN)
-Hỗ trợ chuyên sâu cho Core Backend Node.js - Đề tài: Quản lý Nhà thuốc Thông minh (D18CNPM5)
+import io
+import json
+import time
+from contextlib import asynccontextmanager
+from typing import Any, Optional
 
-Bao gồm 2 Pipeline AI cốt lõi bám sát Sheet "Yêu cầu bài tập lớn":
-1. Pipeline OpenCV + OCR Đơn thuốc / Hóa đơn (Gợi ý #1):
-   - Tiền xử lý ảnh bằng OpenCV: Chuyển thang xám (Grayscale) -> Khử nhiễu Gaussian -> Nhị phân hóa thích nghi (Adaptive Thresholding).
-   - Trích xuất thông tin thuốc, số lượng, liều dùng và đối chiếu với danh mục bảng Product.
-2. Pipeline Chẩn đoán Y tế Sơ bộ & Chatbot RAG (Gợi ý #2, #3, #5):
-   - Sử dụng Scikit-learn (TF-IDF Vectorizer + Cosine Similarity) tính độ tương đồng ngữ nghĩa
-     giữa triệu chứng bệnh nhân và mô tả công dụng/hoạt chất của các thuốc trong kho.
-"""
-
-import base64
-from typing import List, Optional
-import cv2
+import av
 import numpy as np
-from fastapi import FastAPI, File, Form, UploadFile
+import uvicorn
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+from fastapi.responses import StreamingResponse
+from loguru import logger
+from pydantic import BaseModel, Field
+from pypdf import PdfReader
 
-app = FastAPI(
-    title="Smart Pharmacy Python AI Engine (D18CNPM5)",
-    version="1.0.0",
-)
+from config import AI_PORT, PHARMACY_DB_PATH, WHISPER_MODEL_SIZE
+from hybrid_search import hybrid_search_engine
+from model_registry import model_registry
+from ocr_pipeline import run_real_ocr
+from rag_chat import _prepare_rag_pipeline, run_qwen_rag_chat, stream_rag_chat_events
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Tải toàn bộ model AI local ĐÚNG MỘT LẦN khi khởi động service và nạp sẵn chỉ mục từ SQLite."""
+    t0 = time.perf_counter()
+    logger.info("Bắt đầu khởi tạo toàn bộ model AI local (tải 1 lần duy nhất lúc startup)...")
+    model_registry.load_all_once()
+    stats = hybrid_search_engine.bootstrap_from_sqlite(PHARMACY_DB_PATH)
+    logger.info(
+        f"Hoàn tất boot AI Service trong {time.perf_counter() - t0:.2f}s | "
+        f"Index: {stats['products']} thuốc, {stats['knowledgeDocuments']} tài liệu Dược thư/HDSD"
+    )
+    yield
+    logger.info("Đang tắt PharmaCore Local AI Service.")
+
+
+app = FastAPI(title="PharmaCore Local AI Service (Real Models)", version="4.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,304 +46,281 @@ app.add_middleware(
 )
 
 
-# ============================================================================
-# SCHEMAS TRAO ĐỔI DỮ LIỆU VỚI NODE.JS BACKEND
-# ============================================================================
-class ProductCatalogItem(BaseModel):
-    ProductID: int
-    ProductName: str
-    ProductType: str
-    Quantity: int
-    Unit: str
-    Price: float
-    Description: str
+class ChatMessageItem(BaseModel):
+    role: str
+    content: str
 
 
-class DiagnoseRequest(BaseModel):
+class PatientContextModel(BaseModel):
+    ageGroup: str = "ADULT"  # ADULT | CHILD | ELDERLY
+    pregnantOrBreastfeeding: bool = False
+    allergies: str = ""
+    chronicConditions: str = ""
+
+
+class RagChatRequest(BaseModel):
     message: str
-    products: List[ProductCatalogItem]
+    mode: Optional[str] = None  # DRUG_QA | SYMPTOM_CONSULTATION | None (auto)
+    history: list[ChatMessageItem] = Field(default_factory=list)
+    audience: str = "STAFF"  # STAFF | CUSTOMER
+    onlyStorefrontPublished: bool = False
+    interactionWarnings: list[str] = Field(default_factory=list)
+    patientContext: Optional[PatientContextModel] = None
 
 
-# ============================================================================
-# TRI THỨC Y KHOA CHẨN ĐOÁN SƠ BỘ THEO TRIỆU CHỨNG (CLINICAL RULES + ML)
-# ============================================================================
-CLINICAL_PROTOCOLS = [
-    {
-        "keywords": ["sốt", "đau đầu", "nhức đầu", "nóng", "cảm cúm", "mỏi người", "ớn lạnh"],
-        "diagnosis": "Hội chứng Cảm cúm / Sốt siêu vi cấp tính",
-        "advice": (
-            "Người bệnh có dấu hiệu sốt và đau nhức cơ thể. Khuyến nghị: Hạ sốt bằng Paracetamol "
-            "(cách nhau 4-6 tiếng khi sốt > 38.5°C), bù nước và điện giải bằng Oresol, bổ sung Vitamin C tăng đề kháng."
-        ),
-        "warning": "Không tự ý dùng quá 4g Paracetamol/ngày. Thận trọng ở người có bệnh lý gan.",
-        "priority_terms": "Paracetamol Panadol Efferalgan Hapacol Oresol Vitamin C Berocca Tiffy Decolgen",
-    },
-    {
-        "keywords": ["ho", "đau họng", "rát họng", "đờm", "sổ mũi", "nghẹt mũi", "khản tiếng", "viêm họng"],
-        "diagnosis": "Viêm đường hô hấp trên cấp tính (Viêm họng - Mũi - Phế quản)",
-        "advice": (
-            "Khuyến nghị: Súc họng bằng nước muối sinh lý Natri Clorid 0.9%, dùng siro thảo dược lá thường xuân "
-            "(Prospan) hoặc tiêu đờm Acetylcysteine (Acemuc), kết hợp viên ngậm kháng khuẩn Strepsils."
-        ),
-        "warning": "Nếu sốt cao kèm đờm xanh/vàng kéo dài trên 5 ngày cần khám bác sĩ để chỉ định kháng sinh.",
-        "priority_terms": "Prospan Acemuc Strepsils Otrivin Decolgen Tiffy Natri Clorid",
-    },
-    {
-        "keywords": ["tiêu chảy", "đau bụng", "đi ngoài", "ợ chua", "ợ nóng", "dạ dày", "trào ngược", "đầy hơi"],
-        "diagnosis": "Rối loạn tiêu hóa / Hội chứng Dạ dày - Tá tràng",
-        "advice": (
-            "Khuyến nghị: Nếu đau thượng vị, ợ chua do axit dạ dày dùng Phosphalugel hoặc Gaviscon/Omeprazol. "
-            "Nếu tiêu chảy cấp dùng Smecta/Berberin kết hợp men vi sinh Enterogermina và bù nước Oresol."
-        ),
-        "warning": "Tránh đồ ăn cay nóng, rượu bia và thuốc giảm đau nhóm NSAID (như Ibuprofen) khi đang đau dạ dày.",
-        "priority_terms": "Phosphalugel Gaviscon Smecta Berberin Enterogermina Oresol Omeprazol",
-    },
-    {
-        "keywords": ["dị ứng", "ngứa", "nổi mề đay", "hắt hơi", "viêm mũi dị ứng", "mẩn đỏ"],
-        "diagnosis": "Viêm mũi dị ứng / Mề đay dị ứng cấp",
-        "advice": (
-            "Khuyến nghị: Sử dụng thuốc kháng Histamin thế hệ mới không gây buồn ngủ như Fexofenadine (Telfast) "
-            "hoặc Loratadin 10mg (1 viên/ngày)."
-        ),
-        "warning": "Tránh tiếp xúc dị nguyên (bụi mịn, phấn hoa, hải sản lạ).",
-        "priority_terms": "Telfast Loratadin Otrivin Bepanthen",
-    },
-]
+class SearchHybridRequest(BaseModel):
+    query: str
+    limit: int = 20
+    onlyStorefrontPublished: bool = False
+    includeTest: bool = False
 
 
-# ============================================================================
-# 1. PIPELINE OPENCV TIỀN XỬ LÝ ẢNH ĐƠN THUỐC & TRÍCH XUẤT OCR (GỢI Ý #1)
-# ============================================================================
-def preprocess_image_with_opencv(image_bytes: bytes) -> dict:
-    """
-    Sử dụng thư viện OpenCV (cv2) để làm nét ảnh đơn thuốc:
-    1. Giải mã mảng byte ảnh sang ma trận NumPy BGR.
-    2. Chuyển sang không gian màu xám (Grayscale).
-    3. Lọc nhiễu Gaussian Blur (3x3).
-    4. Cân bằng sáng & tách chữ bằng Adaptive Gaussian Thresholding.
-    """
-    np_arr = np.frombuffer(image_bytes, np.uint8)
-    img_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+class ReindexRequest(BaseModel):
+    products: list[dict[str, Any]] = Field(default_factory=list)
+    knowledgeDocuments: list[dict[str, Any]] = Field(default_factory=list)
 
-    if img_bgr is None:
-        return {
-            "processed_base64": None,
-            "dimensions": "0x0",
-            "sharpness_score": 0.0,
-            "steps": ["Không đọc được ma trận ảnh"],
-        }
 
-    height, width = img_bgr.shape[:2]
+def _decode_audio_to_16k_mono(audio_bytes: bytes) -> np.ndarray:
+    """Giải mã âm thanh (webm/ogg/wav/mp3/m4a) thành float32 16kHz mono bằng PyAV (không phụ thuộc ffmpeg.exe)."""
+    buf = io.BytesIO(audio_bytes)
+    container = av.open(buf)
+    audio_streams = [s for s in container.streams if s.type == "audio"]
+    if not audio_streams:
+        raise ValueError("File âm thanh không có luồng audio hợp lệ.")
 
-    # Bước 1: Chuyển sang ảnh xám (Grayscale)
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    stream = audio_streams[0]
+    resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
+    chunks: list[np.ndarray] = []
 
-    # Bước 2: Tính độ sắc nét bằng phương sai Laplacian (Laplacian Variance)
-    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    for frame in container.decode(stream):
+        resampled_list = resampler.resample(frame)
+        if not resampled_list:
+            continue
+        for rf in resampled_list:
+            arr = rf.to_ndarray().astype(np.float32).reshape(-1)
+            if arr.size > 0:
+                chunks.append(arr)
 
-    # Bước 3: Khử nhiễu Gaussian
-    denoised = cv2.GaussianBlur(gray, (3, 3), 0)
+    flushed = resampler.resample(None)
+    if flushed:
+        for rf in flushed:
+            arr = rf.to_ndarray().astype(np.float32).reshape(-1)
+            if arr.size > 0:
+                chunks.append(arr)
 
-    # Bước 4: Tăng tương phản cục bộ CLAHE + Nhị phân hóa thích nghi (Adaptive Threshold)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(denoised)
-    binary = cv2.adaptiveThreshold(
-        enhanced,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        19,
-        9,
-    )
-
-    _, buffer = cv2.imencode(".png", binary)
-    b64_str = base64.b64encode(buffer).decode("utf-8")
-
-    return {
-        "processed_base64": f"data:image/png;base64,{b64_str}",
-        "dimensions": f"{width}x{height}px",
-        "sharpness_score": round(sharpness, 2),
-        "steps": [
-            "1. cv2.cvtColor (BGR -> Grayscale)",
-            "2. cv2.GaussianBlur (3x3 Kernel Denoising)",
-            "3. cv2.createCLAHE (Contrast Limited Adaptive Histogram Equalization)",
-            "4. cv2.adaptiveThreshold (Tách chữ đen trên nền trắng đơn thuốc)",
-        ],
-    }
+    container.close()
+    if not chunks:
+        raise ValueError("Audio rỗng, không có dữ liệu sóng âm để nhận dạng.")
+    return np.concatenate(chunks)
 
 
 @app.get("/api/py-ai/health")
 def health_check():
-    return {
-        "status": "OK",
-        "engine": "Python FastAPI + OpenCV + Scikit-learn TF-IDF",
-    }
+    return model_registry.get_health_report(
+        indexed_products=len(hybrid_search_engine.products),
+        indexed_docs=len(hybrid_search_engine.knowledge_docs),
+    )
 
 
 @app.post("/api/py-ai/ocr")
-async def ocr_prescription_endpoint(
-    file: UploadFile = File(...),
-    preset_hint: Optional[str] = Form(default=""),
-    is_demo: Optional[bool] = Form(default=False),
-):
+async def ocr_prescription_image(file: UploadFile = File(...)):
     """
-    Nhận file ảnh đơn thuốc từ Node.js Backend -> Chạy OpenCV làm nét ảnh -> Trả về kết quả bóc tách OCR.
+    Nhận ảnh đơn thuốc thật -> OpenCV tiền xử lý -> RapidOCR (đã tải sẵn) -> trả về từng dòng + confidence.
+    Tuyệt đối không dùng preset hoặc mock khi ảnh rỗng hoặc engine OCR lỗi.
     """
+    ocr_engine = model_registry.ensure_ocr_ready()
     image_bytes = await file.read()
-    cv_result = preprocess_image_with_opencv(image_bytes)
-    fname = (file.filename or "").lower()
-    hint = (preset_hint or "").lower()
-
-    # Kiểm tra ảnh trắng / ảnh hỏng / ảnh không có chữ
-    is_blank_name = any(k in fname for k in ["blank", "trang", "empty", "white"])
-    if not is_demo and (cv_result.get("sharpness_score", 0.0) < 5.0 or is_blank_name):
-        from fastapi import HTTPException
+    if not image_bytes:
         raise HTTPException(
             status_code=400,
-            detail="Không nhận dạng được văn bản từ ảnh: Ảnh bị mờ, trắng hoặc không chứa nét chữ đơn thuốc hợp lệ."
+            detail={"code": "EMPTY_FILE", "message": "File ảnh tải lên bị rỗng."},
         )
+    return run_real_ocr(image_bytes, ocr_engine)
 
-    # P0-05: Chỉ cho phép nạp đơn mẫu preset khi is_demo == True.
-    # Tuyệt đối KHÔNG suy đoán thuốc mẫu từ tên file (da-day, di-ung, cam-cum) đối với ảnh thật (is_demo == False)!
-    raw_hint = (preset_hint or "").strip()
-    if "\n" in raw_hint:
-        lines = [ln.strip() for ln in raw_hint.splitlines() if len(ln.strip()) > 2]
-        detected_items = []
-        for ln in lines:
-            clean_name = ln.split("—")[0].split("-")[0].strip()
-            detected_items.append({
-                "keyword": clean_name or ln,
-                "quantity": 1,
-                "dosage": ln,
-            })
-        extracted_text = "BẢN NHÁP BÓC TÁCH ĐƠN THUỐC (CẦN DƯỢC SĨ XÁC NHẬN)\n" + "\n".join(lines)
-    elif is_demo and ("da-day" in hint or "tieu-hoa" in hint):
-        extracted_text = (
-            "[DEMO MẪU THỬ NGHIỆM] BỆNH VIỆN ĐA KHOA - ĐƠN THUỐC TIÊU HÓA\n"
-            "Chẩn đoán: Viêm dạ dày - Trào ngược thực quản (GERD)\n"
-            "1. Sữa nghệ Phosphalugel — Số lượng: 1 Hộp (Uống 1 gói khi đau hoặc sau ăn)\n"
-            "2. Omeprazol 20mg DHG — Số lượng: 1 Hộp (Ngày uống 1 viên trước ăn sáng 30 phút)\n"
-            "3. Men vi sinh Enterogermina — Số lượng: 1 Hộp (Ngày uống 2 ống)"
-        )
-        detected_items = [
-            {"keyword": "Phosphalugel", "quantity": 1, "dosage": "Uống 1 gói sau ăn hoặc khi đau thượng vị"},
-            {"keyword": "Omeprazol 20mg", "quantity": 1, "dosage": "Uống 1 viên trước ăn sáng 30 phút"},
-            {"keyword": "Enterogermina", "quantity": 1, "dosage": "Sáng 1 ống, Chiều 1 ống"},
-        ]
-    elif is_demo and ("di-ung" in hint or "xoang" in hint or "khang-sinh" in hint):
-        extracted_text = (
-            "[DEMO MẪU THỬ NGHIỆM] PHÒNG KHÁM TAI MŨI HỌNG - ĐƠN THUỐC NGOẠI TRÚ\n"
-            "Chẩn đoán: Viêm mũi xoang dị ứng thời tiết cấp\n"
-            "1. Thuốc chống dị ứng Telfast HD 180mg — Số lượng: 1 Hộp (Sáng 1 viên sau ăn)\n"
-            "2. Thuốc xịt mũi Otrivin 0.1% — Số lượng: 1 Chai (Xịt mũi 2 lần/ngày)\n"
-            "3. Nước muối sinh lý Natri Clorid 0.9% — Số lượng: 2 Chai (Rửa mũi họng hàng ngày)"
-        )
-        detected_items = [
-            {"keyword": "Telfast HD 180mg", "quantity": 1, "dosage": "Uống 1 viên/ngày sau ăn sáng"},
-            {"keyword": "Otrivin", "quantity": 1, "dosage": "Xịt mỗi bên mũi 1 nhát sáng/tối"},
-            {"keyword": "Natri Clorid 0.9%", "quantity": 2, "dosage": "Rửa mũi và súc họng 3 lần/ngày"},
-        ]
-    elif is_demo:
-        extracted_text = (
-            "[DEMO MẪU THỬ NGHIỆM] BỆNH VIỆN ĐẠI HỌC Y - ĐƠN THUỐC KHÁM BỆNH\n"
-            "Chẩn đoán: Viêm họng cấp - Sốt siêu vi\n"
-            "1. Panadol Extra Đỏ 500mg — Số lượng: 1 Hộp (Sáng 1 viên, Chiều 1 viên khi sốt > 38.5°C)\n"
-            "2. Siro Ho Prospan Đức 100ml — Số lượng: 1 Chai (Uống 5ml x 3 lần/ngày sau ăn)\n"
-            "3. Viên ngậm đau họng Strepsils Cool — Số lượng: 2 Hộp (Ngậm 1 viên mỗi 3-4 giờ)\n"
-            "4. Viên sủi Berocca Performance — Số lượng: 1 Tuýp (Hòa tan 1 viên uống buổi sáng)"
-        )
-        detected_items = [
-            {"keyword": "Panadol Extra", "quantity": 1, "dosage": "Uống 1 viên khi sốt > 38.5°C (cách 4-6h)"},
-            {"keyword": "Siro Ho Prospan", "quantity": 1, "dosage": "Uống 5ml x 3 lần/ngày sau ăn"},
-            {"keyword": "Strepsils Cool", "quantity": 2, "dosage": "Ngậm tan chậm trong miệng mỗi 3 giờ"},
-            {"keyword": "Berocca", "quantity": 1, "dosage": "Pha 1 viên sủi với 200ml nước uống sáng"},
-        ]
-    else:
-        # Nếu là ảnh thật và không đọc được nội dung chữ: từ chối rõ ràng, không đoán từ tên file
-        from fastapi import HTTPException
+
+@app.post("/api/py-ai/stt")
+async def speech_to_text(file: UploadFile = File(...), language: str = "vi"):
+    """
+    Nhận dạng giọng nói tiếng Việt local bằng Faster-Whisper (model đã tải sẵn lúc khởi động).
+    Trả 503 nếu model STT chưa sẵn sàng; không dùng mock transcript.
+    """
+    stt_model = model_registry.ensure_stt_ready()
+    audio_bytes = await file.read()
+    if not audio_bytes or len(audio_bytes) < 256:
         raise HTTPException(
             status_code=400,
-            detail="Không nhận dạng được dòng thuốc nào từ hình ảnh này. Vui lòng chụp rõ nét đơn thuốc của bác sĩ hoặc nhập trực tiếp tên thuốc."
+            detail={"code": "EMPTY_AUDIO", "message": "Đoạn ghi âm quá ngắn hoặc không có dữ liệu."},
         )
 
-    return {
-        "engine": "python-opencv-ocr",
-        "is_demo": bool(is_demo),
-        "requires_pharmacist_verification": True,
-        "opencv_preprocessing": cv_result,
-        "raw_ocr_text": extracted_text,
-        "detected_items": detected_items,
-    }
+    t0 = time.perf_counter()
+    try:
+        audio_np = _decode_audio_to_16k_mono(audio_bytes)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_AUDIO", "message": f"Không giải mã được định dạng âm thanh: {exc}"},
+        ) from exc
 
+    duration_sec = float(len(audio_np)) / 16000.0
+    if duration_sec < 0.2:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "AUDIO_TOO_SHORT", "message": "Thời lượng ghi âm dưới 0.2 giây, vui lòng nói lại."},
+        )
 
-# ============================================================================
-# 2. PIPELINE CHẨN ĐOÁN SƠ BỘ & GỢI Ý THUỐC BẰNG SCIKIT-LEARN TF-IDF (P0-06)
-# ============================================================================
-@app.post("/api/py-ai/diagnose")
-def diagnose_symptoms_endpoint(payload: DiagnoseRequest):
-    """
-    Sử dụng Scikit-learn (TfidfVectorizer + Cosine Similarity) để đối chiếu triệu chứng
-    của người bệnh với toàn bộ kho thuốc trong Database Product.
-    Không gán mặc định Cảm cúm khi không khớp từ khóa triệu chứng; không bơm điểm tương đồng 0.65.
-    """
-    user_query = payload.message.strip().lower()
-    products = payload.products
-
-    # 1. Xác định phác đồ lâm sàng phù hợp nhất (chỉ nhận khi có ít nhất 1 từ khóa khớp)
-    matched_protocol = None
-    best_keyword_hits = 0
-
-    for proto in CLINICAL_PROTOCOLS:
-        hits = sum(1 for kw in proto["keywords"] if kw in user_query)
-        if hits > best_keyword_hits:
-            best_keyword_hits = hits
-            matched_protocol = proto
-
-    if best_keyword_hits == 0 or matched_protocol is None:
-        return {
-            "engine": "python-sklearn-tfidf-rag",
-            "requires_pharmacist_consultation": True,
-            "preliminary_diagnosis": "Chưa đủ căn cứ phân loại triệu chứng — Chuyển Dược sĩ tư vấn trực tiếp",
-            "clinical_advice": "Mô tả triệu chứng hiện tại chưa khớp với phác đồ tham khảo chuẩn. Vui lòng để Dược sĩ chuyên môn khai thác trực tiếp triệu chứng, thời gian khởi phát và tiền sử dùng thuốc.",
-            "contraindication_warning": "Tuyệt đối không tự ý suy đoán bệnh hoặc dùng thuốc kê đơn khi chưa có tư vấn của Bác sĩ / Dược sĩ.",
-            "recommended_products": [],
-        }
-
-    # 2. Tính độ tương đồng Cosine Similarity thực tế bằng Scikit-learn TF-IDF (không ép min 0.65)
-    enriched_query = f"{user_query} {matched_protocol['priority_terms']}"
-    corpus = [
-        f"{p.ProductName} {p.ProductType} {p.Description}" for p in products
-    ]
-
-    recommendations = []
-    if corpus:
-        vectorizer = TfidfVectorizer(ngram_range=(1, 2))
-        tfidf_matrix = vectorizer.fit_transform(corpus + [enriched_query])
-        cosine_scores = cosine_similarity(tfidf_matrix[-1:], tfidf_matrix[:-1]).flatten()
-
-        ranked_indices = np.argsort(cosine_scores)[::-1][:4]
-        for idx in ranked_indices:
-            score = float(cosine_scores[idx])
-            if score <= 0.05:
-                continue
-            prod = products[int(idx)]
-            if prod.Quantity > 0:
-                recommendations.append({
-                    "ProductID": prod.ProductID,
-                    "ProductName": prod.ProductName,
-                    "ProductType": prod.ProductType,
-                    "Price": prod.Price,
-                    "Unit": prod.Unit,
-                    "Quantity": prod.Quantity,
-                    "Description": prod.Description,
-                    "similarityScore": round(score, 4),
+    try:
+        segments_iter, info = stt_model.transcribe(
+            audio_np,
+            language=language or "vi",
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 400},
+        )
+        segments = []
+        texts = []
+        for seg in segments_iter:
+            txt = seg.text.strip()
+            if txt:
+                texts.append(txt)
+                segments.append({
+                    "start": round(seg.start, 2),
+                    "end": round(seg.end, 2),
+                    "text": txt,
                 })
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "AI_STT_RUNTIME_ERROR",
+                "model": f"faster-whisper-{WHISPER_MODEL_SIZE}",
+                "message": f"Lỗi khi suy luận Faster-Whisper: {exc}",
+            },
+        ) from exc
 
+    transcript = " ".join(texts).strip()
     return {
-        "engine": "python-sklearn-tfidf-rag",
-        "requires_pharmacist_consultation": len(recommendations) == 0,
-        "preliminary_diagnosis": matched_protocol["diagnosis"],
-        "clinical_advice": matched_protocol["advice"],
-        "contraindication_warning": matched_protocol["warning"],
-        "recommended_products": recommendations,
+        "modelUsed": f"faster-whisper-{WHISPER_MODEL_SIZE}",
+        "language": getattr(info, "language", language),
+        "languageProbability": round(float(getattr(info, "language_probability", 0.0)), 4),
+        "audioDurationSec": round(duration_sec, 2),
+        "processingTimeSec": round(time.perf_counter() - t0, 2),
+        "text": transcript,
+        "segments": segments,
     }
+
+
+@app.post("/api/py-ai/reindex")
+def reindex_catalog_and_knowledge(req: ReindexRequest):
+    stats = hybrid_search_engine.reindex(req.products, req.knowledgeDocuments)
+    return {"ok": True, **stats}
+
+
+@app.post("/api/py-ai/search-hybrid")
+def search_hybrid_endpoint(req: SearchHybridRequest):
+    return hybrid_search_engine.search_products(
+        query=req.query,
+        limit=req.limit,
+        only_storefront_published=req.onlyStorefrontPublished,
+        include_test=req.includeTest,
+    )
+
+
+@app.post("/api/py-ai/chat-rag")
+def chat_rag_endpoint(req: RagChatRequest):
+    history_dicts = [{"role": h.role, "content": h.content} for h in req.history]
+    patient_ctx = req.patientContext.model_dump() if req.patientContext else None
+    return run_qwen_rag_chat(
+        message=req.message,
+        mode_hint=req.mode,
+        history=history_dicts,
+        registry=model_registry,
+        hybrid_engine=hybrid_search_engine,
+        audience="CUSTOMER" if req.audience == "CUSTOMER" else "STAFF",
+        only_storefront_published=req.onlyStorefrontPublished,
+        interaction_warnings=req.interactionWarnings,
+        patient_context=patient_ctx,
+    )
+
+
+@app.post("/api/py-ai/chat-rag/stream")
+def chat_rag_stream_endpoint(req: RagChatRequest):
+    """Streaming SSE endpoint giúp phản hồi chữ tức thì ở cả Google AI Studio lẫn Local Ollama."""
+    history_dicts = [{"role": h.role, "content": h.content} for h in req.history]
+    audience = "CUSTOMER" if req.audience == "CUSTOMER" else "STAFF"
+    patient_ctx = req.patientContext.model_dump() if req.patientContext else None
+
+    # Chạy pre-flight kiểm tra model/embedding trước khi mở stream để vẫn trả HTTP 503/400 chuẩn
+    prep_probe = _prepare_rag_pipeline(
+        message=req.message,
+        mode_hint=req.mode,
+        registry=model_registry,
+        hybrid_engine=hybrid_search_engine,
+        audience=audience,
+        only_storefront_published=req.onlyStorefrontPublished,
+        interaction_warnings=req.interactionWarnings,
+        patient_context=patient_ctx,
+    )
+
+    def _sse_generator():
+        for event_name, payload in stream_rag_chat_events(
+            message=req.message,
+            mode_hint=req.mode,
+            history=history_dicts,
+            registry=model_registry,
+            hybrid_engine=hybrid_search_engine,
+            audience=audience,
+            only_storefront_published=req.onlyStorefrontPublished,
+            interaction_warnings=req.interactionWarnings,
+            patient_context=patient_ctx,
+            prepared=prep_probe,
+        ):
+            yield f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        _sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/py-ai/diagnose")
+def legacy_diagnose_alias(req: dict[str, Any]):
+    """Alias tương thích gọi chung vào pipeline Qwen RAG có nguồn (không dùng CLINICAL_PROTOCOLS cứng)."""
+    msg = str(req.get("message") or req.get("symptoms") or "").strip()
+    return run_qwen_rag_chat(
+        message=msg,
+        mode_hint=req.get("mode") or "SYMPTOM_CONSULTATION",
+        history=req.get("history") or [],
+        registry=model_registry,
+        hybrid_engine=hybrid_search_engine,
+    )
+
+
+@app.post("/api/py-ai/extract-pdf")
+async def extract_pdf_text(file: UploadFile = File(...)):
+    """Trích xuất text từ file PDF tờ HDSD thuốc để nạp vào KnowledgeDocument."""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail={"code": "EMPTY_FILE", "message": "File PDF rỗng."})
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+        pages = [(page.extract_text() or "").strip() for page in reader.pages]
+        full_text = "\n\n".join(p for p in pages if p).strip()
+        if not full_text:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "PDF_NO_TEXT", "message": "File PDF không chứa text (có thể là PDF dạng ảnh scan)."},
+            )
+        return {"pages": len(reader.pages), "text": full_text}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_PDF", "message": f"Không đọc được file PDF: {exc}"}) from exc
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=AI_PORT)

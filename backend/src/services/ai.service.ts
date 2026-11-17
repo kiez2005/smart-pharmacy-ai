@@ -1,104 +1,241 @@
+import { randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import type { Response as ExpressResponse } from 'express';
 import Fuse from 'fuse.js';
-import { Product } from '@prisma/client';
 import { prisma } from '../config/prisma';
+import {
+  CLINICAL_ADVISORY_DISCLAIMER,
+  CLINICAL_RULE_VERSION,
+  evaluateClinicalSafetyServerSide,
+} from './clinical-safety.service';
+import {
+  fetchSanitizedPublicProductsByIds,
+  PublicCatalogProductDto,
+} from '../utils/public-catalog.dto';
 
-export interface MatchedPrescriptionItem {
-  keyword: string;
-  quantity: number;
-  dosage: string;
-  matchedProduct: Product | null;
-  inStock?: boolean;
-  status?: 'IN_STOCK' | 'OUT_OF_STOCK' | 'NOT_FOUND';
+const AI_SERVICE_URL = (process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
+
+export function getPythonAiBaseUrl(): string {
+  return AI_SERVICE_URL;
 }
 
-import { CLINICAL_ADVISORY_DISCLAIMER, CLINICAL_RULE_VERSION } from './clinical-safety.service';
+export class AiServiceError extends Error {
+  public readonly statusCode: number;
+  public readonly code: string;
+  public readonly model?: string;
 
-export interface OcrPrescriptionResult {
-  engine: 'python-opencv-ocr' | 'node-fallback-ocr';
-  isDemo: boolean;
-  requiresPharmacistVerification: true;
-  opencvPreprocessing: {
-    processedBase64: string | null;
-    dimensions: string;
-    sharpnessScore: number;
-    steps: string[];
-  };
-  rawOcrText: string;
-  items: MatchedPrescriptionItem[];
+  constructor(statusCode: number, code: string, message: string, model?: string) {
+    super(message);
+    this.name = 'AiServiceError';
+    this.statusCode = statusCode;
+    this.code = code;
+    this.model = model;
+  }
 }
 
-export interface DiagnoseChatResult {
-  engine: 'python-sklearn-tfidf-rag' | 'pharmacist-handoff';
-  aiServiceAvailable: boolean;
-  requiresPharmacistConsultation: boolean;
-  preliminaryDiagnosis: string;
-  clinicalAdvice: string;
-  contraindicationWarning: string;
-  isAdvisoryOnly: true;
-  disclaimer: string;
-  ruleVersion: string;
-  recommendedProducts: Array<{
-    ProductID: number;
-    ProductName: string;
-    ProductType: string;
-    Price: number;
-    Unit: string;
-    Quantity: number;
-    Description: string;
-    matchNote: string;
-  }>;
-}
-
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
-
-const SLIM_AI_PRODUCT_SELECT = {
+export const SLIM_AI_PRODUCT_SELECT = {
   ProductID: true,
   ProductName: true,
   ProductType: true,
-  Price: true,
   Unit: true,
+  Price: true,
   Quantity: true,
   Description: true,
 } as const;
 
-type SlimAiProduct = {
+export type SlimAiProduct = {
   ProductID: number;
   ProductName: string;
   ProductType: string;
-  Price: number;
   Unit: string;
+  Price: number;
   Quantity: number;
   Description: string;
+  IsRx?: boolean;
 };
 
-interface DraftOcrItem {
-  keyword: string;
-  quantity: number;
-  dosage: string;
-  matchedId: number | null;
+export interface OcrProductCandidate {
+  ProductID: number;
+  ProductName: string;
+  ProductType: string;
+  Unit: string;
+  Price: number;
+  Quantity: number;
+  IsRx: boolean;
+  inStock: boolean;
+  status: 'IN_STOCK' | 'OUT_OF_STOCK';
+  matchScore: number;
+  combinedConfidence: number;
 }
 
-function extractSearchTokens(rawText: string, maxTokens = 8): string[] {
-  return Array.from(
+export interface OcrExtractedLine {
+  lineId: string;
+  lineNumber: number;
+  rawText: string;
+  extractedDrugQuery: string;
+  strengthTokens: string[];
+  extractedQuantity: number;
+  extractedUnit: string;
+  extractedDosage: string;
+  ocrConfidence: number;
+  candidates: OcrProductCandidate[];
+  suggestedProductId: number | null;
+  selectedProductId: number | null;
+  confirmed: boolean;
+  skipped: boolean;
+}
+
+export interface OcrPrescriptionResult {
+  draftId: string;
+  engine: string;
+  sectionMode?: string;
+  elapsedSec?: number;
+  requiresPharmacistVerification: true;
+  allLinesConfirmed: boolean;
+  averageConfidence: number;
+  opencvPreprocessing: {
+    steps: string[];
+  };
+  rawOcrText: string;
+  lines: OcrExtractedLine[];
+}
+
+export interface RagCitation {
+  docId: number;
+  productId: number | null;
+  docType: string;
+  title: string;
+  section: string;
+  sourceName: string;
+  sourceRef: string | null;
+  verifiedBy: string | null;
+  snippet: string;
+}
+
+export interface RagSuggestedProduct {
+  ProductID: number;
+  ProductName: string;
+  ProductType: string;
+  Unit: string;
+  Price: number;
+  TotalStock: number;
+  IsRx: boolean;
+  requiresPrescription: boolean;
+}
+
+export interface PatientTriageContext {
+  ageGroup?: 'ADULT' | 'CHILD' | 'ELDERLY';
+  pregnantOrBreastfeeding?: boolean;
+  allergies?: string;
+  chronicConditions?: string;
+}
+
+export interface AttachmentOcrSummary {
+  sectionMode: string;
+  lines: Array<{
+    drug: string;
+    strengthTokens: string[];
+    quantity: number;
+    unit: string;
+    dosage: string;
+    confidence: number;
+  }>;
+}
+
+export interface RagChatResult {
+  engine: string;
+  modelUsed: string;
+  provider?: string;
+  fallbackUsed?: boolean;
+  mode: 'DRUG_QA' | 'SYMPTOM_CONSULTATION';
+  groundingMode?: 'FAST_PATH' | 'LOCAL_HDSD' | 'GENERAL_MEDICAL' | 'INSUFFICIENT';
+  triageLevel?: 'RED_FLAG' | 'CAUTION' | 'SELF_CARE';
+  suspectedCondition: string;
+  answer: string;
+  citations: RagCitation[];
+  suggestedProducts: RagSuggestedProduct[];
+  warnings: string[];
+  shouldConsultPharmacist: boolean;
+  insufficientKnowledge: boolean;
+  emergencyAlert: boolean;
+  isAdvisoryOnly: true;
+  disclaimer: string;
+  ruleVersion: string;
+}
+
+export interface StorefrontRagChatResult extends Omit<RagChatResult, 'suggestedProducts'> {
+  suggestedProducts: PublicCatalogProductDto[];
+}
+
+export interface SpeechToTextResult {
+  modelUsed: string;
+  language: string;
+  languageProbability: number;
+  audioDurationSec: number;
+  processingTimeSec: number;
+  text: string;
+  segments: Array<{ start: number; end: number; text: string }>;
+}
+
+export interface AiComponentHealth {
+  name: string;
+  provider: string;
+  model: string;
+  status: 'READY' | 'DOWN' | 'LOADING';
+  device: string;
+  loadTimeSec?: number;
+  loadedAt?: string | null;
+  loadedInMemory?: boolean;
+  error?: string | null;
+}
+
+export interface AiModelsHealthReport {
+  status: 'OK' | 'DEGRADED' | 'DOWN';
+  pythonReachable: boolean;
+  engine: string;
+  bootedAt?: string | null;
+  startupLoadCount?: number;
+  singleLlmSharedPolicy: boolean;
+  activeLlmModel: string;
+  indexStats: {
+    products: number;
+    knowledgeDocuments: number;
+  };
+  deadModels: string[];
+  models: {
+    llm: AiComponentHealth;
+    ocr: AiComponentHealth;
+    stt: AiComponentHealth;
+    embeddings: AiComponentHealth;
+  };
+}
+
+function normalizeViText(text: string): string {
+  return String(text || '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+export async function loadSlimSearchCandidates(
+  query: string,
+  options: { inStockOnly?: boolean; limit?: number } = {}
+): Promise<SlimAiProduct[]> {
+  const limit = Math.min(250, Math.max(10, Number(options.limit || 150)));
+  const clean = query.trim();
+  const tokens = Array.from(
     new Set(
-      rawText
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-        .split(/\s+/)
+      clean
+        .split(/[\s,;:/().\-]+/)
         .map((t) => t.trim())
         .filter((t) => t.length >= 2)
     )
-  ).slice(0, maxTokens);
-}
+  ).slice(0, 6);
 
-/**
- * Truy vấn ứng viên thuốc giới hạn số lượng & chỉ lấy các trường văn bản cần cho AI/OCR
- * (không tải PathImage, CreateDate, UpdateDate hay bản ghi IsTestOnly).
- */
-async function loadSlimSearchCandidates(
-  rawQueryText: string,
-  options: { inStockOnly?: boolean; limit: number }
-): Promise<SlimAiProduct[]> {
   const baseWhere: Record<string, unknown> = {
     OR: [{ packaging: { is: null } }, { packaging: { is: { IsTestOnly: false } } }],
   };
@@ -106,362 +243,875 @@ async function loadSlimSearchCandidates(
     baseWhere.Quantity = { gt: 0 };
   }
 
-  const tokens = extractSearchTokens(rawQueryText);
-  let selected: SlimAiProduct[] = [];
+  const textFilters =
+    tokens.length > 0
+      ? tokens.flatMap((token) => [
+          { ProductName: { contains: token } },
+          { Description: { contains: token } },
+          { ProductType: { contains: token } },
+          ...(token.length >= 4 ? [{ ProductName: { contains: token.slice(0, 3) } }] : []),
+        ])
+      : [];
 
-  if (tokens.length > 0) {
-    const tokenFilters = tokens.flatMap((token) => [
-      { ProductName: { contains: token } },
-      { Description: { contains: token } },
-      { ProductType: { contains: token } },
-    ]);
+  const selectFields = {
+    ...SLIM_AI_PRODUCT_SELECT,
+    packaging: { select: { IsRx: true } },
+  };
 
-    selected = await prisma.product.findMany({
-      where: {
-        AND: [baseWhere, { OR: tokenFilters }],
-      },
-      select: SLIM_AI_PRODUCT_SELECT,
-      take: options.limit,
-      orderBy: [{ Quantity: 'desc' }, { ProductID: 'asc' }],
-    });
-  }
+  let matched = textFilters.length
+    ? await prisma.product.findMany({
+        where: { AND: [baseWhere, { OR: textFilters }] },
+        select: selectFields,
+        take: limit,
+        orderBy: { ProductID: 'asc' },
+      })
+    : [];
 
-  if (selected.length < options.limit) {
-    const existingIds = selected.map((item) => item.ProductID);
+  if (matched.length < Math.min(40, limit)) {
+    const excludeIds = matched.map((m) => m.ProductID);
     const supplement = await prisma.product.findMany({
       where: {
-        AND: [
-          baseWhere,
-          ...(existingIds.length > 0 ? [{ ProductID: { notIn: existingIds } }] : []),
-        ],
+        AND: [baseWhere, ...(excludeIds.length > 0 ? [{ ProductID: { notIn: excludeIds } }] : [])],
       },
-      select: SLIM_AI_PRODUCT_SELECT,
-      take: options.limit - selected.length,
-      orderBy: [{ Quantity: 'desc' }, { ProductID: 'asc' }],
+      select: selectFields,
+      take: limit - matched.length,
+      orderBy: { ProductID: 'asc' },
     });
-    selected = [...selected, ...supplement];
+    matched = [...matched, ...supplement];
   }
 
-  return selected;
+  return matched.map((row) => ({
+    ProductID: row.ProductID,
+    ProductName: row.ProductName,
+    ProductType: row.ProductType,
+    Unit: row.Unit,
+    Price: row.Price,
+    Quantity: row.Quantity,
+    Description: row.Description,
+    IsRx: Boolean(row.packaging?.IsRx),
+  }));
 }
 
-async function hydrateMatchedPrescriptionItems(
-  drafts: DraftOcrItem[]
-): Promise<MatchedPrescriptionItem[]> {
-  const matchedIds = Array.from(
-    new Set(
-      drafts
-        .map((draft) => draft.matchedId)
-        .filter((id): id is number => typeof id === 'number' && id > 0)
-    )
+function parsePyErrorDetail(errJson: unknown, fallbackStatus: number, fallbackModel: string, defaultMessage: string): AiServiceError {
+  const detail = (errJson as { detail?: unknown })?.detail;
+  if (detail && typeof detail === 'object') {
+    const obj = detail as { code?: string; model?: string; message?: string };
+    return new AiServiceError(
+      fallbackStatus,
+      obj.code || 'AI_SERVICE_ERROR',
+      obj.message || defaultMessage,
+      obj.model || fallbackModel
+    );
+  }
+  if (typeof detail === 'string') {
+    return new AiServiceError(fallbackStatus, 'AI_SERVICE_ERROR', detail, fallbackModel);
+  }
+  return new AiServiceError(fallbackStatus, 'AI_SERVICE_ERROR', defaultMessage, fallbackModel);
+}
+
+function scoreProductCandidate(
+  line: {
+    extractedDrugQuery: string;
+    strengthTokens: string[];
+    ocrConfidence: number;
+  },
+  product: SlimAiProduct,
+  fuseSimilarity: number,
+  hybridRrfScore: number
+): OcrProductCandidate {
+  const normProductName = normalizeViText(product.ProductName);
+  const normQuery = normalizeViText(line.extractedDrugQuery);
+  const queryWords = normQuery.split(/\s+/).filter((w) => w.length >= 3);
+
+  let tokenHits = 0;
+  for (const w of queryWords) {
+    if (normProductName.includes(w)) {
+      tokenHits += 1;
+    }
+  }
+  const tokenCoverage = queryWords.length > 0 ? tokenHits / queryWords.length : 0;
+
+  // Điểm thưởng/phạt theo hàm lượng (VD: 500mg vs 250mg, 625mg)
+  let strengthAdjust = 0;
+  for (const st of line.strengthTokens) {
+    const cleanSt = st.toLowerCase().replace(/\s+/g, '');
+    if (normProductName.replace(/\s+/g, '').includes(cleanSt)) {
+      strengthAdjust += 0.2;
+    } else if (/\d+(?:mg|g|ml|mcg)/.test(normProductName)) {
+      strengthAdjust -= 0.08;
+    }
+  }
+
+  const hybridBoost = hybridRrfScore > 0 ? Math.min(0.25, hybridRrfScore * 7.5) : 0;
+  const rawMatchScore = Math.max(
+    0,
+    Math.min(1, fuseSimilarity * 0.45 + tokenCoverage * 0.35 + hybridBoost + strengthAdjust)
   );
-  const fullProducts =
-    matchedIds.length > 0
-      ? await prisma.product.findMany({
-          where: { ProductID: { in: matchedIds } },
-        })
-      : [];
-  const productById = new Map(fullProducts.map((p) => [p.ProductID, p]));
+  const matchScore = Number(rawMatchScore.toFixed(4));
+  const combinedConfidence = Number((0.45 * line.ocrConfidence + 0.55 * matchScore).toFixed(4));
 
-  return drafts.map((draft) => {
-    const matchedProd = draft.matchedId ? (productById.get(draft.matchedId) ?? null) : null;
-    return {
-      keyword: draft.keyword,
-      quantity: draft.quantity,
-      dosage: draft.dosage,
-      matchedProduct: matchedProd,
-      inStock: Boolean(matchedProd && matchedProd.Quantity > 0),
-      status: !matchedProd
-        ? 'NOT_FOUND'
-        : matchedProd.Quantity > 0
-          ? 'IN_STOCK'
-          : 'OUT_OF_STOCK',
-    };
-  });
+  return {
+    ProductID: product.ProductID,
+    ProductName: product.ProductName,
+    ProductType: product.ProductType,
+    Unit: product.Unit,
+    Price: product.Price,
+    Quantity: product.Quantity,
+    IsRx: Boolean(product.IsRx),
+    inStock: product.Quantity > 0,
+    status: product.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
+    matchScore,
+    combinedConfidence,
+  };
 }
 
-/**
- * AI GATEWAY SERVICE (NODE.JS <-> PYTHON FASTAPI OPENCV & SCIKIT-LEARN)
- * Kết nối trực tiếp sang Python AI Service (Port 8000) và tích hợp cơ chế Auto-Fallback
- * giúp hệ thống luôn hoạt động 100% kể cả khi chưa bật Python server.
- */
 class AiGatewayService {
   /**
-   * 1. Quét ảnh Đơn thuốc bằng OpenCV + OCR & Đối chiếu tồn kho bảng Product (Gợi ý AI #1)
+   * 0. Health check thật từ Python AI Service — báo từng model đang READY / DOWN và lý do lỗi.
    */
+  public async getModelsHealth(): Promise<AiModelsHealthReport> {
+    try {
+      const resp = await fetch(`${AI_SERVICE_URL}/api/py-ai/health`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      if (!resp.ok) {
+        throw new Error(`Python AI /health HTTP ${resp.status}`);
+      }
+      const data = (await resp.json()) as Omit<AiModelsHealthReport, 'pythonReachable'>;
+      return {
+        ...data,
+        pythonReachable: true,
+      };
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Không kết nối được Python AI Service';
+      const downModel = (name: string, provider: string, model: string): AiComponentHealth => ({
+        name,
+        provider,
+        model,
+        status: 'DOWN',
+        device: 'unavailable',
+        loadedInMemory: false,
+        error: `Python AI Service (${AI_SERVICE_URL}) không phản hồi: ${errMsg}`,
+      });
+      return {
+        status: 'DOWN',
+        pythonReachable: false,
+        engine: 'Python AI Service Offline',
+        singleLlmSharedPolicy: true,
+        activeLlmModel: 'qwen2.5:7b',
+        indexStats: { products: 0, knowledgeDocuments: 0 },
+        deadModels: [`python-ai-service (${AI_SERVICE_URL}): ${errMsg}`],
+        models: {
+          llm: downModel('llm', 'ollama', 'qwen2.5:7b'),
+          ocr: downModel('ocr', 'rapidocr-onnxruntime', 'PP-OCRv4 (ONNX)'),
+          stt: downModel('stt', 'faster-whisper', 'faster-whisper-medium'),
+          embeddings: downModel('embeddings', 'fastembed-onnx', 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'),
+        },
+      };
+    }
+  }
+
+  /**
+   * 1. OCR đơn thuốc thật bằng Python OpenCV + RapidOCR -> trả Top-K ứng viên + độ tin cậy
+   *    Lưu OcrDraft trạng thái PENDING_REVIEW; mọi dòng mặc định confirmed = false.
+   */
+  private async callPythonOcrRaw(fileBuffer: Buffer, originalName: string) {
+    if (!fileBuffer || fileBuffer.length < 100) {
+      throw new AiServiceError(
+        400,
+        'INVALID_IMAGE',
+        'Tệp hình ảnh rỗng hoặc bị hỏng, không thể đọc đơn thuốc.'
+      );
+    }
+
+    const formData = new FormData();
+    const blob = new Blob([new Uint8Array(fileBuffer)], { type: 'image/png' });
+    formData.append('file', blob, originalName || 'prescription.png');
+
+    let response: Response;
+    try {
+      response = await fetch(`${AI_SERVICE_URL}/api/py-ai/ocr`, {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(25000),
+      });
+    } catch (err) {
+      throw new AiServiceError(
+        503,
+        'AI_OCR_SERVICE_DOWN',
+        `Dịch vụ AI OCR Python (${AI_SERVICE_URL}) hiện đang tắt hoặc không phản hồi: ${err instanceof Error ? err.message : 'Timeout'}`,
+        'PP-OCRv4 (RapidOCR)'
+      );
+    }
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => null);
+      throw parsePyErrorDetail(
+        errJson,
+        response.status,
+        'PP-OCRv4 (RapidOCR)',
+        `Lỗi OCR từ Python AI (HTTP ${response.status})`
+      );
+    }
+
+    return (await response.json()) as {
+      engine: string;
+      sectionMode?: string;
+      elapsed_sec?: number;
+      opencv_preprocessing: string[];
+      raw_ocr_text: string;
+      average_confidence: number;
+      lines: Array<{
+        lineId: string;
+        lineNumber: number;
+        rawText: string;
+        extractedDrugQuery: string;
+        strengthTokens: string[];
+        extractedQuantity: number;
+        extractedUnit: string;
+        extractedDosage: string;
+        ocrConfidence: number;
+      }>;
+    };
+  }
+
+  public async scanAttachmentOcrSummary(filePath: string): Promise<AttachmentOcrSummary | null> {
+    try {
+      if (!fs.existsSync(filePath)) return null;
+      const buf = fs.readFileSync(filePath);
+      const pyData = await this.callPythonOcrRaw(buf, path.basename(filePath));
+      if (!pyData.lines || pyData.lines.length === 0) return null;
+      return {
+        sectionMode: pyData.sectionMode || 'FULL_FALLBACK',
+        lines: pyData.lines.slice(0, 10).map((l) => ({
+          drug: l.extractedDrugQuery || l.rawText,
+          strengthTokens: l.strengthTokens || [],
+          quantity: Number(l.extractedQuantity || 1),
+          unit: l.extractedUnit || '',
+          dosage: l.extractedDosage || '',
+          confidence: Number(l.ocrConfidence || 0),
+        })),
+      };
+    } catch {
+      // Nếu ảnh không phải đơn thuốc (ví dụ ảnh vết phát ban/triệu chứng) hoặc OCR trả 422 -> bỏ qua an toàn
+      return null;
+    }
+  }
+
   public async processPrescriptionOcr(
     fileBuffer: Buffer,
     originalName: string,
-    presetHint = '',
-    isDemo = false
+    createdByUserId?: number
   ): Promise<OcrPrescriptionResult> {
-    const candidateProducts = await loadSlimSearchCandidates(
-      `${presetHint} ${originalName}`,
-      { limit: 250 }
-    );
-    const fuse = new Fuse(candidateProducts, {
-      keys: ['ProductName', 'Description', 'ProductType'],
-      threshold: 0.45,
+    const pyData = await this.callPythonOcrRaw(fileBuffer, originalName);
+
+    const allCatalogProducts = await loadSlimSearchCandidates('', { limit: 250 });
+    const fuse = new Fuse(allCatalogProducts, {
+      keys: [
+        { name: 'ProductName', weight: 0.7 },
+        { name: 'Description', weight: 0.2 },
+        { name: 'ProductType', weight: 0.1 },
+      ],
+      threshold: 0.55,
+      ignoreLocation: true,
+      includeScore: true,
     });
+    const productById = new Map(allCatalogProducts.map((p) => [p.ProductID, p]));
 
-    const lowerName = originalName.toLowerCase();
-    const isBlankName = ['blank', 'trang', 'empty', 'white'].some((k) => lowerName.includes(k));
+    const lines: OcrExtractedLine[] = await Promise.all(
+      (pyData.lines || []).map(async (line) => {
+        const fuseHits = fuse.search(line.extractedDrugQuery || line.rawText).slice(0, 12);
+        const hybridMap = new Map<number, number>();
 
-    // Tiêu chí từ chối ảnh lỗi: ảnh trắng, ảnh hỏng, ảnh không đủ dữ liệu
-    if (!isDemo && fileBuffer.length < 300) {
-      throw new Error('Tệp hình ảnh quá nhỏ hoặc bị hỏng, không đủ dữ liệu để xử lý OCR.');
-    }
+        try {
+          const hybResp = await fetch(`${AI_SERVICE_URL}/api/py-ai/search-hybrid`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: line.extractedDrugQuery || line.rawText,
+              limit: 8,
+              onlyStorefrontPublished: false,
+              includeTest: false,
+            }),
+            signal: AbortSignal.timeout(2500),
+          });
+          if (hybResp.ok) {
+            const hybJson = (await hybResp.json()) as { results?: Array<{ ProductID: number; rrfScore: number }> };
+            for (const r of hybJson.results || []) {
+              hybridMap.set(Number(r.ProductID), Number(r.rrfScore || 0));
+            }
+          }
+        } catch {
+          // Best-effort semantic boost; Fuse + token coverage vẫn chấm điểm ứng viên chính xác
+        }
 
-    if (!isDemo && isBlankName) {
-      throw new Error('Không nhận dạng được văn bản từ ảnh: Hình ảnh đơn thuốc bị trắng hoặc không có nội dung chữ.');
-    }
+        const candidatePoolIds = new Set<number>();
+        const fuseSimMap = new Map<number, number>();
+        for (const h of fuseHits) {
+          candidatePoolIds.add(h.item.ProductID);
+          fuseSimMap.set(h.item.ProductID, Math.max(0, 1 - Number(h.score ?? 1)));
+        }
+        for (const pid of hybridMap.keys()) {
+          if (productById.has(pid)) {
+            candidatePoolIds.add(pid);
+          }
+        }
 
-    if (!isDemo && fileBuffer.length > 0) {
-      const sampleSize = Math.min(fileBuffer.length, 1024);
-      let sum = 0;
-      let sumSq = 0;
-      for (let i = 0; i < sampleSize; i++) {
-        const b = fileBuffer[i];
-        sum += b;
-        sumSq += b * b;
-      }
-      const mean = sum / sampleSize;
-      const variance = (sumSq / sampleSize) - (mean * mean);
-      if (variance < 15) {
-        throw new Error('Không nhận dạng được văn bản từ ảnh: Hình ảnh đồng nhất hoặc quá mờ, không có nét chữ đơn thuốc.');
-      }
-    }
-
-    // Thử gọi sang Python OpenCV + OCR Service (Port 8000)
-    try {
-      const formData = new FormData();
-      const blob = new Blob([new Uint8Array(fileBuffer)], { type: 'image/png' });
-      formData.append('file', blob, originalName);
-      formData.append('preset_hint', presetHint);
-      formData.append('is_demo', isDemo ? 'true' : 'false');
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-      const response = await fetch(`${AI_SERVICE_URL}/api/py-ai/ocr`, {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const pyData = (await response.json()) as {
-          engine: 'python-opencv-ocr';
-          opencv_preprocessing: {
-            processed_base64: string | null;
-            dimensions: string;
-            sharpness_score: number;
-            steps: string[];
-          };
-          raw_ocr_text: string;
-          detected_items: Array<{ keyword: string; quantity: number; dosage: string }>;
-        };
-
-        const drafts: DraftOcrItem[] = pyData.detected_items.map((det) => {
-          const hit = fuse.search(det.keyword)[0];
-          return {
-            keyword: det.keyword,
-            quantity: det.quantity,
-            dosage: det.dosage,
-            matchedId: hit ? hit.item.ProductID : null,
-          };
-        });
+        const candidates = Array.from(candidatePoolIds)
+          .map((pid) => productById.get(pid))
+          .filter((p): p is SlimAiProduct => Boolean(p))
+          .map((p) =>
+            scoreProductCandidate(
+              line,
+              p,
+              fuseSimMap.get(p.ProductID) ?? 0.25,
+              hybridMap.get(p.ProductID) ?? 0
+            )
+          )
+          .filter((c) => c.matchScore >= 0.22)
+          .sort((a, b) => b.combinedConfidence - a.combinedConfidence)
+          .slice(0, 5);
 
         return {
-          engine: 'python-opencv-ocr',
-          isDemo: Boolean(isDemo),
-          requiresPharmacistVerification: true,
-          opencvPreprocessing: {
-            processedBase64: pyData.opencv_preprocessing.processed_base64,
-            dimensions: pyData.opencv_preprocessing.dimensions,
-            sharpnessScore: pyData.opencv_preprocessing.sharpness_score,
-            steps: pyData.opencv_preprocessing.steps,
-          },
-          rawOcrText: pyData.raw_ocr_text,
-          items: await hydrateMatchedPrescriptionItems(drafts),
+          lineId: line.lineId,
+          lineNumber: line.lineNumber,
+          rawText: line.rawText,
+          extractedDrugQuery: line.extractedDrugQuery,
+          strengthTokens: line.strengthTokens || [],
+          extractedQuantity: Math.max(1, Number(line.extractedQuantity || 1)),
+          extractedUnit: line.extractedUnit || '',
+          extractedDosage: line.extractedDosage || '',
+          ocrConfidence: line.ocrConfidence,
+          candidates,
+          suggestedProductId: candidates[0]?.ProductID ?? null,
+          // BẮT BUỘC: Luôn khởi tạo chưa chọn/chưa xác nhận để Dược sĩ kiểm duyệt từng dòng
+          selectedProductId: null,
+          confirmed: false,
+          skipped: false,
         };
-      } else {
-        const errJson = (await response.json().catch(() => null)) as { detail?: string } | null;
-        if (errJson?.detail) {
-          throw new Error(errJson.detail);
-        }
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('Không nhận dạng được')) {
-        throw err;
-      }
-      // Tự động chuyển sang Fallback trên Node.js nếu Python AI Service chưa bật
-    }
+      })
+    );
 
-    // Fallback & Custom Text Parsing trực tiếp trên Node.js
-    const lowerHint = `${originalName} ${presetHint}`.toLowerCase();
-    let fallbackDrafts: DraftOcrItem[] = [];
-
-    if (presetHint && presetHint.includes('\n')) {
-      const lines = presetHint
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l.length > 2);
-
-      for (const line of lines) {
-        const hit = fuse.search(line)[0];
-        const qtyMatch = line.match(/(\d+)\s*(hộp|vỉ|viên|chai|tuýp|ống|gói)?/i);
-        const qty = qtyMatch ? Math.max(1, Number(qtyMatch[1])) : 1;
-        const cleanName = line.replace(/^\d+[\.\-\)]\s*/, '').split(/[—–-]/)[0].trim();
-
-        fallbackDrafts.push({
-          keyword: hit ? hit.item.ProductName : cleanName || line,
-          quantity: qty,
-          dosage: line,
-          matchedId: hit ? hit.item.ProductID : null,
-        });
-      }
-    }
-
-    if (fallbackDrafts.length === 0) {
-      if (isDemo) {
-        const rawItems =
-          lowerHint.includes('da-day') || lowerHint.includes('dạ dày')
-            ? [
-                { keyword: 'Phosphalugel', quantity: 1, dosage: 'Uống 1 gói sau ăn hoặc khi đau thượng vị' },
-                { keyword: 'Omeprazol 20mg', quantity: 1, dosage: 'Uống 1 viên trước ăn sáng 30 phút' },
-                { keyword: 'Enterogermina', quantity: 1, dosage: 'Sáng 1 ống, Chiều 1 ống' },
-              ]
-            : lowerHint.includes('khang-sinh') || lowerHint.includes('viêm họng') || lowerHint.includes('amidan')
-              ? [
-                  { keyword: 'Augmentin 1g', quantity: 1, dosage: 'Uống 1 viên x 2 lần/ngày sau ăn' },
-                  { keyword: 'Efferalgan 500mg', quantity: 1, dosage: 'Pha 1 viên sủi khi sốt > 38.5°C' },
-                  { keyword: 'Alpha Choay', quantity: 1, dosage: 'Ngậm dưới lưỡi 2 viên x 2 lần/ngày' },
-                ]
-              : [
-                  { keyword: 'Panadol Extra', quantity: 1, dosage: 'Uống 1 viên khi sốt > 38.5°C (cách 4-6h)' },
-                  { keyword: 'Siro Ho Prospan', quantity: 1, dosage: 'Uống 5ml x 3 lần/ngày sau ăn' },
-                  { keyword: 'Strepsils Cool', quantity: 2, dosage: 'Ngậm 1 viên mỗi 3-4 giờ' },
-                  { keyword: 'Berocca', quantity: 1, dosage: 'Pha 1 viên sủi uống buổi sáng' },
-                ];
-
-        fallbackDrafts = rawItems.map((r) => {
-          const hit = fuse.search(r.keyword)[0];
-          return {
-            ...r,
-            matchedId: hit ? hit.item.ProductID : null,
-          };
-        });
-      } else {
-        // Ảnh thật nhưng không đọc được dòng thuốc nào
-        throw new Error('Không nhận dạng được dòng thuốc nào từ hình ảnh này. Vui lòng chụp rõ nét đơn thuốc của bác sĩ hoặc nhập trực tiếp tên thuốc.');
-      }
-    }
-
-    const hydratedItems = await hydrateMatchedPrescriptionItems(fallbackDrafts);
-    const b64Preview = `data:image/png;base64,${fileBuffer.toString('base64')}`;
+    const draftId = randomUUID();
+    await prisma.ocrDraft.create({
+      data: {
+        DraftID: draftId,
+        CreatedByUserID: createdByUserId ?? null,
+        OriginalFilename: originalName || 'prescription.png',
+        RawOcrText: pyData.raw_ocr_text || '',
+        LinesJson: JSON.stringify(lines),
+        Status: 'PENDING_REVIEW',
+      },
+    });
 
     return {
-      engine: 'node-fallback-ocr',
-      isDemo: Boolean(isDemo),
+      draftId,
+      engine: pyData.engine,
+      sectionMode: pyData.sectionMode,
+      elapsedSec: pyData.elapsed_sec,
       requiresPharmacistVerification: true,
+      allLinesConfirmed: false,
+      averageConfidence: pyData.average_confidence,
       opencvPreprocessing: {
-        processedBase64: b64Preview,
-        dimensions: 'Auto-detected',
-        sharpnessScore: 94.5,
-        steps: [
-          '1. Image Buffer Normalization',
-          '2. Contrast & Grayscale Enhancement',
-          '3. Vietnamese Medical Dictionary Matching (Fuse.js)',
-        ],
+        steps: pyData.opencv_preprocessing || [],
       },
-      rawOcrText:
-        (isDemo
-          ? '[DEMO MẪU THỬ NGHIỆM] BỆNH VIỆN ĐẠI HỌC Y - ĐƠN THUỐC NGOẠI TRÚ\n'
-          : 'BẢN NHÁP BÓC TÁCH ĐƠN THUỐC (CẦN DƯỢC SĨ XÁC NHẬN)\n') +
-        hydratedItems
-          .map((d, i) => `${i + 1}. ${d.keyword} — SL: ${d.quantity} (${d.dosage})`)
-          .join('\n'),
-      items: hydratedItems,
+      rawOcrText: pyData.raw_ocr_text,
+      lines,
     };
   }
 
   /**
-   * 2. Chẩn đoán Y tế sơ bộ & Tư vấn Dược phẩm RAG (Gợi ý AI #2, #3, #5)
+   * 1b. Xác nhận từng dòng thuốc đã bóc tách bởi Dược sĩ trước khi chuyển POS / xuất hóa đơn.
    */
-  public async diagnoseAndRecommend(message: string): Promise<DiagnoseChatResult> {
-    const candidateProducts = await loadSlimSearchCandidates(message, {
-      inStockOnly: true,
-      limit: 60,
+  public async verifyOcrDraftLines(
+    draftId: string,
+    verifiedLines: Array<{
+      lineId: string;
+      selectedProductId: number | null;
+      quantity: number;
+      dosage?: string;
+      confirmed: boolean;
+      skipped?: boolean;
+    }>
+  ) {
+    const draft = await prisma.ocrDraft.findUnique({ where: { DraftID: draftId } });
+    if (!draft) {
+      throw new AiServiceError(404, 'OCR_DRAFT_NOT_FOUND', `Không tìm thấy phiên OCR nháp ${draftId}`);
+    }
+
+    const originalLines = JSON.parse(draft.LinesJson) as OcrExtractedLine[];
+    const inputMap = new Map(verifiedLines.map((l) => [l.lineId, l]));
+
+    const updatedLines: OcrExtractedLine[] = originalLines.map((orig) => {
+      const submitted = inputMap.get(orig.lineId);
+      if (!submitted) return orig;
+      return {
+        ...orig,
+        selectedProductId: submitted.skipped ? null : submitted.selectedProductId,
+        extractedQuantity: Math.max(1, Number(submitted.quantity || orig.extractedQuantity || 1)),
+        extractedDosage: submitted.dosage !== undefined ? submitted.dosage : orig.extractedDosage,
+        confirmed: Boolean(submitted.confirmed && !submitted.skipped && submitted.selectedProductId),
+        skipped: Boolean(submitted.skipped),
+      };
     });
 
-    // 1. Thử gọi sang Python Scikit-learn TF-IDF + Cosine Similarity Service (Port 8000)
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const activeLines = updatedLines.filter((l) => !l.skipped);
+    const unconfirmedActive = activeLines.filter((l) => !l.confirmed || !l.selectedProductId);
+    if (activeLines.length === 0) {
+      throw new AiServiceError(
+        400,
+        'OCR_NO_ACTIVE_ITEMS',
+        'Phải xác nhận ít nhất 1 dòng thuốc khớp danh mục trước khi chuyển sang POS.'
+      );
+    }
+    if (unconfirmedActive.length > 0) {
+      throw new AiServiceError(
+        400,
+        'OCR_ITEMS_UNCONFIRMED',
+        `Vẫn còn ${unconfirmedActive.length} dòng thuốc OCR chưa được Dược sĩ chọn sản phẩm và xác nhận.`
+      );
+    }
 
-      const response = await fetch(`${AI_SERVICE_URL}/api/py-ai/diagnose`, {
+    const selectedIds = Array.from(
+      new Set(activeLines.map((l) => l.selectedProductId).filter((id): id is number => Boolean(id)))
+    );
+    const products = await prisma.product.findMany({
+      where: { ProductID: { in: selectedIds } },
+      select: {
+        ...SLIM_AI_PRODUCT_SELECT,
+        packaging: { select: { IsRx: true } },
+      },
+    });
+    const prodMap = new Map(products.map((p) => [p.ProductID, p]));
+
+    for (const line of activeLines) {
+      if (!line.selectedProductId || !prodMap.has(line.selectedProductId)) {
+        throw new AiServiceError(
+          400,
+          'OCR_INVALID_PRODUCT_SELECTION',
+          `Sản phẩm được chọn cho dòng "${line.extractedDrugQuery}" không tồn tại trong kho.`
+        );
+      }
+    }
+
+    const updated = await prisma.ocrDraft.update({
+      where: { DraftID: draftId },
+      data: {
+        LinesJson: JSON.stringify(updatedLines),
+        Status: 'CONFIRMED',
+      },
+    });
+
+    return {
+      draftId: updated.DraftID,
+      status: updated.Status,
+      allLinesConfirmed: true,
+      confirmedLines: activeLines.length,
+      skippedLines: updatedLines.length - activeLines.length,
+      lines: updatedLines,
+      posItems: activeLines.map((l) => {
+        const p = prodMap.get(l.selectedProductId!)!;
+        return {
+          ProductID: p.ProductID,
+          ProductName: p.ProductName,
+          Price: p.Price,
+          Unit: p.Unit,
+          Quantity: l.extractedQuantity,
+          MaxQuantity: p.Quantity,
+          DosageNote: l.extractedDosage || 'Theo chỉ định của bác sĩ / Dược sĩ',
+          IsRx: Boolean(p.packaging?.IsRx),
+        };
+      }),
+    };
+  }
+
+  /**
+   * 2. Nhận dạng giọng nói local bằng Faster-Whisper
+   */
+  public async speechToText(
+    audioBuffer: Buffer,
+    originalname: string,
+    mimeType = 'audio/webm',
+    language = 'vi'
+  ): Promise<SpeechToTextResult> {
+    if (!audioBuffer || audioBuffer.length < 256) {
+      throw new AiServiceError(400, 'EMPTY_AUDIO', 'Dữ liệu ghi âm rỗng hoặc quá ngắn.');
+    }
+
+    const formData = new FormData();
+    const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType || 'audio/webm' });
+    formData.append('file', blob, originalname || 'recording.webm');
+
+    let response: Response;
+    try {
+      response = await fetch(`${AI_SERVICE_URL}/api/py-ai/stt?language=${encodeURIComponent(language)}`, {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(45000),
+      });
+    } catch (err) {
+      throw new AiServiceError(
+        503,
+        'AI_STT_SERVICE_DOWN',
+        `Dịch vụ nhận dạng giọng nói Faster-Whisper (${AI_SERVICE_URL}) không phản hồi: ${err instanceof Error ? err.message : 'Timeout'}`,
+        'faster-whisper'
+      );
+    }
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => null);
+      throw parsePyErrorDetail(
+        errJson,
+        response.status,
+        'faster-whisper',
+        `Lỗi nhận dạng giọng nói STT (HTTP ${response.status})`
+      );
+    }
+
+    return (await response.json()) as SpeechToTextResult;
+  }
+
+  /**
+   * 3. Chatbot Dược lâm sàng & Storefront RAG (Google AI Studio Gemini / Local Qwen fallback) + Tool DDI thực tế
+   */
+  private async preparePyChatPayload(params: {
+    message: string;
+    mode?: 'DRUG_QA' | 'SYMPTOM_CONSULTATION';
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    audience?: 'STAFF' | 'CUSTOMER';
+    onlyStorefrontPublished?: boolean;
+    productIdContext?: number;
+    patientContext?: PatientTriageContext;
+  }) {
+    let enrichedMessage = params.message.trim();
+    const audience = params.audience === 'CUSTOMER' ? 'CUSTOMER' : 'STAFF';
+    const onlyPublished = Boolean(params.onlyStorefrontPublished || audience === 'CUSTOMER');
+
+    if (params.productIdContext) {
+      const ctxProd = await prisma.product.findFirst({
+        where: {
+          ProductID: params.productIdContext,
+          ...(onlyPublished ? { packaging: { is: { IsPublished: true, IsTestOnly: false } } } : {}),
+        },
+        select: { ProductID: true, ProductName: true },
+      });
+      if (ctxProd && !normalizeViText(enrichedMessage).includes(normalizeViText(ctxProd.ProductName))) {
+        enrichedMessage = `[Đang xem sản phẩm: ${ctxProd.ProductName}] ${enrichedMessage}`;
+      }
+    }
+
+    const candidates = await loadSlimSearchCandidates(enrichedMessage, { inStockOnly: false, limit: 25 });
+    const normMsg = normalizeViText(enrichedMessage);
+    const mentionedIds: number[] = [];
+    for (const cand of candidates) {
+      const words = normalizeViText(cand.ProductName)
+        .split(/\s+/)
+        .filter((w) => w.length >= 4 && !/^\d+(mg|ml|mcg|g)$/i.test(w));
+      if (words.length > 0 && words.some((w) => normMsg.includes(w))) {
+        mentionedIds.push(cand.ProductID);
+      }
+    }
+
+    let interactionWarnings: string[] = [];
+    if (mentionedIds.length >= 2) {
+      try {
+        const safety = await evaluateClinicalSafetyServerSide({ productIds: mentionedIds.slice(0, 6) });
+        if (safety.warnings.length > 0) {
+          interactionWarnings = safety.warnings.map(
+            (w) => `[${w.ruleId}] ${w.title} (${w.severity}): ${w.recommendation}`
+          );
+        }
+      } catch {
+        // Bỏ qua lỗi DDI cục bộ nếu thiếu rule; AI vẫn trả lời bình thường
+      }
+    }
+
+    const sanitizedPatientContext = params.patientContext
+      ? {
+          ageGroup: params.patientContext.ageGroup || 'ADULT',
+          pregnantOrBreastfeeding: Boolean(params.patientContext.pregnantOrBreastfeeding),
+          allergies: String(params.patientContext.allergies || '').trim().slice(0, 150),
+          chronicConditions: String(params.patientContext.chronicConditions || '').trim().slice(0, 150),
+        }
+      : null;
+
+    return {
+      message: enrichedMessage,
+      mode: params.mode || null,
+      history: (params.history || []).slice(-4).map((h) => ({
+        role: h.role === 'assistant' ? 'assistant' : 'user',
+        content: String(h.content || '').slice(0, 450),
+      })),
+      audience,
+      onlyStorefrontPublished: onlyPublished,
+      interactionWarnings,
+      patientContext: sanitizedPatientContext,
+    };
+  }
+
+  private enrichChatMetadata<T extends Record<string, unknown>>(raw: T): T & {
+    engine: string;
+    isAdvisoryOnly: true;
+    disclaimer: string;
+    ruleVersion: string;
+  } {
+    const provider = String(raw.provider || 'ollama');
+    const model = String(raw.modelUsed || 'qwen2.5:7b');
+    return {
+      ...raw,
+      engine: provider === 'google-ai-studio' ? `google-ai-studio (${model})` : `ollama-qwen-rag (${model})`,
+      isAdvisoryOnly: true,
+      disclaimer: String(raw.disclaimer || CLINICAL_ADVISORY_DISCLAIMER),
+      ruleVersion: CLINICAL_RULE_VERSION,
+    };
+  }
+
+  public async chatWithSources(
+    message: string,
+    mode?: 'DRUG_QA' | 'SYMPTOM_CONSULTATION',
+    history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+    options?: {
+      audience?: 'STAFF' | 'CUSTOMER';
+      onlyStorefrontPublished?: boolean;
+      productIdContext?: number;
+      patientContext?: PatientTriageContext;
+    }
+  ): Promise<RagChatResult> {
+    const pyBody = await this.preparePyChatPayload({
+      message,
+      mode,
+      history,
+      audience: options?.audience,
+      onlyStorefrontPublished: options?.onlyStorefrontPublished,
+      productIdContext: options?.productIdContext,
+      patientContext: options?.patientContext,
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(`${AI_SERVICE_URL}/api/py-ai/chat-rag`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pyBody),
+        signal: AbortSignal.timeout(90000),
+      });
+    } catch (err) {
+      throw new AiServiceError(
+        503,
+        'AI_LLM_SERVICE_DOWN',
+        `Dịch vụ AI Chatbot (${AI_SERVICE_URL}) hiện không phản hồi: ${err instanceof Error ? err.message : 'Timeout'}`,
+        'llm'
+      );
+    }
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => null);
+      throw parsePyErrorDetail(
+        errJson,
+        response.status,
+        'llm',
+        `Mô hình AI / RAG chưa sẵn sàng (HTTP ${response.status})`
+      );
+    }
+
+    const pyRes = (await response.json()) as Omit<
+      RagChatResult,
+      'engine' | 'isAdvisoryOnly' | 'ruleVersion'
+    >;
+
+    return this.enrichChatMetadata(pyRes) as RagChatResult;
+  }
+
+  public async chatForStorefront(params: {
+    message: string;
+    mode?: 'DRUG_QA' | 'SYMPTOM_CONSULTATION';
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    productIdContext?: number;
+    patientContext?: PatientTriageContext;
+  }): Promise<StorefrontRagChatResult> {
+    const res = await this.chatWithSources(params.message, params.mode, params.history || [], {
+      audience: 'CUSTOMER',
+      onlyStorefrontPublished: true,
+      productIdContext: params.productIdContext,
+      patientContext: params.patientContext,
+    });
+
+    const sanitizedProducts =
+      res.suggestedProducts.length > 0
+        ? await fetchSanitizedPublicProductsByIds(
+            res.suggestedProducts.map((p) => p.ProductID),
+            true
+          )
+        : [];
+
+    return {
+      ...res,
+      suggestedProducts: sanitizedProducts,
+    };
+  }
+
+  public async streamChatToExpressRes(
+    params: {
+      message: string;
+      mode?: 'DRUG_QA' | 'SYMPTOM_CONSULTATION';
+      history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+      audience?: 'STAFF' | 'CUSTOMER';
+      onlyStorefrontPublished?: boolean;
+      productIdContext?: number;
+      patientContext?: PatientTriageContext;
+    },
+    res: ExpressResponse
+  ): Promise<void> {
+    const isCustomer = params.audience === 'CUSTOMER';
+    const pyBody = await this.preparePyChatPayload(params);
+
+    let pyResp: Response;
+    try {
+      pyResp = await fetch(`${AI_SERVICE_URL}/api/py-ai/chat-rag/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pyBody),
+        signal: AbortSignal.timeout(95000),
+      });
+    } catch (err) {
+      throw new AiServiceError(
+        503,
+        'AI_LLM_SERVICE_DOWN',
+        `Dịch vụ AI Chatbot (${AI_SERVICE_URL}) hiện không phản hồi: ${err instanceof Error ? err.message : 'Timeout'}`,
+        'llm'
+      );
+    }
+
+    if (!pyResp.ok || !pyResp.body) {
+      const errJson = await pyResp.json().catch(() => null);
+      throw parsePyErrorDetail(
+        errJson,
+        pyResp.status,
+        'llm',
+        `Mô hình AI / RAG chưa sẵn sàng (HTTP ${pyResp.status})`
+      );
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    const decoder = new TextDecoder('utf-8');
+    const reader = pyResp.body.getReader();
+    let buffer = '';
+
+    const sanitizeEventPayload = async (eventName: string, dataObj: Record<string, unknown>) => {
+      if (eventName !== 'meta' && eventName !== 'done') {
+        return dataObj;
+      }
+      const enriched = this.enrichChatMetadata(dataObj);
+      if (isCustomer && Array.isArray(enriched.suggestedProducts) && enriched.suggestedProducts.length > 0) {
+        const ids = (enriched.suggestedProducts as Array<{ ProductID?: number }>)
+          .map((p) => Number(p.ProductID))
+          .filter((id) => Number.isInteger(id) && id > 0);
+        enriched.suggestedProducts = await fetchSanitizedPublicProductsByIds(ids, true);
+      }
+      return enriched;
+    };
+
+    const forwardSseFrame = async (frame: string) => {
+      if (!frame.trim()) return;
+      let eventName = 'message';
+      const dataLines: string[] = [];
+      for (const line of frame.split(/\r?\n/)) {
+        if (line.startsWith('event:')) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trim());
+        }
+      }
+      if (dataLines.length === 0) return;
+      const rawJson = dataLines.join('\n');
+      try {
+        const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+        const outObj = await sanitizeEventPayload(eventName, parsed);
+        res.write(`event: ${eventName}\ndata: ${JSON.stringify(outObj)}\n\n`);
+      } catch {
+        res.write(`event: ${eventName}\ndata: ${rawJson}\n\n`);
+      }
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let sepIdx = buffer.indexOf('\n\n');
+        while (sepIdx !== -1) {
+          const frame = buffer.slice(0, sepIdx);
+          buffer = buffer.slice(sepIdx + 2);
+          await forwardSseFrame(frame);
+          sepIdx = buffer.indexOf('\n\n');
+        }
+      }
+      if (buffer.trim()) {
+        await forwardSseFrame(buffer);
+      }
+    } finally {
+      reader.releaseLock();
+      res.end();
+    }
+  }
+
+  public async diagnoseAndRecommend(
+    message: string,
+    mode?: 'DRUG_QA' | 'SYMPTOM_CONSULTATION',
+    history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  ): Promise<RagChatResult> {
+    return this.chatWithSources(message, mode, history);
+  }
+
+  /**
+   * 4. Tìm kiếm Hybrid (BM25 + FastEmbed Semantic RRF) cho Storefront & ERP
+   *    Luồng tìm kiếm thương mại cho phép graceful fallback về từ khóa kèm cảnh báo semanticDegraded.
+   */
+  public async searchHybrid(
+    query: string,
+    options: { limit?: number; onlyStorefrontPublished?: boolean; includeTest?: boolean } = {}
+  ): Promise<{
+    available: boolean;
+    engine: 'hybrid-rrf' | 'bm25-keyword-only' | 'unavailable';
+    semanticAvailable: boolean;
+    results: Array<{ ProductID: number; rrfScore: number; keywordScore: number; semanticScore: number }>;
+  }> {
+    try {
+      const resp = await fetch(`${AI_SERVICE_URL}/api/py-ai/search-hybrid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message,
-          products: candidateProducts,
+          query,
+          limit: options.limit ?? 50,
+          onlyStorefrontPublished: Boolean(options.onlyStorefrontPublished),
+          includeTest: Boolean(options.includeTest),
         }),
-        signal: controller.signal,
+        signal: AbortSignal.timeout(3000),
       });
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const pyRes = (await response.json()) as {
-          engine: 'python-sklearn-tfidf-rag';
-          preliminary_diagnosis: string;
-          clinical_advice: string;
-          contraindication_warning: string;
-          recommended_products: DiagnoseChatResult['recommendedProducts'];
-        };
-
-        return {
-          engine: 'python-sklearn-tfidf-rag',
-          aiServiceAvailable: true,
-          requiresPharmacistConsultation: (pyRes.recommended_products || []).length === 0,
-          preliminaryDiagnosis: pyRes.preliminary_diagnosis,
-          clinicalAdvice: pyRes.clinical_advice,
-          contraindicationWarning: pyRes.contraindication_warning,
-          isAdvisoryOnly: true,
-          disclaimer: CLINICAL_ADVISORY_DISCLAIMER,
-          ruleVersion: CLINICAL_RULE_VERSION,
-          recommendedProducts: (pyRes.recommended_products || []).map((item) => ({
-            ProductID: item.ProductID,
-            ProductName: item.ProductName,
-            ProductType: item.ProductType,
-            Price: item.Price,
-            Unit: item.Unit,
-            Quantity: item.Quantity,
-            Description: item.Description,
-            matchNote: 'Gợi ý tham khảo theo triệu chứng — cần Dược sĩ thẩm định trước khi cấp phát.',
-          })),
-        };
+      if (!resp.ok) {
+        return { available: false, engine: 'unavailable', semanticAvailable: false, results: [] };
       }
+      const data = (await resp.json()) as {
+        semanticAvailable?: boolean;
+        results?: Array<{ ProductID: number; rrfScore: number; keywordScore: number; semanticScore: number }>;
+      };
+      const semAvail = Boolean(data.semanticAvailable);
+      return {
+        available: true,
+        engine: semAvail ? 'hybrid-rrf' : 'bm25-keyword-only',
+        semanticAvailable: semAvail,
+        results: data.results || [],
+      };
     } catch {
-      // Dịch vụ AI Python không khả dụng: chuyển Dược sĩ tư vấn trực tiếp, KHÔNG đoán mặc định.
+      return { available: false, engine: 'unavailable', semanticAvailable: false, results: [] };
     }
-
-    // 2. Fail-closed khi thiếu nguồn AI đáng tin cậy: không đưa chẩn đoán hoặc gợi ý thuốc mặc định
-    return {
-      engine: 'pharmacist-handoff',
-      aiServiceAvailable: false,
-      requiresPharmacistConsultation: true,
-      preliminaryDiagnosis: 'Chưa có kết quả phân tích tự động — Chuyển Dược sĩ tư vấn trực tiếp',
-      clinicalAdvice:
-        'Hệ thống AI lâm sàng hiện không khả dụng hoặc chưa có nguồn dữ liệu đối chiếu đáng tin cậy. Tuyệt đối không tự chẩn đoán mặc định; vui lòng chuyển thông tin người bệnh sang Dược sĩ chuyên môn thăm hỏi trực tiếp trước khi tư vấn thuốc.',
-      contraindicationWarning:
-        'Cần khai thác trực tiếp tiền sử dị ứng, bệnh nền, phụ nữ có thai/cho con bú và thuốc đang sử dụng trước khi chỉ định hoặc cấp phát.',
-      isAdvisoryOnly: true,
-      disclaimer: CLINICAL_ADVISORY_DISCLAIMER,
-      ruleVersion: CLINICAL_RULE_VERSION,
-      recommendedProducts: [],
-    };
   }
 }
 

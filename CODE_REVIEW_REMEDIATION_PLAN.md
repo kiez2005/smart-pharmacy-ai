@@ -1,27 +1,43 @@
-# Smart Pharmacy — Báo cáo review tổng hợp và backlog sửa lỗi (ĐÃ HOÀN TẤT 100%)
+# Smart Pharmacy — Báo cáo review tổng hợp và backlog sửa lỗi (CÒN TỒN ĐỌNG SAU REVIEW)
 
 - **Ngày rà soát gốc:** 15/11/2026 (Commit cơ sở `36b2c87`)
-- **Ngày hoàn tất khắc phục & nghiệm thu:** 15/11/2026
+- **Ngày cập nhật kết quả review lại:** 15/11/2026
 - **Phạm vi:** Backend API (`backend`), ERP/dược sĩ (`frontend`), Storefront khách hàng (`storefront`), AI Python (`ai-service`), Prisma schema, seed và script vận hành.
-- **Trạng thái tổng thể:** **ĐÃ XỬ LÝ HOÀN TẤT 17/17 HẠNG MỤC (`P0-01` → `P0-06`, `P1-01` → `P1-08`, `P2-01` → `P2-03`)**. Đã vượt qua toàn bộ 3 bộ kiểm thử tự động (`22/22`, `10/10`, `5/5`), kiểm tra biên dịch TypeScript/Python (`0` lỗi) và kiểm thử giao diện trực quan ở cả Desktop (`1280x800`) lẫn Mobile (`390x844`).
+- **Commit được review lại:** `29119d9` (15/11/2026).
+- **Trạng thái tổng thể:** **Chưa thể xác nhận 17/17 đã hoàn tất.** Review tĩnh commit `29119d9` còn phát hiện 8 điểm cần xử lý trong `P0-01`, `P0-03`, `P0-04`, `P0-06`, `P1-01`, `P1-05`, `P1-07`, `P2-02` (chi tiết bên dưới). Các số liệu kiểm thử `22/22`, `10/10`, `5/5` và kiểm thử giao diện là kết quả được ghi trong bản trước; lượt review này **không chạy lại test**.
 
 > **Ưu tiên:** P0 = chặn trước khi dùng dữ liệu/nghiệp vụ nhà thuốc thật; P1 = sửa trước khi phát hành rộng; P2 = sửa trong đợt hoàn thiện và tăng quy mô.
 
+## Kết quả review lại commit `29119d9` — việc còn phải sửa
+
+Các mục dưới đây đối chiếu trực tiếp với backlog gốc; không phải các giả thuyết mới. Các phần “Đã khắc phục” ở sau ghi lại thay đổi của commit, nhưng trạng thái hoàn tất cần được hiểu theo các tồn đọng cụ thể này.
+
+1. **`P0-01` — Seed có thể tạo tài khoản admin không đăng nhập được.** Nếu cả `SEED_ADMIN_PASSWORD` và `SEED_DEFAULT_PASSWORD` để trống, `seed.ts` sinh `bootstrapPassword` ngẫu nhiên, chỉ hash để lưu DB rồi bỏ mật khẩu gốc; log cũng không in hoặc cung cấp cách lấy lại. Ở DB mới, tài khoản admin mẫu vì vậy không có thông tin đăng nhập khả dụng. Nên yêu cầu cấu hình mật khẩu khởi tạo đủ mạnh và dừng seed nếu thiếu; cung cấp quy trình reset riêng có kiểm soát.
+2. **`P0-03` — Reference VietQR chưa được chống trùng toàn hệ thống.** `collectInvoiceDebt` chỉ tìm `ReferenceCode` trong `invoice.paymentTransactions` của hóa đơn đang thu; schema không đặt unique cho mã tham chiếu. Cùng một mã FT có thể được nhập cho hóa đơn khác và ghi nhận thu tiền lần nữa. Đồng thời `paymentMethod` lấy trực tiếp từ body dưới dạng `string`, không validate enum/tính tương thích với phương thức của hóa đơn. Cần chống trùng nguyên tử ở cấp DB/toàn hệ thống cho giao dịch ngân hàng và validate phương thức trước khi ghi sổ.
+3. **`P0-04` — Đảo phiếu nhập có thể trừ nhầm StockLot.** `cancelPurchaseOrder` tìm lô theo `ProductID + BatchNumber + Status`, rồi lấy `LotID` mới nhất; không khớp `ExpiryDate` hay liên kết lô được tạo bởi chính `PurchaseOrderItem`. Nếu có nhiều lô cùng mã lô, thao tác có thể giảm tồn ở lô khác với lô của dòng phiếu. Cần liên kết chính xác `PurchaseOrderItem` với `LotID` khi nhập, rồi đảo đúng lô đó; tối thiểu phải khớp cả hạn dùng và xử lý trường hợp trùng lô rõ ràng.
+4. **`P0-06` — AI vẫn đưa lời khuyên điều trị/thuốc theo bộ từ khóa mẫu.** `CLINICAL_PROTOCOLS` vẫn trả tên hội chứng, hướng dẫn dùng thuốc và cảnh báo viết sẵn; truy vấn TF-IDF còn được bơm `priority_terms` là các thuốc đặt trước. `ai.service.ts` đánh dấu `requiresPharmacistConsultation=false` khi có ít nhất một gợi ý, dù `matchNote` nói cần Dược sĩ thẩm định. Màn hình kiểm tra tương tác cũng hiện trạng thái xanh “Phối hợp thuốc an toàn” khi rule set không có cảnh báo, trong khi bộ quy tắc chỉ giới hạn. Metadata/disclaimer chưa ngăn kết luận an toàn sai. Cho đến khi có nguồn lâm sàng được thẩm định và độ bao phủ phù hợp, cần bắt buộc Dược sĩ xem xét, không phát thông điệp “an toàn” từ kết quả rỗng, và không trả phác đồ/thuốc mẫu như lời khuyên dùng thuốc.
+5. **`P1-01` — CASHIER vẫn đọc và sửa được dữ liệu lâm sàng qua `PUT /customers/:id`.** `updateCustomer` chỉ cấm CASHIER sửa `CustomerType`, `CreditLimit`, `TaxCode`; schema vẫn nhận `Allergies` và `ChronicCond`. Hơn nữa, kết quả `prisma.customer.update` trả toàn bộ scalar fields nên phản hồi của endpoint lộ lại hai trường mà `GET /customers` đã redact. Cần allowlist field theo role và trả DTO đã redact cho CASHIER; chỉ PHARMACIST/ADMIN được đọc hoặc thay đổi hồ sơ lâm sàng.
+6. **`P1-05` — Các trang ERP chưa dùng phân trang/tìm kiếm server-side.** `InvoicesManagementPage` gọi `listInvoices()` không tham số (mặc định chỉ 50 dòng); `CustomersPage` chỉ lấy 200 khách rồi lọc/phân trang ở client; `SuppliersAndPurchaseOrdersPage` gọi suppliers và purchase orders không tham số (mặc định 50). Dữ liệu cũ hơn không xuất hiện trong bảng/tìm kiếm dù backend có `pagination`. Cần truyền `page`, `limit`, `search`, `status` từ từng trang và dùng tổng số trang/tổng bản ghi server trả về.
+7. **`P1-07` — KPI sổ quỹ chính xác nhưng phép tính tải toàn bộ Payment vào RAM.** `getPaymentsLedger` lấy `allPaymentsForSummary` bằng `findMany` không giới hạn để cộng KPI trên mỗi request. Bảng lớn sẽ làm thời gian phản hồi và bộ nhớ tăng theo tổng lịch sử. Chuyển phép cộng sang aggregate/groupBy hoặc truy vấn SQL tổng hợp trong DB, giữ truy vấn danh sách giao dịch theo trang.
+8. **`P2-02` — UI vẫn mô tả đối soát thủ công như tự động.** Một số nhãn ở `PaymentsLedgerPage` còn ghi “đối soát tự động VietQR/Napas247”, “Nhật Ký Đối Soát Tự Động” và “Khớp lệnh biến động số dư”, dù hệ thống chỉ cho nhân viên nhập mã tham chiếu thủ công, không kết nối Napas/ngân hàng. Đổi các nhãn còn sót thành “đối soát thủ công”; chỉ quảng bá tự động khi có tích hợp xác thực giao dịch thực.
+
+**Phạm vi lượt này:** đọc diff của commit, kiểm tra các controller/service/UI liên quan và đối chiếu với các mục backlog trên. Không chỉnh sửa code ứng dụng và không chạy test.
+
 ## Tóm tắt kết quả thực hiện
 
-1. **[x] Bảo mật bí mật & Seed (`P0-01`):** Đã gỡ JWT secret mẫu dùng được khỏi `.env.example`, bổ sung `validateJwtSecret` chặn secret yếu/mẫu ở production (`>= 32` ký tự), khóa `seed.ts` không cho chạy trên production và bắt buộc cờ `--force-reset` + `CONFIRM_SEED_WIPE=WIPE_ALL_DATA` mới được xóa dữ liệu (mặc định dùng `upsert` idempotent), gỡ toàn bộ nút điền nhanh mật khẩu demo khỏi `AuthPage.tsx`.
+1. **[~] Bảo mật bí mật & Seed (`P0-01`):** JWT secret/reset guard và gỡ mật khẩu demo đã có; mật khẩu admin ngẫu nhiên khi seed thiếu `SEED_ADMIN_PASSWORD` không được cung cấp lại, xem tồn đọng ở đầu file.
 2. **[x] Phân quyền tài chính khách hàng & Công nợ (`P0-02`):** Đã cấm gửi `DebtBalance` trực tiếp (`400 DEBT_DIRECT_EDIT_FORBIDDEN`), chặn `CASHIER` tạo/sửa khách `WHOLESALE` hoặc `CreditLimit` (`403 CUSTOMER_FINANCIAL_ROLE_REQUIRED`), bắt buộc khách `WHOLESALE` + kiểm tra hạn mức nguyên tử (`updateMany`) khi bán `CREDIT` ở cả POS lẫn Online.
-3. **[x] Chuẩn hóa đối soát VietQR (`P0-03`, `P2-02`):** Hóa đơn `VIETQR` khởi tạo ở trạng thái `PaymentStatus = 'UNPAID'`, `PaidAmount = 0`, `DebtAmount = finalTotal`; chỉ chuyển `PAID` và ghi nhận `PaymentTransaction` (`CAPTURE`) khi nhân viên/dược sĩ đối soát với mã tham chiếu ngân hàng hợp lệ (`ReferenceCode` tối thiểu 3 ký tự, kiểm tra idempotency chống trùng mã).
-4. **[x] Cấm xóa cứng chứng từ đã ghi sổ & Đảo phiếu nhập nguyên tử (`P0-04`):** Đã khóa cứng `DELETE` / `bulk-delete` đối với `invoices`, `payments`, `purchase-orders`, `payment-transactions`, `stock-movements` (`403 LEDGER_HARD_DELETE_FORBIDDEN`); bổ sung API `POST /api/enterprise/purchase-orders/:id/cancel` hoàn giảm tồn kho, trừ lô `StockLot` và ghi `StockMovement` (`RETURN_SUPPLIER`) nguyên tử trong transaction.
+3. **[~] Chuẩn hóa đối soát VietQR (`P0-03`, `P2-02`):** Luồng unpaid và nhập mã reference đã có; cần chống trùng reference toàn hệ thống, validate phương thức, và sửa nhãn còn mô tả tự động/Napas247 dù thao tác thủ công.
+4. **[~] Cấm xóa cứng chứng từ đã ghi sổ & Đảo phiếu nhập nguyên tử (`P0-04`):** Đã khóa hard-delete và có API cancel transaction; cần bảo đảm mỗi dòng phiếu nhập đảo đúng StockLot nguồn, không chọn lô gần nhất theo mã lô.
 5. **[x] Chặn OCR mẫu/preset giả làm đơn thật (`P0-05`):** Đã tắt cơ chế đoán thuốc theo tên file đối với ảnh thật (`is_demo == False`) trong `ai-service/main.py`; gắn cờ `isDemo` xuyên suốt và khóa tạo hóa đơn/chuyển POS từ dữ liệu demo; bắt buộc Dược sĩ tích xác nhận từng dòng thuốc và nhập họ tên/SĐT bệnh nhân thật (bỏ SĐT cứng `0988112233`).
-6. **[x] Chuẩn hóa AI chẩn đoán & Tương tác thuốc (`P0-06`):** Đã loại bỏ hành vi gán mặc định phác đồ cảm cúm (`CLINICAL_PROTOCOLS[0]`) và bỏ công thức nâng điểm giả `max(0.65, score * 2.4)` trong `ai-service/main.py`; trả trạng thái chuyển Dược sĩ khi triệu chứng không khớp; bổ sung `ruleSource` và `coverageScope` trong `clinical-safety.service.ts`.
-7. **[x] Siết quyền đọc dữ liệu nhạy cảm (`P1-01`), sửa KPI doanh thu thực thu (`P1-02`), chống tràn lưu trữ toa thuốc (`P1-03`), an toàn `reconcile-data.ts` (`P1-04`), phân trang server-side đồng bộ (`P1-05`), kiểm soát Import nguyên tử (`P1-06`), đồng bộ Sổ quỹ (`P1-07`), ẩn `trackingToken` khỏi URL (`P1-08`) và đồng bộ RBAC/UI (`P2-01` → `P2-03`).**
+6. **[~] Chuẩn hóa AI chẩn đoán & Tương tác thuốc (`P0-06`):** Đã bỏ fallback cảm cúm và điểm tương đồng giả, thêm cảnh báo giới hạn ruleset; vẫn còn advice/recommendation viết sẵn theo từ khóa và thông báo UI xanh khi không có cảnh báo.
+7. **[~]** Các phần `P1-02` → `P1-04`, `P1-06`, `P1-08`, `P2-01` và các hạng mục không được nêu ở phần review lại chưa phát hiện tồn đọng trực tiếp trong phạm vi lượt này. `P1-01`, `P1-05`, `P1-07`, `P2-02` còn các điểm cụ thể nêu ở đầu file.
 
 ---
 
 ## P0 — Chặn trước khi dùng dữ liệu thật
 
-### P0-01 — Tài khoản demo, JWT secret mẫu và seed có thể xóa dữ liệu — ✅ ĐÃ HOÀN TẤT
+### P0-01 — Tài khoản demo, JWT secret mẫu và seed có thể xóa dữ liệu — ⚠ CÒN TỒN ĐỌNG BOOTSTRAP
 
 **Vị trí:** `backend/.env.example:3`; `backend/src/config/env.ts`; `backend/prisma/seed.ts`; `frontend/src/pages/AuthPage.tsx`.
 
@@ -33,7 +49,7 @@
 - Cập nhật `backend/prisma/seed.ts`: chặn chạy trên `NODE_ENV=production` nếu không có `ALLOW_PRODUCTION_SEED=true`; mặc định chạy chế độ `upsert` idempotent không xóa dữ liệu; chỉ xóa làm sạch khi truyền đồng thời `--force-reset` và `CONFIRM_SEED_WIPE=WIPE_ALL_DATA` trong `prisma.$transaction`; mật khẩu tài khoản khởi tạo lấy từ `SEED_ADMIN_PASSWORD` hoặc sinh ngẫu nhiên 1 lần khi vắng mặt.
 - Cập nhật `frontend/src/pages/AuthPage.tsx`: gỡ bỏ hoàn toàn tab `mode === 'LOGIN'` và các nút điền nhanh mật khẩu `123456` khỏi trang quản trị nhân sự.
 
-**Trạng thái nghiệm thu:** ĐẠT (`[BACKLOG-P0-P1-P2] weakJwtBlocked=true` + kiểm thử UI `AuthPage`).
+**Trạng thái nghiệm thu:** JWT/reset guard đã được thêm; cần xử lý tồn đọng mật khẩu bootstrap ở phần review lại trước khi đánh dấu hoàn tất.
 
 ### P0-02 — CASHIER có thể tạo khách sỉ, sửa hạn mức và tự ghi đè dư nợ — ✅ ĐÃ HOÀN TẤT
 
@@ -48,7 +64,7 @@
 
 **Trạng thái nghiệm thu:** ĐẠT (`cashierWholesale=403, directDebt=400, retailCredit=400`).
 
-### P0-03 — VietQR được ghi nhận đã thanh toán trước khi tiền về — ✅ ĐÃ HOÀN TẤT
+### P0-03 — VietQR được ghi nhận đã thanh toán trước khi tiền về — ⚠ CÒN TỒN ĐỌNG CHỐNG TRÙNG TOÀN CỤC
 
 **Vị trí:** `backend/src/controllers/invoice.controller.ts`; `frontend/src/pages/PosTerminalPage.tsx`; `frontend/src/pages/PaymentsLedgerPage.tsx`; `frontend/src/pages/AiPharmacyStudioPage.tsx`.
 
@@ -59,9 +75,9 @@
 - Trong `collectInvoiceDebt` (`POST /api/invoices/:id/pay-debt`): khi đối soát `VIETQR`, bắt buộc truyền `referenceCode` (mã giao dịch ngân hàng `FT...`, tối thiểu 3 ký tự — thiếu trả `400 VIETQR_REFERENCE_REQUIRED`), kiểm tra chống trùng `ReferenceCode` (idempotent), cập nhật `PaymentStatus = 'PAID'`, `PaidAmount`, `TransactionCode` và ghi `PaymentTransaction` kèm người xác nhận.
 - Trên `PosTerminalPage.tsx` và `PaymentsLedgerPage.tsx`: hiển thị trạng thái `CHỜ ĐỐI SOÁT VIETQR (UNPAID)` cùng ô nhập mã tham chiếu ngân hàng để xác nhận thu tiền thật.
 
-**Trạng thái nghiệm thu:** ĐẠT (`vqrUnpaid->Paid=true->PAID`, `vqrReconcileNoRef=400`).
+**Trạng thái nghiệm thu:** Luồng unpaid và bắt buộc reference đã có; chống trùng hiện chỉ trong phạm vi một hóa đơn, xem review lại ở đầu file.
 
-### P0-04 — Xóa cứng chứng từ làm lệch tồn và xóa dấu vết kế toán — ✅ ĐÃ HOÀN TẤT
+### P0-04 — Xóa cứng chứng từ làm lệch tồn và xóa dấu vết kế toán — ⚠ CÒN TỒN ĐỌNG CHỌN ĐÚNG LÔ
 
 **Vị trí:** `backend/src/routes/enterprise.routes.ts`; `backend/src/controllers/enterprise.controller.ts`; `frontend/src/pages/InvoicesManagementPage.tsx`; `frontend/src/pages/PaymentsLedgerPage.tsx`; `frontend/src/pages/SuppliersAndPurchaseOrdersPage.tsx`.
 
@@ -72,7 +88,7 @@
 - Bổ sung endpoint `POST /api/enterprise/purchase-orders/:id/cancel` (`cancelPurchaseOrder`): kiểm tra các lô thuộc phiếu nhập chưa bị xuất bán (`RemainingQuantity >= Quantity`), trừ nguyên tử `Product.Quantity` và `StockLot.RemainingQuantity`, chuyển trạng thái phiếu sang `CANCELLED` và tạo bút toán `StockMovement` (`RETURN_SUPPLIER`).
 - Trên UI (`InvoicesManagementPage`, `PaymentsLedgerPage`, `SuppliersAndPurchaseOrdersPage`): tắt xóa cứng chứng từ đã ghi sổ và bổ sung nút `Đảo phiếu` trên danh sách phiếu nhập kho.
 
-**Trạng thái nghiệm thu:** ĐẠT (`hardDel=(403,403,403), poReverse=true`).
+**Trạng thái nghiệm thu:** Chặn xóa cứng và có luồng đảo phiếu; cần sửa liên kết/tra cứu StockLot để bảo đảm chỉ đảo đúng lô nguồn.
 
 ### P0-05 — OCR đang trả nội dung mẫu thay vì đọc đơn thật, rồi có thể tạo hóa đơn — ✅ ĐÃ HOÀN TẤT
 
@@ -86,7 +102,7 @@
 
 **Trạng thái nghiệm thu:** ĐẠT (kiểm thử сценарий 5 `verify-all-5-scenarios.ts` & kiểm tra UI).
 
-### P0-06 — AI chẩn đoán và kiểm tra tương tác không đủ căn cứ để kết luận an toàn — ✅ ĐÃ HOÀN TẤT
+### P0-06 — AI chẩn đoán và kiểm tra tương tác không đủ căn cứ để kết luận an toàn — ⚠ CHƯA ĐẠT AN TOÀN LÂM SÀNG
 
 **Vị trí:** `ai-service/main.py`; `backend/src/services/clinical-safety.service.ts`; `backend/src/services/ai.service.ts`.
 
@@ -96,13 +112,13 @@
 - Trong `ai-service/main.py`: khi không khớp từ khóa triệu chứng nào, trả ngay trạng thái `engine: "pharmacist-handoff"`, `requiresPharmacistConsultation: True`, `recommendations: []` (không gán mặc định cảm cúm); bỏ hoàn toàn công thức nâng điểm giả `max(0.65, score * 2.4)`.
 - Trong `backend/src/services/clinical-safety.service.ts`: bổ sung metadata `ruleVersion`, `ruleSource`, `coverageScope` và cảnh báo rõ kết quả không có cảnh báo chỉ mang tính tham khảo trong phạm vi bộ quy tắc nội bộ, không thay thế thẩm định chuyên môn của Dược sĩ.
 
-**Trạng thái nghiệm thu:** ĐẠT (`[S3]`, `[ISSUE-4]`, `[SEARCH-SLIM]`).
+**Trạng thái nghiệm thu:** Đã bỏ fallback cảm cúm mặc định và điểm tương đồng giả; vẫn còn advice/recommendation theo từ khóa và UI có thể thể hiện an toàn khi ruleset rỗng. Chưa đánh dấu hoàn tất.
 
 ---
 
 ## P1 — Sửa trước khi phát hành rộng
 
-### P1-01 — Nhân viên có quyền đọc quá nhiều dữ liệu bệnh nhân, tài chính và giá vốn — ✅ ĐÃ HOÀN TẤT
+### P1-01 — Nhân viên có quyền đọc quá nhiều dữ liệu bệnh nhân, tài chính và giá vốn — ⚠ CÒN HỞ API CẬP NHẬT KHÁCH
 
 **Vị trí:** `backend/src/routes/enterprise.routes.ts`; `backend/src/controllers/enterprise.controller.ts`; `backend/src/controllers/invoice.controller.ts`; `backend/src/controllers/online-order.controller.ts`.
 
@@ -110,7 +126,7 @@
 - Khóa quyền `authorizeRoles('ADMIN', 'PHARMACIST')` trên các route `/dashboard`, `/products/:id/stock-card`, `/suppliers`, `/purchase-orders`.
 - Trong `getCustomers`, `getInvoices`, `listOnlineOrdersForStaff`: khi người gọi có vai trò `CASHIER`, tự động loại bỏ (`redact`) các trường lâm sàng/nhạy cảm (`Allergies`, `ChronicCond`, `ClinicalOverrideNote`, `PrescriptionFileKey`, `clinicalWarnings`, lịch sử `invoices`).
 
-**Trạng thái nghiệm thu:** ĐẠT (`cashierRBAC=(403,403,redacted=true)`).
+**Trạng thái nghiệm thu:** Các route đã giới hạn và GET đã redact; `PUT /customers/:id` vẫn nhận/ trả trường lâm sàng cho CASHIER, xem review lại ở đầu file.
 
 ### P1-02 — Dashboard tính cả hóa đơn chưa thu và phiếu nhập đã hủy — ✅ ĐÃ HOÀN TẤT
 
@@ -142,7 +158,7 @@
 
 **Trạng thái nghiệm thu:** ĐẠT (`[RECONCILE-SAFE] realPreserved=true, testDeleted=true, testWithLotHidden=true, backupCreated=true`).
 
-### P1-05 — ERP chỉ tải trang đầu nhưng tìm kiếm/phân trang ở trình duyệt — ✅ ĐÃ HOÀN TẤT
+### P1-05 — ERP chỉ tải trang đầu nhưng tìm kiếm/phân trang ở trình duyệt — ⚠ API CÓ PHÂN TRANG, UI CHƯA DÙNG ĐỒNG BỘ
 
 **Vị trí:** `backend/src/controllers/enterprise.controller.ts`; `backend/src/controllers/invoice.controller.ts`; `frontend/src/services/enterprise.api.ts`; `frontend/src/services/forms.api.ts`; `frontend/src/pages/CustomersPage.tsx`; `frontend/src/pages/InvoicesManagementPage.tsx`; `frontend/src/pages/PaymentsLedgerPage.tsx`.
 
@@ -150,7 +166,7 @@
 - Bổ sung tham số `page`, `limit`, `search`, `status` và trả đối tượng `pagination` đồng nhất từ server cho `/customers`, `/invoices`, `/payments`, `/suppliers`, `/purchase-orders`, `/products/:id/stock-card`.
 - Giới hạn lịch sử hóa đơn con trong `/customers` tối đa 10 bản ghi tóm tắt (không kéo toàn bộ items vào RAM); cập nhật các trang ERP gọi tìm kiếm và chuyển trang trực tiếp tới server.
 
-**Trạng thái nghiệm thu:** ĐẠT.
+**Trạng thái nghiệm thu:** API đã hỗ trợ query pagination; các trang hóa đơn/khách/nhà cung cấp/phiếu nhập vẫn tải một trang cố định rồi lọc ở client, xem review lại ở đầu file.
 
 ### P1-06 — Import không giới hạn kích thước/số dòng và không kiểm tra dữ liệu đồng nhất — ✅ ĐÃ HOÀN TẤT
 
@@ -163,7 +179,7 @@
 
 **Trạng thái nghiệm thu:** ĐẠT (`badImport=400`).
 
-### P1-07 — Dữ liệu giao dịch và transaction ở sổ quỹ có thể không khớp trang — ✅ ĐÃ HOÀN TẤT
+### P1-07 — Dữ liệu giao dịch và transaction ở sổ quỹ có thể không khớp trang — ⚠ CÒN TỒN ĐỌNG HIỆU NĂNG AGGREGATE
 
 **Vị trí:** `backend/src/controllers/enterprise.controller.ts` (`getPaymentsLedger`); `frontend/src/pages/PaymentsLedgerPage.tsx`.
 
@@ -171,7 +187,7 @@
 - Truy vấn `PaymentTransaction` theo đúng danh sách `InvoiceID` của các bản ghi `Payment` trên trang hiện tại (`where: { InvoiceID: { in: pageInvoiceIds } }`), đảm bảo mọi bút toán thu/hoàn của từng hóa đơn trên trang luôn hiển thị đầy đủ.
 - Trả kèm đối tượng `summary` tính toán toàn cục trên server (`totalNet`, `totalVietQr`, `totalCashAndCard`, `totalRefunded`, `pendingVietQrCount`) để KPI trên `PaymentsLedgerPage` luôn chính xác bất kể đang xem trang nào.
 
-**Trạng thái nghiệm thu:** ĐẠT (`ledgerSummary=true`).
+**Trạng thái nghiệm thu:** Transaction theo trang và KPI toàn cục đã đồng bộ; KPI hiện đọc toàn bộ Payment vào RAM mỗi request, xem review lại ở đầu file.
 
 ### P1-08 — Tracking token gửi trong query string — ✅ ĐÃ HOÀN TẤT
 
@@ -197,14 +213,14 @@
 
 **Trạng thái nghiệm thu:** ĐẠT.
 
-### P2-02 — Nút đối soát VietQR chưa thực hiện đối soát thật — ✅ ĐÃ HOÀN TẤT
+### P2-02 — Nút đối soát VietQR chưa thực hiện đối soát thật — ⚠ CÒN NHÃN GÂY HIỂU NHẦM
 
 **Vị trí:** `frontend/src/pages/PaymentsLedgerPage.tsx`; `frontend/src/pages/PosTerminalPage.tsx`.
 
 **Đã khắc phục:**
 - Đổi nhãn và luồng thao tác trên `PaymentsLedgerPage.tsx` và `PosTerminalPage.tsx` thành **Đối soát thủ công VietQR** yêu cầu nhập mã tham chiếu giao dịch ngân hàng (`ReferenceCode` / `FT...`) và gọi trực tiếp API `POST /api/invoices/:id/pay-debt` để ghi sổ thật.
 
-**Trạng thái nghiệm thu:** ĐẠT.
+**Trạng thái nghiệm thu:** Luồng nhập mã và ghi sổ thủ công đã có; một số nhãn còn gọi là tự động/Napas247 dù chưa tích hợp ngân hàng, xem review lại ở đầu file.
 
 ### P2-03 — Xác nhận giao diện Desktop & Mobile bằng ảnh chụp trình duyệt — ✅ ĐÃ HOÀN TẤT
 

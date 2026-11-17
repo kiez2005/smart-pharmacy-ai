@@ -48,3 +48,16 @@ export const publicReadLimiter = rateLimit({
     message: 'Lưu lượng truy cập vượt giới hạn. Vui lòng thử lại sau giây lát.',
   },
 });
+
+export const storefrontAiChatLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: Number(process.env.RATE_LIMIT_STOREFRONT_AI_CHAT_MAX || 15),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    success: false,
+    code: 'AI_CHAT_RATE_LIMITED',
+    message:
+      'Bạn đang gửi câu hỏi cho Trợ lý AI quá nhanh. Vui lòng chờ vài giây hoặc bấm "Gặp Dược sĩ" để được hỗ trợ ngay.',
+  },
+});

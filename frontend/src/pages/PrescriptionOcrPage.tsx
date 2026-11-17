@@ -1,744 +1,685 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ScanLine,
-  Upload,
-  CheckCircle2,
-  AlertCircle,
+  AlertOctagon,
   AlertTriangle,
   ArrowRight,
-  Sliders,
-  FileText,
-  Trash2,
-  Plus,
-  Minus,
-  RefreshCw,
-  Image as ImageIcon,
   Check,
+  CheckCircle2,
+  Eye,
+  FileText,
+  Image as ImageIcon,
+  Minus,
+  Plus,
+  RefreshCw,
+  ScanLine,
+  ShieldCheck,
+  Sliders,
+  Upload,
+  XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { aiApi, OcrPrescriptionResponse } from '../services/ai.api';
+import { AiModelsHealthBar } from '../components/ai/AiModelsHealthBar';
+import { aiApi, extractAiErrorMessage, OcrPrescriptionResponse } from '../services/ai.api';
+import { formsApi } from '../services/forms.api';
 import { productApi } from '../services/product.api';
+import { OcrExtractedLine } from '../types/ai';
 import { Product } from '../types/product';
-import { MatchedPrescriptionItem } from '../types/ai';
 import { PosCartItem } from './PosTerminalPage';
 
-interface PrescriptionOcrPageProps {
-  onTransferToPos: (items: PosCartItem[]) => void;
+export interface OcrTransferMeta {
+  draftId: string;
+  confirmedLines: number;
+  skippedLines: number;
+  unconfirmedCount: number;
 }
 
-const PRESET_TEMPLATES = [
-  {
-    id: 'cam-cum',
-    label: 'Đơn ngoại trú: Cảm cúm & Viêm họng cấp',
-    hospital: 'BỆNH VIỆN ĐẠI HỌC Y HÀ NỘI',
-    patient: 'Nguyễn Văn Hùng - 34 tuổi',
-    diagnosis: 'J00 - Viêm mũi họng cấp (Cảm thường)',
-    lines: [
-      '1. Panadol Extra 500mg/65mg — 1 Hộp (Uống 1 viên khi sốt > 38.5°C)',
-      '2. Siro Ho Prospan 100ml — 1 Chai (Uống 5ml x 3 lần/ngày sau ăn)',
-      '3. Viên ngậm Strepsils Cool — 2 Hộp (Ngậm 1 viên mỗi 3-4 giờ)',
-      '4. Berocca Performance Mango — 1 Hộp (Pha 1 viên sủi uống sáng)',
-    ],
-  },
-  {
-    id: 'da-day',
-    label: 'Đơn ngoại trú: Viêm loét dạ dày - Trào ngược',
-    hospital: 'BỆNH VIỆN BẠCH MAI - KHOA TIÊU HÓA',
-    patient: 'Trần Thị Mai Anh - 38 tuổi',
-    diagnosis: 'K21 - Trào ngược dạ dày thực quản (GERD)',
-    lines: [
-      '1. Sữa dạ dày Phosphalugel — 1 Hộp (Uống 1 gói khi đau hoặc sau ăn)',
-      '2. Omeprazol 20mg DHG — 1 Hộp (Uống 1 viên trước ăn sáng 30 phút)',
-      '3. Men vi sinh Enterogermina — 1 Hộp (Uống sáng 1 ống, chiều 1 ống)',
-    ],
-  },
-  {
-    id: 'khang-sinh',
-    label: 'Đơn ngoại trú: Nhiễm khuẩn hô hấp - Viêm amidan',
-    hospital: 'BỆNH VIỆN TAI MŨI HỌNG TRUNG ƯƠNG',
-    patient: 'Lê Hoàng Nam - 45 tuổi',
-    diagnosis: 'J03 - Viêm amidan cấp mủ',
-    lines: [
-      '1. Kháng sinh Augmentin 1g — 1 Hộp (Uống 1 viên x 2 lần/ngày sau ăn)',
-      '2. Viên sủi Efferalgan 500mg — 1 Hộp (Pha 1 viên khi đau sốt)',
-      '3. Chống phù nề Alpha Choay — 1 Hộp (Ngậm dưới lưỡi 2 viên x 2 lần/ngày)',
-    ],
-  },
-];
+interface PrescriptionOcrPageProps {
+  onTransferToPos: (items: PosCartItem[], ocrMeta?: OcrTransferMeta) => void;
+  initialAttachmentFileKey?: string | null;
+  onClearInitialAttachment?: () => void;
+}
 
 export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
   onTransferToPos,
+  initialAttachmentFileKey,
+  onClearInitialAttachment,
 }) => {
-  const [activeTab, setActiveTab] = useState<'DEMO' | 'REAL_UPLOAD'>('DEMO');
   const [allProducts, setAllProducts] = useState<Product[]>([]);
-  const [selectedPreset, setSelectedPreset] = useState(PRESET_TEMPLATES[0]);
-  const [customOcrLines, setCustomOcrLines] = useState<string>(
-    PRESET_TEMPLATES[0].lines.join('\n')
-  );
-  const [originalPreviewUrl, setOriginalPreviewUrl] = useState<string | null>(null);
-  const [thresholdPreviewUrl, setThresholdPreviewUrl] = useState<string | null>(null);
-  const [ocrResult, setOcrResult] = useState<OcrPrescriptionResponse | null>(null);
-  const [reviewItems, setReviewItems] = useState<MatchedPrescriptionItem[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [scanning, setScanning] = useState<boolean>(false);
-  const [realFile, setRealFile] = useState<File | null>(null);
-  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState<boolean>(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [result, setResult] = useState<OcrPrescriptionResponse | null>(null);
+  const [lines, setLines] = useState<OcrExtractedLine[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Tải danh mục thuốc trong kho để hỗ trợ Dược sĩ đổi thuốc thay thế
   useEffect(() => {
     productApi
-      .getAllProducts()
-      .then((items) => {
-        setAllProducts(items);
-      })
+      .list({ page: 1, limit: 150 })
+      .then((res) => setAllProducts(res.items))
       .catch(() => {
-        toast.error('Không thể nạp danh mục thuốc từ máy chủ');
+        toast.error('Không thể tải danh mục thuốc để Dược sĩ đối chiếu thủ công');
       });
   }, []);
 
-  // Vẽ ảnh đơn thuốc chuẩn bệnh viện lên Canvas và tạo bản lọc nhị phân OpenCV Adaptive Threshold (Mẫu demo)
-  const generatePrescriptionBitmaps = (
-    template: typeof PRESET_TEMPLATES[0],
-    linesText: string
-  ): Promise<File> => {
-    return new Promise((resolve) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = 680;
-      canvas.height = 460;
-      const ctx = canvas.getContext('2d')!;
-
-      // Nền giấy đơn thuốc
-      ctx.fillStyle = '#fcfaf2';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Viền đơn thuốc
-      ctx.strokeStyle = '#d4d4d8';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
-
-      // Tiêu đề bệnh viện
-      ctx.fillStyle = '#18181b';
-      ctx.font = 'bold 16px sans-serif';
-      ctx.fillText(template.hospital, 36, 52);
-
-      ctx.font = 'bold 20px sans-serif';
-      ctx.fillText('ĐƠN THUỐC ĐIỀU TRỊ NGOẠI TRÚ', 180, 92);
-
-      ctx.font = '13px sans-serif';
-      ctx.fillStyle = '#3f3f46';
-      ctx.fillText(`Họ tên người bệnh: ${template.patient}`, 36, 130);
-      ctx.fillText(`Chẩn đoán lâm sàng: ${template.diagnosis}`, 36, 154);
-
-      ctx.beginPath();
-      ctx.moveTo(36, 170);
-      ctx.lineTo(canvas.width - 36, 170);
-      ctx.strokeStyle = '#e4e4e7';
-      ctx.stroke();
-
-      ctx.font = 'bold 14px monospace';
-      ctx.fillStyle = '#09090b';
-      const lines = linesText.split('\n');
-      lines.forEach((line, idx) => {
-        ctx.fillText(line.slice(0, 68), 36, 205 + idx * 38);
-      });
-
-      ctx.font = 'italic 12px sans-serif';
-      ctx.fillStyle = '#52525b';
-      ctx.fillText('Bác sĩ khám bệnh ký tên: BS.CKII Nguyễn Minh Hoàng', 340, 415);
-
-      const origDataUrl = canvas.toDataURL('image/png');
-      setOriginalPreviewUrl(origDataUrl);
-
-      // Tạo ảnh sau khi lọc nhị phân Adaptive Threshold (OpenCV Simulation trên Canvas)
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const d = imgData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        const bin = gray < 165 ? 15 : 252;
-        d[i] = bin;
-        d[i + 1] = bin;
-        d[i + 2] = bin;
+  useEffect(() => {
+    if (!initialAttachmentFileKey) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const file = await formsApi.fetchPrescriptionImageFile(initialAttachmentFileKey);
+        if (cancelled) return;
+        handleFileChange(file);
+        onClearInitialAttachment?.();
+        setScanning(true);
+        setScanError(null);
+        setResult(null);
+        setLines([]);
+        const data = await aiApi.scanPrescription(file);
+        if (cancelled) return;
+        setResult(data);
+        setLines(data.lines);
+        toast.success(`Đã nạp ảnh từ Hộp thư Dược sĩ & quét xong ${data.lines.length} dòng thuốc.`);
+      } catch (err) {
+        if (!cancelled) {
+          const msg = extractAiErrorMessage(err, 'Không thể nạp hoặc quét ảnh từ Hộp thư Dược sĩ.');
+          setScanError(msg);
+          toast.error(msg);
+        }
+      } finally {
+        if (!cancelled) setScanning(false);
       }
-      ctx.putImageData(imgData, 0, 0);
-      setThresholdPreviewUrl(canvas.toDataURL('image/png'));
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialAttachmentFileKey]);
 
-      canvas.toBlob((blob) => {
-        const file = new File([blob!], `don-thuoc-${template.id}.png`, { type: 'image/png' });
-        resolve(file);
-      }, 'image/png');
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  const productById = useMemo(
+    () => new Map(allProducts.map((p) => [p.ProductID, p])),
+    [allProducts]
+  );
+
+  const handleFileChange = (file: File | null) => {
+    if (!file) return;
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setSelectedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+    setScanError(null);
+  };
+
+  const handleRunOcr = async () => {
+    if (!selectedFile) {
+      toast.warning('Vui lòng chọn ảnh đơn thuốc thực tế (PNG/JPG/WEBP)');
+      return;
+    }
+
+    setScanning(true);
+    setScanError(null);
+    setResult(null);
+    setLines([]);
+
+    try {
+      const data = await aiApi.scanPrescription(selectedFile);
+      setResult(data);
+      setLines(data.lines || []);
+      toast.success(
+        `RapidOCR đã tách ${data.lines.length} dòng thuốc. Vui lòng chọn sản phẩm phù hợp và tích xác nhận từng dòng.`
+      );
+    } catch (err) {
+      const msg = extractAiErrorMessage(err, 'Lỗi khi chạy OpenCV + RapidOCR trên ảnh đơn thuốc');
+      setScanError(msg);
+      toast.error(msg);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const updateLine = (lineId: string, updater: (prev: OcrExtractedLine) => OcrExtractedLine) => {
+    setLines((prev) => prev.map((l) => (l.lineId === lineId ? updater(l) : l)));
+  };
+
+  const handleSelectCandidate = (lineId: string, productId: number | null) => {
+    updateLine(lineId, (prev) => ({
+      ...prev,
+      selectedProductId: productId,
+      skipped: false,
+      // Chọn lại ứng viên sẽ đặt trạng thái về chưa xác nhận để Dược sĩ rà lại trước khi tích
+      confirmed: false,
+    }));
+  };
+
+  const handleToggleConfirm = (lineId: string) => {
+    updateLine(lineId, (prev) => {
+      if (!prev.selectedProductId) {
+        toast.warning('Vui lòng chọn 1 thuốc khớp trong danh mục trước khi tích xác nhận dòng này');
+        return prev;
+      }
+      return {
+        ...prev,
+        skipped: false,
+        confirmed: !prev.confirmed,
+      };
     });
   };
 
-  const handleRunPresetScan = async (template = selectedPreset, customText = customOcrLines) => {
-    setScanning(true);
-    setOcrError(null);
-    setPharmacistVerified(false);
-    try {
-      const file = await generatePrescriptionBitmaps(template, customText);
-      const res = await aiApi.scanPrescription(file, customText, true);
-      setOcrResult({ ...res, isDemo: true });
-      setReviewItems(res.items);
-      toast.success(
-        `[DEMO] Đã bóc tách ${res.items.length} dòng thuốc mẫu và đối chiếu danh mục kho!`
-      );
-    } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Không thể xử lý ảnh đơn thuốc';
-      setOcrError(msg);
-      toast.error(msg);
-    } finally {
-      setScanning(false);
-    }
+  const handleToggleSkip = (lineId: string) => {
+    updateLine(lineId, (prev) => ({
+      ...prev,
+      skipped: !prev.skipped,
+      confirmed: false,
+    }));
   };
 
-  const handleSelectRealFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setRealFile(file);
-    setOcrError(null);
-    setOcrResult(null);
-    setReviewItems([]);
+  const activeLines = lines.filter((l) => !l.skipped);
+  const confirmedActiveLines = activeLines.filter((l) => l.confirmed && Boolean(l.selectedProductId));
+  const unconfirmedActiveCount = activeLines.length - confirmedActiveLines.length;
+  const readyToTransfer =
+    Boolean(result?.draftId) && activeLines.length > 0 && unconfirmedActiveCount === 0;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setOriginalPreviewUrl(reader.result);
-        setThresholdPreviewUrl(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleScanRealFile = async () => {
-    if (!realFile) {
-      toast.error('Vui lòng chọn hoặc kéo thả tệp ảnh đơn thuốc');
-      return;
-    }
-    setScanning(true);
-    setOcrError(null);
-    try {
-      const res = await aiApi.scanPrescription(realFile, '', false);
-      setOcrResult(res);
-      setReviewItems(res.items);
-      toast.success(`Đã phân tích ảnh thực tế "${realFile.name}" và bóc tách ${res.items.length} dược phẩm!`);
-    } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Không thể nhận dạng văn bản từ hình ảnh này. Ảnh không hợp lệ hoặc quá mờ.';
-      setOcrError(msg);
-      setOcrResult(null);
-      setReviewItems([]);
-      toast.error(msg);
-    } finally {
-      setScanning(false);
-    }
-  };
-
-  // Các thao tác Dược sĩ phê duyệt đơn thuốc
-  const handleUpdateItemQty = (index: number, delta: number) => {
-    setReviewItems((prev) =>
-      prev.map((item, idx) => {
-        if (idx !== index) return item;
-        const newQty = Math.max(1, item.quantity + delta);
-        return { ...item, quantity: newQty };
-      })
-    );
-  };
-
-  const handleRemoveItem = (index: number) => {
-    setReviewItems((prev) => prev.filter((_, idx) => idx !== index));
-    toast.info('Đã xóa 1 dòng thuốc khỏi đơn');
-  };
-
-  const handleSubstituteProduct = (index: number, productIdStr: string) => {
-    const pId = parseInt(productIdStr);
-    const chosenProduct = allProducts.find((p) => p.ProductID === pId) || null;
-
-    setReviewItems((prev) =>
-      prev.map((item, idx) => {
-        if (idx !== index) return item;
-        return {
-          ...item,
-          matchedProduct: chosenProduct,
-          inStock: Boolean(chosenProduct && chosenProduct.Quantity > 0),
-          status: !chosenProduct ? 'NOT_FOUND' : chosenProduct.Quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
-        };
-      })
-    );
-
-    if (chosenProduct) {
-      toast.success(`Đã gán thuốc thay thế: ${chosenProduct.ProductName}`);
-    }
-  };
-
-  const [pharmacistVerified, setPharmacistVerified] = useState<boolean>(false);
-
-  const handleTransfer = () => {
-    if (reviewItems.length === 0) {
-      toast.error('Không có dòng thuốc nào trong đơn để chuyển');
-      return;
-    }
-
-    // P0-05: Cấm chuyển kết quả Demo sang giỏ bán hàng thật và bắt buộc Dược sĩ xác nhận
-    if (activeTab === 'DEMO' || ocrResult?.isDemo) {
+  const handleTransferToPos = async () => {
+    if (!result?.draftId || !readyToTransfer) {
       toast.error(
-        'Đang ở chế độ Mẫu Demo Bệnh Viện! Để xuất bán đơn thật trên POS, vui lòng chuyển sang tab "Tải Ảnh Thật (Real OCR)" và tải ảnh đơn thuốc của bệnh nhân.'
+        `Không thể chuyển hóa đơn: vẫn còn ${unconfirmedActiveCount} dòng chưa được Dược sĩ chọn thuốc và xác nhận.`
       );
       return;
     }
 
-    if (!pharmacistVerified) {
-      toast.warning(
-        'Dược sĩ bắt buộc tích xác nhận đã đối chiếu từng dòng thuốc, hàm lượng và liều dùng với đơn gốc trước khi chuyển sang Quầy POS!'
+    setVerifying(true);
+    try {
+      const verification = await aiApi.verifyOcrDraft(
+        result.draftId,
+        lines.map((l) => ({
+          lineId: l.lineId,
+          selectedProductId: l.skipped ? null : l.selectedProductId,
+          quantity: l.extractedQuantity,
+          dosage: l.extractedDosage,
+          confirmed: l.confirmed,
+          skipped: l.skipped,
+        }))
       );
-      return;
+
+      const posCartItems: PosCartItem[] = [];
+      for (const item of verification.posItems) {
+        const prod = productById.get(item.ProductID);
+        if (!prod) continue;
+        if (prod.Quantity <= 0) {
+          toast.error(`Thuốc "${prod.ProductName}" hiện đã hết tồn kho (0 ${prod.Unit}).`);
+          setVerifying(false);
+          return;
+        }
+        posCartItems.push({
+          product: prod,
+          quantity: Math.min(item.Quantity, prod.Quantity),
+          dosageNote: item.DosageNote,
+        });
+      }
+
+      if (posCartItems.length === 0) {
+        toast.error('Không có sản phẩm hợp lệ nào để chuyển sang POS.');
+        return;
+      }
+
+      onTransferToPos(posCartItems, {
+        draftId: verification.draftId,
+        confirmedLines: verification.confirmedLines,
+        skippedLines: verification.skippedLines,
+        unconfirmedCount: 0,
+      });
+    } catch (err) {
+      toast.error(extractAiErrorMessage(err, 'Không thể xác nhận phiên OCR với máy chủ'));
+    } finally {
+      setVerifying(false);
     }
-
-    const unverifiedItems = reviewItems.filter(
-      (i) => !i.matchedProduct || i.matchedProduct.Quantity <= 0
-    );
-
-    if (unverifiedItems.length > 0) {
-      const names = unverifiedItems.map((i) => i.keyword).join(', ');
-      toast.warning(
-        `Còn ${unverifiedItems.length} thuốc chưa đối chiếu được hoặc hết hàng (${names}). Hệ thống chỉ chuyển các thuốc hợp lệ có sẵn trong kho!`
-      );
-    }
-
-    const validCartItems: PosCartItem[] = reviewItems
-      .filter((i) => i.matchedProduct && i.matchedProduct.Quantity > 0)
-      .map((i) => ({
-        product: i.matchedProduct!,
-        quantity: i.quantity,
-        dosageNote: i.dosage,
-      }));
-
-    if (validCartItems.length === 0) {
-      toast.error('Không có thuốc nào hợp lệ và còn hàng trong kho để chuyển sang POS!');
-      return;
-    }
-
-    onTransferToPos(validCartItems);
-    toast.success(`Đã chuyển ${validCartItems.length} dược phẩm đã phê duyệt sang Quầy POS!`);
   };
-
-  const formatVND = (val: number) =>
-    new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-xl border border-amber-300 bg-amber-50/90 px-4 py-2.5 text-xs text-amber-950 flex items-start gap-2">
-        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-        <span>
-          <strong>Lưu ý an toàn Dược lâm sàng (Advisory Only):</strong>{' '}
-          {ocrResult?.disclaimer ||
-            'Kết quả nhận diện OCR từ ảnh chỉ hỗ trợ nhập liệu. Dược sĩ bắt buộc đối chiếu lại từng tên thuốc, hàm lượng và liều dùng với đơn gốc trước khi duyệt xuất POS.'}
-        </span>
-      </div>
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Số Hóa Đơn Thuốc Bằng Thị Giác Máy Tính (OpenCV & OCR)
-            </h1>
-            <span className="inline-flex items-center rounded-full bg-teal-50 px-2.5 py-0.5 text-[11px] font-semibold text-teal-700 border border-teal-200">
-              AI Vision & GPP
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Tiền xử lý khử nhiễu ảnh bằng OpenCV, bóc tách OCR, đối chiếu kho thực tế và bảng Dược sĩ phê duyệt trước khi xuất POS.
-          </p>
-        </div>
-
-        {/* Tab chuyển đổi chế độ Demo vs Tải ảnh thật */}
-        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1 text-xs">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('DEMO');
-              setOcrError(null);
-            }}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-semibold transition-all ${
-              activeTab === 'DEMO'
-                ? 'bg-white text-teal-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <FileText className="h-3.5 w-3.5 text-teal-600" />
-            <span>Mẫu Demo Bệnh Viện</span>
-            <span className="rounded bg-teal-50 px-1 py-0.5 text-[9px] font-bold text-teal-700 border border-teal-200/60">
-              DEMO
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('REAL_UPLOAD');
-              setOcrError(null);
-            }}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-semibold transition-all ${
-              activeTab === 'REAL_UPLOAD'
-                ? 'bg-white text-teal-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Upload className="h-3.5 w-3.5 text-indigo-600" />
-            <span>Tải Ảnh Thật (Real OCR)</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Thông báo lỗi khi quét ảnh hỏng / trắng / không đọc được */}
-      {ocrError && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 flex items-start gap-3">
-          <AlertCircle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <h4 className="text-xs font-bold text-rose-900">Không Thể Nhận Dạng Đơn Thuốc Từ Hình Ảnh Này</h4>
-            <p className="text-xs text-rose-700">{ocrError}</p>
-            <p className="text-[11px] text-rose-600">
-              * Khuyến nghị: Hãy kiểm tra độ sáng ảnh, tránh chụp mờ/ngược sáng, hoặc chuyển sang tab &ldquo;Mẫu Demo Bệnh Viện&rdquo; để thử nghiệm luồng nghiệp vụ.
+    <div className="space-y-4">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-2xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+              <ScanLine className="h-5 w-5 text-teal-600" />
+              Nhận Dạng Đơn Thuốc Thật (OpenCV + RapidOCR)
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Tải ảnh đơn thuốc thật → OCR trích xuất từng dòng → AI đề xuất Top 5 ứng viên + độ tin
+              cậy → Dược sĩ bắt buộc chọn và xác nhận từng dòng trước khi chuyển sang POS.
             </p>
           </div>
+          <div className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-800">
+            <ShieldCheck className="h-4 w-4 text-amber-600 shrink-0" />
+            Không dùng dữ liệu mẫu giả lập — Mọi dòng chưa xác nhận bị khóa chuyển hóa đơn
+          </div>
         </div>
-      )}
 
-      {/* Thân trang: Bảng điều khiển Quét & Tiền xử lý */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        <div className="lg:col-span-5 rounded-xl border border-zinc-200 bg-white p-4 shadow-2xs space-y-3">
-          {activeTab === 'DEMO' ? (
-            <>
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-zinc-900 flex items-center gap-1.5">
-                  <FileText className="h-3.5 w-3.5 text-zinc-600" />
-                  <span>1. Chọn Mẫu Đơn Chuẩn Bệnh Viện</span>
-                </span>
-                <span className="rounded bg-amber-50 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-700 border border-amber-200">
-                  DỮ LIỆU DEMO
-                </span>
-              </div>
+        <AiModelsHealthBar />
+      </div>
 
-              <div className="space-y-1.5">
-                {PRESET_TEMPLATES.map((tpl) => (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedPreset(tpl);
-                      const joined = tpl.lines.join('\n');
-                      setCustomOcrLines(joined);
-                      void handleRunPresetScan(tpl, joined);
-                    }}
-                    className={`w-full text-left rounded-lg px-3.5 py-2.5 text-xs font-semibold border transition-colors shadow-2xs ${
-                      selectedPreset.id === tpl.id
-                        ? 'border-teal-600 bg-teal-600 text-white shadow-xs'
-                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    {tpl.label}
-                  </button>
-                ))}
-              </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* Cột trái: Upload ảnh & kết quả thô */}
+        <div className="lg:col-span-5 space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+              <Upload className="h-4 w-4 text-teal-600" />
+              1. Tải Ảnh Đơn Thuốc Bác Sĩ
+            </h3>
 
-              <div>
-                <label className="block text-[11px] font-medium text-zinc-500 mb-1">
-                  Nội dung dòng thuốc trên đơn (có thể gõ thêm tên thuốc bất kỳ để thử nghiệm):
-                </label>
-                <textarea
-                  rows={4}
-                  value={customOcrLines}
-                  onChange={(e) => setCustomOcrLines(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-300 p-2.5 font-mono text-xs text-zinc-900 shadow-sm focus:border-teal-600 focus:outline-none"
-                />
-              </div>
-
-              <button
-                type="button"
-                disabled={scanning}
-                onClick={() => void handleRunPresetScan()}
-                className="w-full h-9 inline-flex items-center justify-center gap-1.5 rounded-lg bg-teal-600 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-50 shadow-sm"
-              >
-                <ScanLine className="h-3.5 w-3.5" />
-                <span>{scanning ? 'Đang mô phỏng OpenCV...' : 'Chạy Quét Mẫu Demo'}</span>
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-zinc-900 flex items-center gap-1.5">
-                  <Upload className="h-3.5 w-3.5 text-zinc-600" />
-                  <span>1. Tải Lên Tệp Ảnh Đơn Thuốc Thật</span>
-                </span>
-                <span className="rounded bg-indigo-50 px-2 py-0.5 font-mono text-[10px] font-bold text-indigo-700 border border-indigo-200">
-                  REAL UPLOAD
-                </span>
-              </div>
-
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className="cursor-pointer rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 hover:border-teal-500 hover:bg-teal-50/30 p-5 text-center transition-colors"
+            >
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
-                onChange={handleSelectRealFile}
+                accept="image/png,image/jpeg,image/webp"
                 className="hidden"
+                onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
               />
+              {previewUrl ? (
+                <div className="space-y-2">
+                  <img
+                    src={previewUrl}
+                    alt="Ảnh đơn thuốc tải lên"
+                    className="mx-auto max-h-64 rounded-lg border border-slate-200 object-contain bg-white"
+                  />
+                  <div className="text-xs font-semibold text-slate-700 truncate">
+                    {selectedFile?.name}
+                  </div>
+                  <div className="text-[11px] text-teal-700">Bấm để chọn ảnh đơn khác</div>
+                </div>
+              ) : (
+                <div className="py-6 space-y-2">
+                  <ImageIcon className="mx-auto h-10 w-10 text-slate-400" />
+                  <div className="text-xs font-semibold text-slate-700">
+                    Bấm để chọn ảnh đơn thuốc (PNG, JPG, WEBP)
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Ảnh sẽ được chuẩn hóa OpenCV (CLAHE + khử nhiễu) trước khi đọc bằng RapidOCR
+                  </div>
+                </div>
+              )}
+            </div>
 
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-slate-300 hover:border-teal-500 rounded-xl p-5 text-center cursor-pointer transition-colors bg-slate-50/50 hover:bg-teal-50/20"
-              >
-                <ImageIcon className="h-8 w-8 text-slate-400 mx-auto mb-2" />
-                <p className="text-xs font-semibold text-slate-700">
-                  {realFile ? realFile.name : 'Nhấp để chọn ảnh đơn thuốc từ máy tính'}
-                </p>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Định dạng hỗ trợ: JPG, PNG, WEBP (Tiêu chuẩn GPP rõ nét)
-                </p>
+            <button
+              type="button"
+              onClick={() => void handleRunOcr()}
+              disabled={scanning || !selectedFile}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-bold text-white shadow-xs hover:bg-teal-700 disabled:opacity-50"
+            >
+              {scanning ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Đang tiền xử lý OpenCV & chạy RapidOCR...
+                </>
+              ) : (
+                <>
+                  <ScanLine className="h-4 w-4" />
+                  Quét Đơn Thuốc Bằng RapidOCR
+                </>
+              )}
+            </button>
+
+            {scanError && (
+              <div className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 flex items-start gap-2">
+                <AlertOctagon className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold">OCR không thành công (Không trả kết quả giả):</div>
+                  <div className="mt-0.5">{scanError}</div>
+                </div>
               </div>
-
-              <button
-                type="button"
-                disabled={scanning || !realFile}
-                onClick={handleScanRealFile}
-                className="w-full h-9 inline-flex items-center justify-center gap-1.5 rounded-lg bg-teal-600 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-50 shadow-sm"
-              >
-                <ScanLine className="h-3.5 w-3.5" />
-                <span>{scanning ? 'Đang xử lý thị giác máy tính...' : 'Quét Ảnh Thực Tế & Đối Chiếu Kho'}</span>
-              </button>
-            </>
-          )}
-        </div>
-
-        {/* So sánh ảnh gốc vs ảnh sau tiền xử lý OpenCV */}
-        <div className="lg:col-span-7 rounded-xl border border-zinc-200 bg-white p-4 shadow-2xs space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-zinc-900 flex items-center gap-1.5">
-              <Sliders className="h-3.5 w-3.5 text-zinc-600" />
-              <span>2. Tiền Xử Lý Ảnh Đơn Thuốc (OpenCV Grayscale & Adaptive Threshold)</span>
-            </span>
-            {ocrResult && (
-              <span className="rounded bg-emerald-50 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-700 border border-emerald-200/60">
-                Độ sắc nét: {ocrResult.opencvPreprocessing.sharpnessScore}%
-              </span>
             )}
           </div>
 
-          {!originalPreviewUrl ? (
-            <div className="h-60 rounded-md border border-dashed border-zinc-200 bg-zinc-50 flex flex-col items-center justify-center text-xs text-zinc-400 gap-2">
-              <ScanLine className="h-6 w-6 text-zinc-300" />
-              <span>Nhấn quét mẫu demo hoặc tải ảnh đơn thuốc để xem kết quả tiền xử lý ảnh</span>
+          {result && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wide text-slate-700 flex items-center gap-1.5">
+                  <Sliders className="h-3.5 w-3.5 text-teal-600" />
+                  Chi tiết OpenCV & Văn bản thô
+                </h4>
+                <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">
+                  Confidence TB: {(result.averageConfidence * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-600 flex flex-wrap items-center gap-1.5">
+                <span>
+                  Engine: <span className="font-mono font-semibold">{result.engine}</span> • Draft:{' '}
+                  <span className="font-mono">{result.draftId.slice(0, 8)}</span>
+                </span>
+                {result.sectionMode === 'TREATMENT_TABLE' && (
+                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                    Đã lọc đúng vùng Thuốc điều trị
+                  </span>
+                )}
+                {typeof result.elapsedSec === 'number' && (
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-slate-700">
+                    {result.elapsedSec.toFixed(2)}s
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {result.opencvPreprocessing.steps.map((s) => (
+                  <span
+                    key={s}
+                    className="rounded border border-teal-200 bg-teal-50 px-1.5 py-0.5 font-mono text-[10px] text-teal-800"
+                  >
+                    {s}
+                  </span>
+                ))}
+              </div>
+              <pre className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-mono text-[11px] text-slate-800 whitespace-pre-wrap">
+                {result.rawOcrText}
+              </pre>
+            </div>
+          )}
+        </div>
+
+        {/* Cột phải: Bảng duyệt Top-K ứng viên & xác nhận từng dòng */}
+        <div className="lg:col-span-7 rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                <FileText className="h-4 w-4 text-teal-600" />
+                2. Đối Chiếu Top Ứng Viên & Xác Nhận Từng Dòng
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Chọn đúng biệt dược & hàm lượng từ ứng viên hoặc danh mục; tích{' '}
+                <strong>Xác nhận</strong> từng dòng thuốc trước khi sang POS.
+              </p>
+            </div>
+            {lines.length > 0 && (
+              <div className="text-xs font-bold">
+                {unconfirmedActiveCount === 0 && activeLines.length > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-emerald-700">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Đã xác nhận {confirmedActiveLines.length}/{activeLines.length} dòng
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-amber-800">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Còn {unconfirmedActiveCount} dòng chưa xác nhận
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {lines.length === 0 ? (
+            <div className="py-16 text-center text-slate-400 space-y-2">
+              <Eye className="mx-auto h-10 w-10 text-slate-300" />
+              <div className="text-xs font-medium text-slate-500">
+                Chưa có dòng thuốc nào được bóc tách. Tải ảnh đơn thuốc và bấm Quét OCR ở cột trái.
+              </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <div className="text-[11px] font-medium text-zinc-500">
-                  Ảnh đơn thuốc gốc (RGB Input)
+            <div className="space-y-3">
+              {lines.map((line) => {
+                const chosenProduct = line.selectedProductId
+                  ? productById.get(line.selectedProductId) || null
+                  : null;
+                return (
+                  <div
+                    key={line.lineId}
+                    className={`rounded-xl border p-3.5 transition-colors space-y-2.5 ${
+                      line.skipped
+                        ? 'border-slate-200 bg-slate-50/70 opacity-65'
+                        : line.confirmed
+                          ? 'border-emerald-300 bg-emerald-50/30'
+                          : 'border-amber-200 bg-amber-50/20'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                            Dòng #{line.lineNumber}
+                          </span>
+                          <span className="rounded bg-sky-50 border border-sky-200 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">
+                            OCR Tin cậy: {(line.ocrConfidence * 100).toFixed(0)}%
+                          </span>
+                          {line.strengthTokens.map((st) => (
+                            <span
+                              key={st}
+                              className="rounded bg-purple-50 border border-purple-200 px-1.5 py-0.5 text-[10px] font-bold text-purple-700"
+                            >
+                              {st}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="text-xs font-mono text-slate-700 break-words">
+                          Text gốc: <span className="font-semibold text-slate-900">{line.rawText}</span>
+                        </div>
+                        <div className="text-[11px] text-teal-800 font-semibold">
+                          Từ khóa thuốc tách được: &ldquo;{line.extractedDrugQuery}&rdquo;
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleSkip(line.lineId)}
+                          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold ${
+                            line.skipped
+                              ? 'border-slate-400 bg-slate-200 text-slate-800'
+                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                          {line.skipped ? 'Đã bỏ qua' : 'Bỏ qua'}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleConfirm(line.lineId)}
+                          disabled={line.skipped || !line.selectedProductId}
+                          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition-colors disabled:opacity-40 ${
+                            line.confirmed
+                              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                              : 'border border-amber-400 bg-amber-100 text-amber-900 hover:bg-amber-200'
+                          }`}
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                          {line.confirmed ? 'Đã xác nhận' : 'Xác nhận dòng'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {!line.skipped && (
+                      <>
+                        {/* Top-K Ứng viên AI đề xuất */}
+                        <div className="space-y-1.5">
+                          <div className="text-[11px] font-bold text-slate-600">
+                            Top {line.candidates.length} ứng viên từ Danh mục nhà thuốc (chọn 1):
+                          </div>
+                          {line.candidates.length > 0 ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              {line.candidates.map((cand) => {
+                                const isChosen = line.selectedProductId === cand.ProductID;
+                                return (
+                                  <button
+                                    key={cand.ProductID}
+                                    type="button"
+                                    onClick={() => handleSelectCandidate(line.lineId, cand.ProductID)}
+                                    className={`text-left rounded-lg border p-2 text-xs transition-all ${
+                                      isChosen
+                                        ? 'border-teal-600 bg-teal-50 ring-1 ring-teal-500'
+                                        : 'border-slate-200 bg-white hover:border-teal-400'
+                                    }`}
+                                  >
+                                    <div className="flex items-start justify-between gap-1.5">
+                                      <span className="font-bold text-slate-900 line-clamp-1">
+                                        {cand.ProductName}
+                                      </span>
+                                      <span className="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
+                                        {(cand.combinedConfidence * 100).toFixed(0)}%
+                                      </span>
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                                      <span
+                                        className={`rounded px-1.5 py-0.5 font-bold ${
+                                          cand.IsRx
+                                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                            : 'bg-teal-50 text-teal-700 border border-teal-200'
+                                        }`}
+                                      >
+                                        {cand.IsRx ? 'Kê đơn Rx' : 'OTC'}
+                                      </span>
+                                      <span
+                                        className={`font-semibold ${
+                                          cand.inStock ? 'text-emerald-700' : 'text-rose-600'
+                                        }`}
+                                      >
+                                        Tồn: {cand.Quantity} {cand.Unit}
+                                      </span>
+                                      <span className="text-slate-500">
+                                        {cand.Price.toLocaleString('vi-VN')}đ
+                                      </span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-[11px] text-amber-700 italic">
+                              Không có ứng viên độ khớp cao — vui lòng chọn thủ công bên dưới hoặc bỏ qua dòng.
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Chọn thủ công + SL + Liều dùng */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1 border-t border-slate-100">
+                          <div className="sm:col-span-6">
+                            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                              Hoặc chọn thuốc thủ công trong kho
+                            </label>
+                            <select
+                              value={line.selectedProductId ?? ''}
+                              onChange={(e) =>
+                                handleSelectCandidate(
+                                  line.lineId,
+                                  e.target.value ? Number(e.target.value) : null
+                                )
+                              }
+                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 focus:border-teal-500 focus:outline-none"
+                            >
+                              <option value="">-- Chưa chọn thuốc khớp --</option>
+                              {allProducts.map((p) => (
+                                <option key={p.ProductID} value={p.ProductID}>
+                                  {p.ProductName} (Tồn: {p.Quantity} {p.Unit})
+                                  {p.packaging?.IsRx ? ' [Rx]' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                              Số lượng ({chosenProduct?.Unit || line.extractedUnit || 'ĐV'})
+                            </label>
+                            <div className="flex items-center rounded-lg border border-slate-200 bg-white">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateLine(line.lineId, (p) => ({
+                                    ...p,
+                                    extractedQuantity: Math.max(1, p.extractedQuantity - 1),
+                                  }))
+                                }
+                                className="px-2 py-1.5 text-slate-500 hover:bg-slate-50"
+                              >
+                                <Minus className="h-3 w-3" />
+                              </button>
+                              <input
+                                type="number"
+                                min={1}
+                                value={line.extractedQuantity}
+                                onChange={(e) =>
+                                  updateLine(line.lineId, (p) => ({
+                                    ...p,
+                                    extractedQuantity: Math.max(1, Number(e.target.value || 1)),
+                                  }))
+                                }
+                                className="w-full text-center text-xs font-bold text-slate-900 focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateLine(line.lineId, (p) => ({
+                                    ...p,
+                                    extractedQuantity: p.extractedQuantity + 1,
+                                  }))
+                                }
+                                className="px-2 py-1.5 text-slate-500 hover:bg-slate-50"
+                              >
+                                <Plus className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="sm:col-span-4">
+                            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                              Hướng dẫn liều dùng in nhãn
+                            </label>
+                            <input
+                              type="text"
+                              value={line.extractedDosage}
+                              onChange={(e) =>
+                                updateLine(line.lineId, (p) => ({
+                                  ...p,
+                                  extractedDosage: e.target.value,
+                                }))
+                              }
+                              placeholder="VD: Sáng 1v, Chiều 1v sau ăn"
+                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 focus:border-teal-500 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs text-slate-600">
+                  {readyToTransfer ? (
+                    <span className="font-semibold text-emerald-700">
+                      Tất cả dòng thuốc hợp lệ đã được Dược sĩ xác nhận. Sẵn sàng nạp vào quầy POS.
+                    </span>
+                  ) : (
+                    <span className="font-semibold text-amber-700">
+                      Còn {unconfirmedActiveCount} dòng chưa xác nhận — không được phép chuyển vào hóa
+                      đơn.
+                    </span>
+                  )}
                 </div>
-                <img
-                  src={originalPreviewUrl}
-                  alt="Original Prescription"
-                  className="w-full h-52 object-contain rounded border border-zinc-200 bg-zinc-50"
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-medium text-zinc-500">
-                  Ảnh nhị phân tách chữ (OpenCV Threshold)
-                </div>
-                <img
-                  src={thresholdPreviewUrl || originalPreviewUrl}
-                  alt="OpenCV Threshold"
-                  className="w-full h-52 object-contain rounded border border-zinc-200 bg-zinc-50"
-                />
+                <button
+                  type="button"
+                  disabled={!readyToTransfer || verifying}
+                  onClick={() => void handleTransferToPos()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-xs hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {verifying ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ArrowRight className="h-4 w-4" />
+                  )}
+                  Chuyển Sang Quầy Thu Ngân POS ({confirmedActiveLines.length} thuốc)
+                </button>
               </div>
             </div>
           )}
         </div>
       </div>
-
-      {/* Bảng Dược Sĩ Kiểm Tra, Phê Duyệt & Chuyển Sang POS */}
-      {reviewItems.length > 0 && (
-        <div className="rounded-xl border border-zinc-200 bg-white shadow-2xs overflow-hidden">
-          <div className="px-5 py-4 border-b border-zinc-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-zinc-50/50">
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-zinc-900">
-                  3. Bảng Kiểm Tra & Phê Duyệt Của Dược Sĩ ({reviewItems.length} dòng thuốc)
-                </h2>
-                {activeTab === 'DEMO' && (
-                  <span className="rounded bg-amber-50 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-700 border border-amber-200">
-                    [DỮ LIỆU DEMO]
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                Dược sĩ kiểm tra tên hoạt chất, liều lượng, chọn thuốc thay thế nếu ngoài danh mục trước khi chuyển sang POS.
-              </p>
-            </div>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={pharmacistVerified}
-                  onChange={(e) => setPharmacistVerified(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-teal-600"
-                />
-                <span>Tôi (Dược sĩ) xác nhận đã kiểm tra khớp đơn gốc</span>
-              </label>
-              <button
-                type="button"
-                onClick={handleTransfer}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-4 text-xs font-bold text-white hover:bg-teal-700 shadow-sm"
-              >
-                <span>Xác Nhận & Chuyển Sang Quầy POS</span>
-                <ArrowRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-zinc-200 bg-zinc-50/70 text-[11px] font-medium text-zinc-500">
-                  <th className="py-2.5 px-4">Từ khóa đọc từ đơn</th>
-                  <th className="py-2.5 px-4 min-w-[240px]">Dược phẩm đối chiếu trong kho</th>
-                  <th className="py-2.5 px-4 min-w-[160px]">Liều dùng bóc tách</th>
-                  <th className="py-2.5 px-4 text-center w-28">SL kê</th>
-                  <th className="py-2.5 px-4 text-right">Tồn kho khả dụng</th>
-                  <th className="py-2.5 px-4 text-right">Thành tiền</th>
-                  <th className="py-2.5 px-4 text-center w-16">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200/60 text-xs">
-                {reviewItems.map((item, idx) => {
-                  const mp = item.matchedProduct;
-                  const isOutOfStock = mp && mp.Quantity <= 0;
-                  const isNotFound = !mp;
-
-                  return (
-                    <tr key={idx} className="hover:bg-zinc-50/80 transition-colors">
-                      <td className="py-3 px-4 font-mono font-medium text-zinc-800">
-                        {item.keyword}
-                      </td>
-
-                      <td className="py-3 px-4">
-                        {mp ? (
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              {mp.Quantity > 0 ? (
-                                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                              ) : (
-                                <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
-                              )}
-                              <span className="font-semibold text-zinc-900">{mp.ProductName}</span>
-                            </div>
-                            <div className="text-[11px] text-zinc-500">
-                              SKU #{String(mp.ProductID).padStart(4, '0')} · {mp.ProductType} · {formatVND(mp.Price)}/{mp.Unit}
-                            </div>
-                            <div className="pt-0.5">
-                              <select
-                                value={mp.ProductID}
-                                onChange={(e) => handleSubstituteProduct(idx, e.target.value)}
-                                className="text-[11px] h-6 rounded border border-slate-200 bg-slate-50 px-1 text-slate-600 hover:bg-white"
-                              >
-                                <option value={mp.ProductID}>Đổi thuốc khác trong kho...</option>
-                                {allProducts
-                                  .filter((p) => p.ProductID !== mp.ProductID)
-                                  .map((p) => (
-                                    <option key={p.ProductID} value={p.ProductID}>
-                                      {p.ProductName} (Còn {p.Quantity} {p.Unit})
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            <span className="inline-flex items-center gap-1 text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                              <AlertCircle className="h-3.5 w-3.5" />
-                              Thuốc ngoài danh mục kho
-                            </span>
-                            <div>
-                              <select
-                                defaultValue=""
-                                onChange={(e) => handleSubstituteProduct(idx, e.target.value)}
-                                className="w-full text-xs h-7 rounded border border-amber-300 bg-amber-50/50 px-1.5 text-zinc-800 font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
-                              >
-                                <option value="" disabled>
-                                  -- Chọn thuốc thay thế trong kho --
-                                </option>
-                                {allProducts.map((p) => (
-                                  <option key={p.ProductID} value={p.ProductID}>
-                                    {p.ProductName} (Tồn: {p.Quantity} {p.Unit})
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="py-3 px-4 text-zinc-600">{item.dosage}</td>
-
-                      <td className="py-3 px-4">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateItemQty(idx, -1)}
-                            className="h-6 w-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100"
-                          >
-                            <Minus className="h-3 w-3" />
-                          </button>
-                          <span className="w-8 text-center font-bold tabular-nums">
-                            {item.quantity}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateItemQty(idx, 1)}
-                            className="h-6 w-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100"
-                          >
-                            <Plus className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </td>
-
-                      <td className="py-3 px-4 text-right tabular-nums">
-                        {mp ? (
-                          mp.Quantity > 0 ? (
-                            <span className="rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200">
-                              Còn {mp.Quantity} {mp.Unit}
-                            </span>
-                          ) : (
-                            <span className="rounded bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200">
-                              Hết tồn kho (0 {mp.Unit})
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-zinc-400 font-mono text-[11px]">Chưa khớp</span>
-                        )}
-                      </td>
-
-                      <td className="py-3 px-4 text-right font-semibold text-zinc-900 tabular-nums">
-                        {mp ? formatVND(mp.Price * item.quantity) : '0 ₫'}
-                      </td>
-
-                      <td className="py-3 px-4 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveItem(idx)}
-                          title="Xóa dòng thuốc này"
-                          className="h-7 w-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center mx-auto transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

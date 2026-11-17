@@ -49,6 +49,15 @@ const createInvoiceSchema = z.object({
   PrescriptionImage: z.string().trim().optional(),
   PaymentMethod: z.enum(['CASH', 'VIETQR', 'CARD', 'CREDIT', 'COD']).optional().default('VIETQR'),
   idempotencyKey: z.string().trim().optional(),
+  ocrDraftId: z.string().trim().optional(),
+  ocrVerification: z
+    .object({
+      draftId: z.string().trim().min(1),
+      confirmedLines: z.coerce.number().int().min(0).optional(),
+      skippedLines: z.coerce.number().int().min(0).optional(),
+      unconfirmedCount: z.coerce.number().int().min(0).default(0),
+    })
+    .optional(),
   items: z.array(invoiceItemSchema).min(1, 'Hóa đơn phải có ít nhất 1 sản phẩm thuốc'),
 });
 
@@ -214,8 +223,74 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
       PrescriptionFileKey,
       PrescriptionImage,
       PaymentMethod,
+      ocrDraftId,
+      ocrVerification,
       items,
     } = parsed.data;
+
+    const effectiveOcrDraftId = ocrDraftId || ocrVerification?.draftId;
+    if (effectiveOcrDraftId || ocrVerification) {
+      if ((ocrVerification?.unconfirmedCount || 0) > 0) {
+        res.status(400).json({
+          success: false,
+          code: 'OCR_ITEMS_UNCONFIRMED',
+          message: `Vẫn còn ${ocrVerification!.unconfirmedCount} dòng thuốc OCR chưa được Dược sĩ xác nhận. Tuyệt đối không chuyển dòng chưa xác nhận vào hóa đơn.`,
+        });
+        return;
+      }
+
+      if (!effectiveOcrDraftId) {
+        res.status(400).json({
+          success: false,
+          code: 'OCR_ITEMS_UNCONFIRMED',
+          message: 'Thiếu mã phiên OCR đã xác nhận (draftId).',
+        });
+        return;
+      }
+
+      const draft = await prisma.ocrDraft.findUnique({ where: { DraftID: effectiveOcrDraftId } });
+      if (!draft) {
+        res.status(400).json({
+          success: false,
+          code: 'OCR_DRAFT_NOT_FOUND',
+          message: `Không tìm thấy phiên quét đơn OCR ${effectiveOcrDraftId}.`,
+        });
+        return;
+      }
+
+      const draftLines = JSON.parse(draft.LinesJson) as Array<{
+        selectedProductId: number | null;
+        confirmed: boolean;
+        skipped?: boolean;
+      }>;
+      const unconfirmedLines = draftLines.filter((l) => !l.skipped && (!l.confirmed || !l.selectedProductId));
+      if (draft.Status !== 'CONFIRMED' || unconfirmedLines.length > 0) {
+        res.status(400).json({
+          success: false,
+          code: 'OCR_ITEMS_UNCONFIRMED',
+          message:
+            unconfirmedLines.length > 0
+              ? `Phiên OCR ${effectiveOcrDraftId} còn ${unconfirmedLines.length} dòng chưa được Dược sĩ chọn thuốc và xác nhận.`
+              : `Phiên OCR ${effectiveOcrDraftId} chưa ở trạng thái CONFIRMED (hiện tại: ${draft.Status}).`,
+        });
+        return;
+      }
+
+      const confirmedProdIds = new Set(
+        draftLines
+          .filter((l) => !l.skipped && l.confirmed && l.selectedProductId)
+          .map((l) => Number(l.selectedProductId))
+      );
+      const unverifiedItem = items.find((i) => !confirmedProdIds.has(Number(i.ProductID)));
+      if (unverifiedItem) {
+        res.status(400).json({
+          success: false,
+          code: 'OCR_ITEMS_UNCONFIRMED',
+          message: `Sản phẩm #${unverifiedItem.ProductID} trong hóa đơn không nằm trong các dòng OCR đã được Dược sĩ xác nhận.`,
+        });
+        return;
+      }
+    }
 
     // Kiểm tra bắt buộc phân quyền Dược sĩ + ảnh toa thuốc cho mọi thuốc kê đơn (Rx) tại POS
     const rxValidation = await validatePrescriptionForProducts({
@@ -563,6 +638,13 @@ export const createInvoice = async (req: Request, res: Response): Promise<void> 
           reasonCode: ClinicalOverrideCode,
           reasonNote: ClinicalOverrideNote,
           warnings: clinicalSafety.warnings,
+        });
+      }
+
+      if (effectiveOcrDraftId) {
+        await tx.ocrDraft.update({
+          where: { DraftID: effectiveOcrDraftId },
+          data: { Status: 'CONVERTED', InvoiceID: inv.InvoiceID },
         });
       }
 

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Toaster, toast } from 'sonner';
-import { storeApi } from './services/api';
+import { storeApi, PublicCatalogSearchMeta } from './services/api';
 import { CartItem, Product, UnitMode } from './types';
 import {
   getEffectivePrice,
@@ -14,6 +14,7 @@ import { ProductDetailModal } from './components/ProductDetailModal';
 import { PrescriptionUploadModal } from './components/PrescriptionUploadModal';
 import { OrderTrackingModal } from './components/OrderTrackingModal';
 import { CartDrawer } from './components/CartDrawer';
+import { PharmacistChatWidget } from './components/PharmacistChatWidget';
 
 export const App: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -25,6 +26,7 @@ export const App: React.FC = () => {
   const [page, setPage] = useState<number>(1);
   const [total, setTotal] = useState<number>(0);
   const [totalPages, setTotalPages] = useState<number>(1);
+  const [searchMeta, setSearchMeta] = useState<PublicCatalogSearchMeta | undefined>(undefined);
   const [cart, setCart] = useState<CartItem[]>([]);
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -38,6 +40,9 @@ export const App: React.FC = () => {
     orderCode: string;
     trackingToken: string;
   }>({ open: false, orderCode: '', trackingToken: '' });
+  const [chatOpen, setChatOpen] = useState<boolean>(false);
+  const [chatContextProduct, setChatContextProduct] = useState<Product | null>(null);
+  const [queuedChatQuestion, setQueuedChatQuestion] = useState<{ id: number; text: string } | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -59,6 +64,7 @@ export const App: React.FC = () => {
       setProducts(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages);
+      setSearchMeta(res.searchMeta);
       if (res.categories.length > 0) {
         setCategories(res.categories);
       }
@@ -189,6 +195,7 @@ export const App: React.FC = () => {
           onPageChange={setPage}
           loading={loading}
           search={search}
+          searchMeta={searchMeta}
           onRefresh={() => void loadProducts()}
           onSelectProduct={(p) => setSelectedProduct(p)}
           onQuickAdd={(p) => handleAddToCart(p, 'BASE', 1)}
@@ -197,6 +204,7 @@ export const App: React.FC = () => {
           onOpenTrackingModal={() =>
             setTrackingState({ open: true, orderCode: '', trackingToken: '' })
           }
+          onOpenAiChat={() => setChatOpen(true)}
         />
       </div>
 
@@ -210,6 +218,15 @@ export const App: React.FC = () => {
           onOpenPrescriptionModal={() => {
             setSelectedProduct(null);
             setConsultModal({ open: true, mode: 'RX' });
+          }}
+          onAskAiAboutProduct={(prod) => {
+            setSelectedProduct(null);
+            setChatContextProduct(prod);
+            setChatOpen(true);
+            setQueuedChatQuestion({
+              id: Date.now(),
+              text: `Cho tôi hỏi công dụng, liều dùng và lưu ý an toàn của "${prod.ProductName}" là gì?`,
+            });
           }}
         />
       )}
@@ -243,6 +260,24 @@ export const App: React.FC = () => {
           setIsCartOpen(false);
           setTrackingState({ open: true, orderCode, trackingToken });
         }}
+      />
+
+      <PharmacistChatWidget
+        isOpen={chatOpen}
+        onOpenChange={setChatOpen}
+        contextProduct={chatContextProduct}
+        onClearContextProduct={() => setChatContextProduct(null)}
+        queuedQuestion={queuedChatQuestion}
+        onSelectProduct={(prod) => {
+          setChatOpen(false);
+          setSelectedProduct(prod);
+        }}
+        onAddToCart={(prod) => handleAddToCart(prod, 'BASE', 1)}
+        onOpenPrescriptionModal={() => {
+          setChatOpen(false);
+          setConsultModal({ open: true, mode: 'RX' });
+        }}
+        hideLauncher={isCartOpen || Boolean(selectedProduct) || consultModal.open || trackingState.open}
       />
     </div>
   );

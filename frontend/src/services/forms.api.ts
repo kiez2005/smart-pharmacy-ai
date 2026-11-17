@@ -1,9 +1,11 @@
 import { apiClient as http } from './apiClient';
 import {
+  ContactAiDraftResponse,
   ContactRecord,
   CreateInvoicePayload,
   CreateOnlineOrderPayload,
   InvoiceRecord,
+  MailConfigStatus,
   OnlineOrderRecord,
   UserProfile,
 } from '../types/forms';
@@ -295,12 +297,58 @@ export const formsApi = {
     return res.data.data;
   },
 
-  async replyContact(contactId: number, ReplyNote: string): Promise<ContactRecord> {
-    const res = await http.patch<{ success: boolean; data: ContactRecord }>(
-      `/contacts/${contactId}/reply`,
-      { ReplyNote }
+  async replyContact(
+    contactId: number,
+    payload:
+      | string
+      | {
+          ReplyNote: string;
+          sendEmail?: boolean;
+          RecipientEmail?: string;
+          EmailSubject?: string;
+        }
+  ): Promise<{
+    data: ContactRecord;
+    message?: string;
+    mailResult?: { status: string; toEmail: string; messageId: string | null; error: string | null };
+  }> {
+    const body = typeof payload === 'string' ? { ReplyNote: payload } : payload;
+    const res = await http.patch<{
+      success: boolean;
+      message?: string;
+      data: ContactRecord;
+      mailResult?: { status: string; toEmail: string; messageId: string | null; error: string | null };
+    }>(`/contacts/${contactId}/reply`, body);
+    return {
+      data: res.data.data,
+      message: res.data.message,
+      mailResult: res.data.mailResult,
+    };
+  },
+
+  async draftContactAiReply(
+    contactId: number,
+    options?: { style?: 'STANDARD' | 'CONCISE' | 'FOLLOWUP_CARE'; includeAttachmentOcr?: boolean }
+  ): Promise<ContactAiDraftResponse> {
+    const res = await http.post<{ success: boolean; data: ContactAiDraftResponse }>(
+      `/contacts/${contactId}/ai-draft-reply`,
+      options || {}
     );
     return res.data.data;
+  },
+
+  async getContactMailStatus(verify = false): Promise<MailConfigStatus> {
+    const res = await http.get<{ success: boolean; data: MailConfigStatus }>(
+      `/contacts/mail-status${verify ? '?verify=true' : ''}`
+    );
+    return res.data.data;
+  },
+
+  async sendContactTestMail(toEmail?: string): Promise<{ message: string }> {
+    const res = await http.post<{ success: boolean; message: string }>('/contacts/test-mail', {
+      ...(toEmail ? { toEmail } : {}),
+    });
+    return { message: res.data.message };
   },
 
   async fetchPrescriptionImageBlobUrl(fileKey: string): Promise<string> {
@@ -308,5 +356,12 @@ export const formsApi = {
       responseType: 'blob',
     });
     return URL.createObjectURL(res.data);
+  },
+
+  async fetchPrescriptionImageFile(fileKey: string): Promise<File> {
+    const res = await http.get<Blob>(`/online-orders/prescriptions/${encodeURIComponent(fileKey)}`, {
+      responseType: 'blob',
+    });
+    return new File([res.data], fileKey, { type: res.data.type || 'image/jpeg' });
   },
 };

@@ -75,7 +75,16 @@ export interface ProductListResponse {
     units: string[];
   };
   searchMeta?: {
-    engine: 'meilisearch' | 'fuse-fuzzy' | 'prisma-sql';
+    engine:
+      | 'hybrid-rrf'
+      | 'bm25-keyword-only'
+      | 'meilisearch'
+      | 'fuse-fuzzy'
+      | 'prisma-sql'
+      | 'keyword-degraded';
     processingTimeMs: number;
+    semanticAvailable?: boolean;
+    semanticDegraded?: boolean;
+    warning?: string;
   };
 }

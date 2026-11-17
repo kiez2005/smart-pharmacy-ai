@@ -13,7 +13,18 @@ const DEFAULT_ORPHAN_TTL_HOURS = 2; // P1-03: Rút ngắn TTL file orphan mặc 
 const DEFAULT_CLOSED_ORDER_TTL_HOURS = 0; // 0 = disabled by default so dispensed/closed orders follow long-term archive policy
 const DEFAULT_RETENTION_DAYS = 730; // 2 years per Vietnam pharmacy prescription archive SOP
 const SAFE_RX_FILE_KEY_REGEX = /^rx-[a-f0-9]{32}\.(jpg|png|webp)$/i;
+const INLINE_RX_FILE_KEY_REGEX = /\brx-[a-f0-9]{32}\.(?:jpg|png|webp)\b/i;
 const CLOSED_ORDER_STATUSES = new Set(['REJECTED', 'CANCELLED', 'EXPIRED', 'DELIVERED']);
+
+export function isValidRxFileKey(fileKey?: string | null): boolean {
+  return Boolean(fileKey && SAFE_RX_FILE_KEY_REGEX.test(fileKey.trim()));
+}
+
+export function extractRxFileKeyFromText(text?: string | null): string | null {
+  if (!text) return null;
+  const match = String(text).match(INLINE_RX_FILE_KEY_REGEX);
+  return match ? match[0] : null;
+}
 
 // P1-03: Giữ chỗ dung lượng nguyên tử (in-flight reservation) và giới hạn quota theo IP
 let inFlightReservedBytes = 0;
@@ -373,7 +384,7 @@ export async function cleanupPrescriptionFiles(
     return result;
   }
 
-  const [linkedOrders, linkedInvoices] = await Promise.all([
+  const [linkedOrders, linkedInvoices, linkedContacts] = await Promise.all([
     prisma.onlineOrder.findMany({
       where: {
         PrescriptionFileKey: {
@@ -403,6 +414,20 @@ export async function cleanupPrescriptionFiles(
         UpdateDate: true,
       },
     }),
+    prisma.contact.findMany({
+      where: {
+        OR: [
+          { AttachmentFileKey: { in: candidateFiles } },
+          { Message: { contains: 'rx-' } },
+        ],
+      },
+      select: {
+        ContactID: true,
+        AttachmentFileKey: true,
+        Message: true,
+        CreateDate: true,
+      },
+    }),
   ]);
 
   const ordersByFileKey = new Map<string, typeof linkedOrders>();
@@ -421,8 +446,18 @@ export async function cleanupPrescriptionFiles(
     invoicesByFileKey.set(invoice.PrescriptionFileKey, list);
   }
 
+  const contactsByFileKey = new Map<string, typeof linkedContacts>();
+  for (const contact of linkedContacts) {
+    const key = contact.AttachmentFileKey || extractRxFileKeyFromText(contact.Message);
+    if (!key) continue;
+    const list = contactsByFileKey.get(key) ?? [];
+    list.push(contact);
+    contactsByFileKey.set(key, list);
+  }
+
   const cleanedOrderKeys: string[] = [];
   const cleanedInvoiceKeys: string[] = [];
+  const cleanedContactKeys: string[] = [];
 
   for (const fileKey of candidateFiles) {
     const fullPath = path.join(UPLOAD_ROOT, fileKey);
@@ -436,9 +471,10 @@ export async function cleanupPrescriptionFiles(
     const fileMtimeMs = Math.floor(stat.mtimeMs);
     const orders = ordersByFileKey.get(fileKey) ?? [];
     const invoices = invoicesByFileKey.get(fileKey) ?? [];
+    const contacts = contactsByFileKey.get(fileKey) ?? [];
     let deleteReason: 'orphan' | 'closed' | 'retention' | null = null;
 
-    if (orders.length === 0 && invoices.length === 0) {
+    if (orders.length === 0 && invoices.length === 0 && contacts.length === 0) {
       if (orphanTtlMs !== null && (orphanTtlMs <= 0 || nowMs - fileMtimeMs >= orphanTtlMs)) {
         deleteReason = 'orphan';
       }
@@ -446,14 +482,15 @@ export async function cleanupPrescriptionFiles(
       const oldestCreatedMs = Math.min(
         fileMtimeMs,
         ...orders.map((o) => o.CreateDate.getTime()),
-        ...invoices.map((inv) => inv.CreateDate.getTime())
+        ...invoices.map((inv) => inv.CreateDate.getTime()),
+        ...contacts.map((c) => c.CreateDate.getTime())
       );
       if (
         maxRetentionMs !== null &&
         (maxRetentionMs <= 0 || nowMs - oldestCreatedMs >= maxRetentionMs)
       ) {
         deleteReason = 'retention';
-      } else if (closedOrderTtlMs !== null && invoices.length === 0 && orders.length > 0) {
+      } else if (closedOrderTtlMs !== null && invoices.length === 0 && contacts.length === 0 && orders.length > 0) {
         const allClosedExpired = orders.every((o) => {
           if (!CLOSED_ORDER_STATUSES.has(o.Status)) return false;
           const closedAtMs = Math.max(
@@ -484,6 +521,9 @@ export async function cleanupPrescriptionFiles(
       if (invoices.length > 0) {
         cleanedInvoiceKeys.push(fileKey);
       }
+      if (contacts.length > 0) {
+        cleanedContactKeys.push(fileKey);
+      }
     } catch {
       // Ignore concurrent unlink error
     }
@@ -513,6 +553,18 @@ export async function cleanupPrescriptionFiles(
           data: {
             PrescriptionFileKey: null,
             PrescriptionFileMime: null,
+          },
+        })
+      : Promise.resolve(),
+    cleanedContactKeys.length > 0
+      ? prisma.contact.updateMany({
+          where: {
+            AttachmentFileKey: {
+              in: cleanedContactKeys,
+            },
+          },
+          data: {
+            AttachmentFileKey: null,
           },
         })
       : Promise.resolve(),
