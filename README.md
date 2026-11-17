@@ -60,11 +60,16 @@ Hệ thống phần mềm quản trị doanh nghiệp dược phẩm (`ERP`), b�
 
 ### 🚀 Cách 1: Khởi Chạy Nhanh Bằng 1 Cú Nhấp Chuột (Dành cho Windows)
 Chỉ cần nhấp đúp vào file **`run-app.bat`** ở thư mục gốc:
-- Tự động kiểm tra môi trường Node.js.
-- Tự động cài đặt thư viện (`npm install`) và khởi tạo cơ sở dữ liệu nếu chạy lần đầu.
-- Tự động bật đồng thời **Backend API** (cổng `5000`) và **Frontend Web UI** (cổng `5173`).
-- Tự động mở trình duyệt web tại địa chỉ `http://localhost:5173`.
-- Khi muốn tắt toàn bộ hệ thống: Nhấp đúp vào file **`stop-app.bat`**.
+- Tự động kiểm tra môi trường Node.js, Python & Ollama.
+- Tự động cài đặt thư viện (`npm install` / `requirements.txt`) và khởi tạo cơ sở dữ liệu nếu chạy lần đầu.
+- Tự động bật đồng thời tất cả **5 dịch vụ**:
+  - **Ollama Local LLM** (cổng `11434`)
+  - **Python AI Service** (cổng `8000` — RapidOCR, Faster-Whisper STT, Hybrid Search, RAG)
+  - **Backend API** (cổng `5000`)
+  - **ERP Quản trị & POS** (cổng `5173`)
+  - **Storefront Bán Thuốc Online & Chatbot** (cổng `5174`)
+- Tự động mở trình duyệt tại `http://localhost:5173` và `http://localhost:5174`.
+- Khi muốn tắt toàn bộ hệ thống: Nhấp đúp vào file **`stop-app.bat`** (giải phóng tất cả 5 cổng `5000, 5173, 5174, 8000, 11434`).
 
 ---
 
@@ -77,17 +82,22 @@ npm run db:seed
 npm run dev
 ```
 
-### Bước 2: Khởi chạy Frontend Web App (Port `5173`)
+### Bước 2: Khởi chạy ERP Frontend (Port `5173`) & Storefront (Port `5174`)
 ```bash
 cd frontend
 npm install
 npm run dev
+
+# Terminal khác cho Storefront bán thuốc online:
+cd storefront
+npm install
+npm run dev
 ```
 
-### Bước 3 (Tùy chọn): Khởi chạy Python AI Microservice (Port `8000`)
-*(Hệ thống có cơ chế Auto-Fallback thông minh trên Node.js nên vẫn hoạt động đầy đủ 100% tính năng ngay cả khi không bật Python server)*
+### Bước 3: Khởi chạy Python AI Microservice (Port `8000`) & Ollama (Port `11434`)
 ```bash
+ollama serve
 cd ai-service
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+uvicorn main:app --host 127.0.0.1 --port 8000
 ```
