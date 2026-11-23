@@ -6,6 +6,7 @@ export interface UserProfile {
   Email: string;
   Phone?: string;
   Role: 'ADMIN' | 'PHARMACIST' | 'CASHIER' | 'CUSTOMER';
+  Status?: 'ACTIVE' | 'INACTIVE' | string;
   CreateDate?: string;
 }
 

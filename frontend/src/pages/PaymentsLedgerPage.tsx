@@ -117,13 +117,13 @@ export const PaymentsLedgerPage: React.FC = () => {
 
   const handleDeleteOne = async (_p: PaymentRecord) => {
     toast.error(
-      'Nghiêm cấm xóa cứng bút toán Sổ quỹ đã ghi sổ! Vui lòng sử dụng nghiệp vụ Hủy/Hoàn trả hóa đơn để bảo toàn dấu vết kiểm toán (P0-04).'
+      'Bút toán Sổ quỹ đã ghi sổ không thể xóa vĩnh viễn. Vui lòng sử dụng nghiệp vụ Hoàn trả hóa đơn để bảo toàn sổ cái.'
     );
   };
 
   const handleBulkDelete = async () => {
     toast.error(
-      'Nghiêm cấm xóa cứng bút toán Sổ quỹ đã ghi sổ! Vui lòng sử dụng nghiệp vụ Hủy/Hoàn trả hóa đơn (P0-04).'
+      'Bút toán Sổ quỹ đã ghi sổ không thể xóa vĩnh viễn. Vui lòng sử dụng nghiệp vụ Hoàn trả hóa đơn.'
     );
   };
 
@@ -606,7 +606,7 @@ export const PaymentsLedgerPage: React.FC = () => {
                     (previewQrPayment.invoice?.DebtAmount || 0) > 0) && (
                     <div className="pt-3 border-t border-slate-200 text-left space-y-2.5">
                       <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-900">
-                        Chứng từ đang ở trạng thái <strong>Chờ đối soát ngân hàng (UNPAID)</strong>. Cần thu:{' '}
+                        Chứng từ đang ở trạng thái <strong>Chờ đối soát ngân hàng</strong>. Cần thu:{' '}
                         <strong>
                           {formatVND(
                             previewQrPayment.invoice?.DebtAmount ||
@@ -763,8 +763,12 @@ export const PaymentsLedgerPage: React.FC = () => {
                           </div>
                           <div className="text-right">
                             <div className="font-bold text-teal-700 tabular-nums">{formatVND(p.PaidAmount)}</div>
-                            <span className="rounded bg-emerald-50 text-emerald-700 px-1.5 py-0.2 text-[10px] font-semibold">
-                              {p.Status}
+                            <span className="rounded bg-emerald-50 text-emerald-700 px-1.5 py-0.5 text-[10px] font-semibold">
+                              {p.Status === 'UNPAID' || p.Status === 'PENDING'
+                                ? 'Chờ đối soát'
+                                : p.Status === 'REFUNDED'
+                                ? 'Đã hoàn tiền'
+                                : 'Đã khớp lệnh'}
                             </span>
                           </div>
                         </div>

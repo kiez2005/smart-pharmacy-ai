@@ -21,6 +21,7 @@ import { toast } from 'sonner';
 import { storeApi } from '../services/api';
 import { CartItem, OnlineOrderRecord, UnitMode } from '../types';
 import { formatVND, getMaxStockForMode } from '../utils/packaging';
+import { SafeImage } from './SafeImage';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -64,6 +65,18 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       if (prescriptionPreviewUrl) URL.revokeObjectURL(prescriptionPreviewUrl);
     };
   }, [prescriptionPreviewUrl]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPlacedOrder(null);
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -208,7 +221,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/55 backdrop-blur-xs">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleCloseDrawer();
+      }}
+      className="fixed inset-0 z-50 flex justify-end bg-slate-900/55 backdrop-blur-xs"
+    >
       <div className="relative flex h-full w-full max-w-xl flex-col bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
@@ -221,7 +239,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 {placedOrder ? 'Đặt hàng thành công' : `Giỏ thuốc & Thanh toán (${cart.length})`}
               </h2>
               <p className="text-xs text-slate-500">
-                Giữ kho nguyên tử 15 phút • Dược sĩ GPP thẩm định lâm sàng
+                Giữ hàng ưu tiên 15 phút • Dược sĩ GPP thẩm định lâm sàng
               </p>
             </div>
           </div>
@@ -248,7 +266,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     </h3>
                     <p className="text-xs text-emerald-800 leading-relaxed">
                       Vui lòng lưu lại cả <strong>Mã đơn hàng</strong> và{' '}
-                      <strong>Tracking Token bảo mật</strong> bên dưới để tra cứu hoặc hủy đơn trực tuyến.
+                      <strong>Mã tra cứu bảo mật</strong> bên dưới để theo dõi hành trình hoặc hủy đơn trực tuyến.
                     </p>
                   </div>
                 </div>
@@ -278,7 +296,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <div className="flex items-center justify-between gap-2 border-t border-slate-200 pt-2.5">
                     <div>
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                        Mã bảo mật tra cứu (Tracking Token)
+                        Mã tra cứu bảo mật
                       </span>
                       <div className="font-mono text-sm font-bold text-teal-700">
                         {placedOrder.TrackingToken}
@@ -287,7 +305,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        void handleCopyText('Tracking Token', placedOrder.TrackingToken || '')
+                        void handleCopyText('Mã tra cứu bảo mật', placedOrder.TrackingToken || '')
                       }
                       className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                     >
@@ -300,7 +318,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <div className="flex items-center justify-between border-t border-slate-200 pt-2.5 text-xs">
                   <span className="inline-flex items-center gap-1.5 text-amber-700 font-medium">
                     <Clock className="h-4 w-4" />
-                    Hạn giữ kho tạm
+                    Thời hạn giữ hàng ưu tiên
                   </span>
                   <span className="font-bold text-slate-900 tabular-nums">
                     {placedOrder.ReservedUntil
@@ -323,16 +341,19 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     <QrCode className="h-4 w-4 text-sky-600" />
                     Quét mã VietQR để chuyển khoản nhanh
                   </div>
-                  <img
-                    src={`https://img.vietqr.io/image/VCB-0011001932418-compact2.png?amount=${Math.round(
+                  <SafeImage
+                    src={`https://img.vietqr.io/image/MB-0388889999-compact2.png?amount=${Math.round(
                       placedOrder.TotalAmount
-                    )}&addInfo=${encodeURIComponent(placedOrder.OrderCode)}`}
+                    )}&addInfo=${encodeURIComponent(
+                      placedOrder.OrderCode
+                    )}&accountName=${encodeURIComponent('NHA THUOC PHARMACORE')}`}
                     alt="Mã VietQR thanh toán đơn thuốc"
                     className="mx-auto h-48 w-48 rounded-xl border border-sky-200 bg-white object-contain p-2"
                   />
                   <p className="text-[11px] text-slate-600">
-                    Ngân hàng Vietcombank • STK: <strong className="text-slate-900">0011001932418</strong>{' '}
-                    • Nội dung: <strong className="text-sky-700">{placedOrder.OrderCode}</strong>
+                    Ngân hàng MB Bank • STK: <strong className="text-slate-900">0388889999</strong>{' '}
+                    • Chủ TK: <strong className="text-slate-900">NHA THUOC PHARMACORE</strong> • Nội
+                    dung: <strong className="text-sky-700">{placedOrder.OrderCode}</strong>
                   </p>
                 </div>
               )}
@@ -388,7 +409,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       key={`${item.product.ProductID}-${item.unitMode}`}
                       className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"
                     >
-                      <img
+                      <SafeImage
                         src={item.product.PathImage}
                         alt={item.product.ProductName}
                         className="h-14 w-14 shrink-0 rounded-lg border border-slate-100 bg-slate-50 object-cover"

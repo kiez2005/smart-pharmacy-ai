@@ -30,6 +30,8 @@ export const storeApi = {
   async getProducts(params?: {
     search?: string;
     type?: string;
+    rxFilter?: 'ALL' | 'OTC' | 'RX';
+    symptom?: string;
     page?: number;
     limit?: number;
     inStockOnly?: boolean;
@@ -139,7 +141,7 @@ export const storeApi = {
     const parts = [
       payload.companyName ? `Đơn vị/Phòng khám: ${payload.companyName}` : '',
       payload.taxCode ? `Mã số thuế: ${payload.taxCode}` : '',
-      payload.prescriptionFileKey ? `FileKey đơn thuốc bảo mật: ${payload.prescriptionFileKey}` : '',
+      payload.prescriptionFileKey ? `Đính kèm đơn thuốc: ${payload.prescriptionFileKey}` : '',
       `Nội dung: ${payload.note}`,
     ].filter(Boolean);
 
@@ -166,16 +168,16 @@ export const storeApi = {
     transcriptSummary: string;
   }): Promise<void> {
     const parts = [
-      payload.prescriptionFileKey ? `FileKey toa thuốc: ${payload.prescriptionFileKey}` : '',
+      payload.prescriptionFileKey ? `Đính kèm đơn thuốc: ${payload.prescriptionFileKey}` : '',
       payload.note?.trim() ? `Ghi chú khách: ${payload.note.trim()}` : '',
-      `Lịch sử Chatbot AI:\n${payload.transcriptSummary}`,
+      `Lịch sử trao đổi tư vấn:\n${payload.transcriptSummary}`,
     ].filter(Boolean);
 
     await axios.post(`${API_BASE}/contacts`, {
       FullName: payload.fullName.trim(),
       Phone: payload.phone.trim(),
       Email: payload.email?.trim() || 'patient.chat@pharmacore.vn',
-      Subject: `[Handoff Chat Storefront] ${payload.fullName.trim()} (${payload.phone.trim()})`,
+      Subject: `[Yêu cầu Dược sĩ tư vấn] ${payload.fullName.trim()} (${payload.phone.trim()})`,
       Message: parts.join(' | ').slice(0, 3500),
       Priority: 'HIGH',
       ...(payload.prescriptionFileKey ? { AttachmentFileKey: payload.prescriptionFileKey } : {}),

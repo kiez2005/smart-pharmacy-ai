@@ -266,8 +266,8 @@ export const CustomersPage: React.FC = () => {
       {/* Thanh công cụ 11 chức năng chuẩn Doanh nghiệp */}
       <EnterpriseToolbar
         entity="customers"
-        title="Hồ Sơ Bệnh Nhân, Tiền Sử Dị Ứng Thuốc & Lịch Sử Điều Trị (Patient CRM)"
-        subtitle="Lưu trữ thông tin dị ứng hoạt chất, bệnh lý nền mãn tính và lịch sử đơn thuốc (đầy đủ 11 chức năng CRUD, Nhân bản, Import/Export)."
+        title="Hồ Sơ Bệnh Nhân, Tiền Sử Dị Ứng Thuốc & Lịch Sử Điều Trị"
+        subtitle="Lưu trữ thông tin dị ứng hoạt chất, bệnh lý nền mãn tính và lịch sử đơn thuốc theo chuẩn GPP."
         createLabel="Mở Hồ sơ mới (Alt+N)"
         search={search}
         onSearchChange={(val) => {
@@ -718,7 +718,9 @@ export const CustomersPage: React.FC = () => {
                               {formatVND(inv.TotalAmount)}
                             </div>
                             <span className="text-[10px] text-emerald-700 font-semibold">
-                              {inv.Status}
+                              {inv.Status === 'CANCELLED' || inv.Status === 'REFUNDED'
+                                ? 'Đã hoàn trả'
+                                : 'Hoàn tất'}
                             </span>
                           </div>
                         </div>
@@ -887,6 +889,30 @@ export const CustomersPage: React.FC = () => {
                     onChange={(e) => setFormData({ ...formData, Phone: e.target.value })}
                     className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
                   />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Email liên hệ</label>
+                  <input
+                    type="email"
+                    value={formData.Email}
+                    onChange={(e) => setFormData({ ...formData, Email: e.target.value })}
+                    placeholder="benhnhan@gmail.com"
+                    className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Giới tính</label>
+                  <select
+                    value={formData.Gender}
+                    onChange={(e) => setFormData({ ...formData, Gender: e.target.value })}
+                    className="w-full h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  >
+                    <option value="Nam">Nam</option>
+                    <option value="Nữ">Nữ</option>
+                    <option value="Khác">Khác</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Năm sinh</label>

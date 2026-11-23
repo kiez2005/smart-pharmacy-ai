@@ -300,10 +300,14 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
 
     setSubmittingPo(true);
     try {
+      const savedUserRaw = localStorage.getItem('pharmacore_user');
+      const currentUserName = savedUserRaw
+        ? (JSON.parse(savedUserRaw)?.FullName as string) || 'DS. Đặng Minh Đức'
+        : 'DS. Đặng Minh Đức';
       const created = await enterpriseApi.createPurchaseOrder({
         SupplierID: selectedSupplierId,
         Note: poNote,
-        CreatedBy: 'DS. Nguyễn Văn Trung',
+        CreatedBy: currentUserName,
         items: poItems.map((item) => ({
           ...item,
           BatchNumber: item.BatchNumber.trim(),
@@ -335,7 +339,7 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
       {/* Thanh công cụ 11 chức năng chuẩn Doanh nghiệp */}
       <EnterpriseToolbar
         entity="suppliers"
-        title="Nhà Phân Phối GDP & Quản Lý Phiếu Nhập Kho (Procurement)"
+        title="Nhà Phân Phối GDP & Quản Lý Phiếu Nhập Kho"
         subtitle="Quản lý danh mục nhà cung cấp dược phẩm, theo dõi công nợ phải trả và lập Biên bản kiểm nhập thuốc chuẩn GPP."
         createLabel="Thêm Nhà phân phối (Alt+N)"
         search={search}
@@ -1026,20 +1030,35 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
               </button>
             </div>
             <div className="p-4 sm:p-5 space-y-3 text-xs overflow-y-auto flex-1">
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Tên công ty dược phẩm *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={supplierForm.SupplierName}
-                  onChange={(e) =>
-                    setSupplierForm({ ...supplierForm, SupplierName: e.target.value })
-                  }
-                  placeholder="VD: Công ty CP Dược phẩm Imexpharm"
-                  className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Mã NCC *</label>
+                  <input
+                    type="text"
+                    required
+                    value={supplierForm.SupplierCode}
+                    onChange={(e) =>
+                      setSupplierForm({ ...supplierForm, SupplierCode: e.target.value })
+                    }
+                    placeholder="VD: NCC-DHG01"
+                    className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs font-mono text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Tên công ty dược phẩm *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={supplierForm.SupplierName}
+                    onChange={(e) =>
+                      setSupplierForm({ ...supplierForm, SupplierName: e.target.value })
+                    }
+                    placeholder="VD: Công ty CP Dược phẩm Imexpharm"
+                    className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1064,16 +1083,30 @@ export const SuppliersAndPurchaseOrdersPage: React.FC = () => {
                   />
                 </div>
               </div>
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Người liên hệ</label>
-                <input
-                  type="text"
-                  value={supplierForm.ContactPerson}
-                  onChange={(e) =>
-                    setSupplierForm({ ...supplierForm, ContactPerson: e.target.value })
-                  }
-                  className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Người liên hệ</label>
+                  <input
+                    type="text"
+                    value={supplierForm.ContactPerson}
+                    onChange={(e) =>
+                      setSupplierForm({ ...supplierForm, ContactPerson: e.target.value })
+                    }
+                    className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Email đối tác</label>
+                  <input
+                    type="email"
+                    value={supplierForm.Email}
+                    onChange={(e) =>
+                      setSupplierForm({ ...supplierForm, Email: e.target.value })
+                    }
+                    placeholder="contact@duocpham.vn"
+                    className="w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 shadow-sm focus:border-teal-600 focus:outline-none"
+                  />
+                </div>
               </div>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Địa chỉ trụ sở / kho</label>

@@ -7,7 +7,10 @@ interface AiModelsHealthBarProps {
   onHealthLoaded?: (report: AiModelsHealthReport) => void;
 }
 
-export const AiModelsHealthBar: React.FC<AiModelsHealthBarProps> = ({ compact = false, onHealthLoaded }) => {
+export const AiModelsHealthBar: React.FC<AiModelsHealthBarProps> = ({
+  compact = false,
+  onHealthLoaded,
+}) => {
   const [health, setHealth] = useState<AiModelsHealthReport | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -30,10 +33,10 @@ export const AiModelsHealthBar: React.FC<AiModelsHealthBarProps> = ({ compact = 
 
   const items = health
     ? [
-        { key: 'llm', label: 'LLM Duy Nhất', data: health.models.llm },
-        { key: 'ocr', label: 'OCR Đơn Thuốc', data: health.models.ocr },
-        { key: 'stt', label: 'Giọng Nói STT', data: health.models.stt },
-        { key: 'embeddings', label: 'RAG & Search', data: health.models.embeddings },
+        { key: 'llm', label: 'Tư Vấn Lâm Sàng', desc: 'Phân tích đơn & triệu chứng', data: health.models.llm },
+        { key: 'ocr', label: 'Nhận Diện Đơn Thuốc', desc: 'Quét bảng thuốc điều trị', data: health.models.ocr },
+        { key: 'stt', label: 'Nhận Diện Giọng Nói', desc: 'Chuyển giọng nói tiếng Việt', data: health.models.stt },
+        { key: 'embeddings', label: 'Tra Cứu Dược Thư', desc: 'Đối chiếu HDSD & Dược thư', data: health.models.embeddings },
       ]
     : [];
 
@@ -51,13 +54,11 @@ export const AiModelsHealthBar: React.FC<AiModelsHealthBarProps> = ({ compact = 
             }`}
           />
           <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
-            {health?.activeLlmProvider === 'google-ai-studio'
-              ? 'Google AI Studio + Local AI Stack'
-              : 'Trạng thái Local AI Stack'}
+            Hệ Thống Trợ Lý AI Dược Lâm Sàng
           </span>
           {health && (
             <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+              className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
                 health.status === 'OK'
                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                   : health.status === 'DEGRADED'
@@ -65,8 +66,9 @@ export const AiModelsHealthBar: React.FC<AiModelsHealthBarProps> = ({ compact = 
                     : 'bg-rose-50 text-rose-700 border border-rose-200'
               }`}
             >
-              {health.status} • Index: {health.indexStats.products} thuốc /{' '}
-              {health.indexStats.knowledgeDocuments} nguồn HDSD
+              {health.status === 'OK' ? 'Hoạt động ổn định' : 'Đang kiểm tra kết nối'} •{' '}
+              {health.indexStats.products} danh mục thuốc / {health.indexStats.knowledgeDocuments}{' '}
+              tài liệu HDSD
             </span>
           )}
         </div>
@@ -77,13 +79,13 @@ export const AiModelsHealthBar: React.FC<AiModelsHealthBarProps> = ({ compact = 
           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
         >
           <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-          Kiểm tra lại
+          Làm mới trạng thái
         </button>
       </div>
 
       {!compact && items.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-          {items.map(({ key, label, data }) => {
+          {items.map(({ key, label, desc, data }) => {
             const isReady = data.status === 'READY';
             return (
               <div
@@ -95,7 +97,7 @@ export const AiModelsHealthBar: React.FC<AiModelsHealthBarProps> = ({ compact = 
                 }`}
               >
                 <div className="flex items-center justify-between gap-1">
-                  <span className="font-bold text-slate-700">{label}</span>
+                  <span className="font-bold text-slate-800">{label}</span>
                   <span
                     className={`inline-flex items-center gap-1 font-bold text-[10px] ${
                       isReady ? 'text-emerald-700' : 'text-rose-700'
@@ -106,16 +108,10 @@ export const AiModelsHealthBar: React.FC<AiModelsHealthBarProps> = ({ compact = 
                     ) : (
                       <AlertOctagon className="h-3 w-3" />
                     )}
-                    {data.status}
+                    {isReady ? 'Sẵn sàng' : 'Tạm ngưng'}
                   </span>
                 </div>
-                <div className="mt-0.5 truncate font-mono text-[10px] text-slate-600" title={data.model}>
-                  {data.model}
-                </div>
-                <div className="text-[10px] text-slate-500">
-                  {data.device}
-                  {data.loadTimeSec ? ` • ${data.loadTimeSec}s boot` : ''}
-                </div>
+                <div className="mt-0.5 text-[11px] text-slate-500">{desc}</div>
               </div>
             );
           })}
@@ -126,7 +122,7 @@ export const AiModelsHealthBar: React.FC<AiModelsHealthBarProps> = ({ compact = 
         <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800 space-y-1">
           <div className="font-bold flex items-center gap-1.5">
             <AlertOctagon className="h-4 w-4 shrink-0 text-rose-600" />
-            Phát hiện thành phần AI ngừng hoạt động (không dùng kết quả giả):
+            Cảnh báo kết nối dịch vụ AI lâm sàng:
           </div>
           <ul className="list-disc pl-5 text-[11px] space-y-0.5">
             {health.deadModels.map((msg, idx) => (

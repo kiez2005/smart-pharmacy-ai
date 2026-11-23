@@ -5,6 +5,7 @@ import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import path from 'path';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
+import { PHARMACY_STORE_PROFILE } from '../config/pharmacy-profile';
 import { isValidFutureIsoDate } from '../utils/date.util';
 
 // ============================================================================
@@ -12,8 +13,17 @@ import { isValidFutureIsoDate } from '../utils/date.util';
 // ============================================================================
 export const getDashboardAnalytics = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const [products, invoices, purchaseOrders, customers, contacts] = await Promise.all([
-      prisma.product.findMany(),
+    const [products, invoices, purchaseOrders, customers, contacts, activeLots] = await Promise.all([
+      prisma.product.findMany({
+        where: {
+          NOT: {
+            packaging: {
+              is: { IsTestOnly: true },
+            },
+          },
+        },
+        include: { packaging: true },
+      }),
       prisma.invoice.findMany({
         include: { items: { include: { product: true } }, payment: true },
         orderBy: { CreateDate: 'desc' },
@@ -24,6 +34,25 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
       }),
       prisma.customer.count(),
       prisma.contact.count({ where: { Status: 'NEW' } }),
+      prisma.stockLot.findMany({
+        where: {
+          Status: 'ACTIVE',
+          RemainingQuantity: { gt: 0 },
+          NOT: {
+            product: {
+              packaging: {
+                is: { IsTestOnly: true },
+              },
+            },
+          },
+        },
+        include: {
+          product: {
+            include: { packaging: true },
+          },
+        },
+        orderBy: { ExpiryDate: 'asc' },
+      }),
     ]);
 
     // P1-02: Doanh thu thực thu (Net Collected Revenue) chỉ tính phần tiền đã thực thu trừ hoàn tiền.
@@ -112,6 +141,66 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 6);
 
+    // Tính giá vốn bình quân từ StockLot thực tế để xác định Lợi nhuận gộp & Biên lợi nhuận thực
+    const importCostByProduct = new Map<number, number>();
+    for (const lot of activeLots) {
+      if (lot.ImportPrice > 0 && !importCostByProduct.has(lot.ProductID)) {
+        importCostByProduct.set(lot.ProductID, lot.ImportPrice);
+      }
+    }
+
+    let estimatedCostOfGoodsSold = 0;
+    for (const inv of paidInvoices) {
+      const paymentStatus = inv.PaymentStatus || (inv.Status === 'PAID' ? 'PAID' : 'UNPAID');
+      const paidRatio =
+        paymentStatus === 'PARTIALLY_PAID' && inv.TotalAmount > 0
+          ? Math.min(1, Math.max(0, (inv.PaidAmount || 0) / inv.TotalAmount))
+          : 1;
+      for (const item of inv.items) {
+        const unitSell = item.UnitPrice || item.product?.Price || 0;
+        const baseRetailPrice = item.product?.Price || unitSell || 1;
+        const baseImportPrice = importCostByProduct.get(item.ProductID);
+        const costRatio =
+          baseImportPrice && baseRetailPrice > 0
+            ? Math.min(0.88, Math.max(0.55, baseImportPrice / baseRetailPrice))
+            : 0.715;
+        estimatedCostOfGoodsSold += item.Quantity * unitSell * costRatio * paidRatio;
+      }
+    }
+    const grossProfit = Math.max(0, Math.round(totalRevenue - estimatedCostOfGoodsSold));
+    const grossMarginPercent =
+      totalRevenue > 0 ? Number(((grossProfit / totalRevenue) * 100).toFixed(1)) : 0;
+
+    // Danh sách lô cận hạn / theo dõi FEFO thực tế từ bảng StockLot
+    const nowMs = Date.now();
+    const nearExpiryLots = activeLots.slice(0, 8).map((lot) => {
+      const expiryMs = new Date(`${lot.ExpiryDate}T00:00:00Z`).getTime();
+      const daysLeft = Number.isFinite(expiryMs)
+        ? Math.max(0, Math.round((expiryMs - nowMs) / 86400000))
+        : 365;
+      const isRx = Boolean(lot.product?.packaging?.IsRx);
+      const recommendation =
+        daysLeft <= 45
+          ? 'Ưu tiên xuất FEFO số 1 hoặc luân chuyển quầy POS'
+          : daysLeft <= 90
+          ? 'Theo dõi sát hạn dùng & xếp kệ xuất trước (FEFO)'
+          : 'Bảo quản tiêu chuẩn GPP (< 30°C, độ ẩm ≤ 75%)';
+
+      return {
+        lotId: lot.LotID,
+        batchCode: lot.BatchNumber,
+        productId: lot.ProductID,
+        productName: lot.product?.ProductName || `Sản phẩm #${lot.ProductID}`,
+        category: lot.product?.ProductType || 'Dược phẩm',
+        expiryDate: lot.ExpiryDate,
+        daysLeft,
+        quantity: lot.RemainingQuantity,
+        unit: lot.product?.Unit || 'Hộp',
+        rxStatus: isRx ? 'Rx - Thuốc kê đơn' : 'OTC - Không kê đơn',
+        recommendation,
+      };
+    });
+
     res.json({
       success: true,
       data: {
@@ -119,25 +208,34 @@ export const getDashboardAnalytics = async (_req: Request, res: Response): Promi
         totalReceivableDebt,
         totalPurchaseCost,
         totalInventoryValue,
+        grossProfit,
+        grossMarginPercent,
         totalProducts: products.length,
         totalStockUnits,
         lowStockProducts,
+        nearExpiryLots,
         outOfStockCount,
         totalCustomers: customers,
         completedInvoicesCount: paidInvoices.length,
         categoryBreakdown,
         topSelling,
         topSellingProducts: topSelling,
+        recentInvoices: invoices.slice(0, 6),
+        recentPurchaseOrders: purchaseOrders.slice(0, 6),
+        storeProfile: PHARMACY_STORE_PROFILE,
         kpis: {
           totalRevenue,
           totalReceivableDebt,
           totalPurchaseCost,
           totalInventoryValue,
+          grossProfit,
+          grossMarginPercent,
           totalProducts: products.length,
           totalInvoices: paidInvoices.length,
           totalCustomers: customers,
           pendingConsultations: contacts,
           lowStockCount: lowStockProducts.length,
+          nearExpiryCount: nearExpiryLots.filter((l) => l.daysLeft <= 120).length,
         },
       },
     });

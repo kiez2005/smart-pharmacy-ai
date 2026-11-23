@@ -38,6 +38,7 @@ import {
   StorefrontChatTurn,
 } from '../types';
 import { formatVND } from '../utils/packaging';
+import { SafeImage } from './SafeImage';
 
 const CHAT_STORAGE_KEY = 'pharmacore_storefront_chat_v1';
 
@@ -63,9 +64,13 @@ interface PharmacistChatWidgetProps {
 }
 
 function renderSimpleInlineFormatting(text: string): React.ReactNode {
-  const lines = text.split('\n');
+  const cleanedText = text
+    .replace(/\(?\s*Nguồn trích dẫn(?:\s+kiểm chứng)?\s*:\s*(?:\[DOC-\d+\]\s*[,;]?\s*)+\)?/gi, '')
+    .replace(/\s*\[DOC-\d+\]/g, '')
+    .trim();
+  const lines = cleanedText.split('\n');
   return lines.map((line, lineIdx) => {
-    const parts = line.split(/(\*\*[^*]+\*\*|\[DOC-\d+\])/g);
+    const parts = line.split(/(\*\*[^*]+\*\*)/g);
     return (
       <React.Fragment key={lineIdx}>
         {parts.map((part, pIdx) => {
@@ -74,16 +79,6 @@ function renderSimpleInlineFormatting(text: string): React.ReactNode {
               <strong key={pIdx} className="font-bold text-slate-900">
                 {part.slice(2, -2)}
               </strong>
-            );
-          }
-          if (/^\[DOC-\d+\]$/.test(part)) {
-            return (
-              <span
-                key={pIdx}
-                className="mx-0.5 inline-block rounded bg-teal-50 px-1 py-0.2 font-mono text-[10px] font-bold text-teal-800 border border-teal-200"
-              >
-                {part}
-              </span>
             );
           }
           return <React.Fragment key={pIdx}>{part}</React.Fragment>;
@@ -731,12 +726,7 @@ export const PharmacistChatWidget: React.FC<PharmacistChatWidgetProps> = ({
                             )}
                             {turn.data?.groundingMode === 'GENERAL_MEDICAL' && (
                               <span className="rounded-full bg-sky-50 border border-sky-200 px-2 py-0.5 text-[10px] font-bold text-sky-800">
-                                Sàng lọc Y khoa Tham khảo
-                              </span>
-                            )}
-                            {turn.data?.modelUsed && turn.data.groundingMode !== 'FAST_PATH' && (
-                              <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-slate-600">
-                                {turn.data.modelUsed}
+                                Tư vấn Sức khỏe Tham khảo
                               </span>
                             )}
                           </div>
@@ -835,7 +825,7 @@ export const PharmacistChatWidget: React.FC<PharmacistChatWidgetProps> = ({
                                     className="rounded-lg border border-teal-200 bg-teal-50/40 p-2 text-[10px]"
                                   >
                                     <div className="font-bold text-teal-900">
-                                      [DOC-{cit.docId}] {cit.title} — {cit.section}
+                                      {cit.title} — {cit.section}
                                     </div>
                                     <div className="text-slate-500">Nguồn: {cit.sourceName}</div>
                                     <div className="mt-0.5 text-slate-700 line-clamp-3">
@@ -860,7 +850,7 @@ export const PharmacistChatWidget: React.FC<PharmacistChatWidgetProps> = ({
                                   key={prod.ProductID}
                                   className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2"
                                 >
-                                  <img
+                                  <SafeImage
                                     src={prod.PathImage}
                                     alt={prod.ProductName}
                                     className="h-11 w-11 rounded-lg object-cover border border-slate-200 shrink-0 bg-white"
@@ -1055,7 +1045,7 @@ export const PharmacistChatWidget: React.FC<PharmacistChatWidgetProps> = ({
               title={
                 isRecording
                   ? `Đang ghi âm (${recordingSec}s) — Nhấn để dừng & chép lời`
-                  : 'Nói triệu chứng / tên thuốc bằng giọng nói (Faster-Whisper)'
+                  : 'Nhập triệu chứng hoặc tên thuốc bằng giọng nói'
               }
               className={`h-10 px-2.5 rounded-xl border text-xs font-bold inline-flex items-center gap-1 transition-all shrink-0 disabled:opacity-50 ${
                 isRecording
@@ -1086,7 +1076,7 @@ export const PharmacistChatWidget: React.FC<PharmacistChatWidgetProps> = ({
                 isRecording
                   ? 'Đang nghe giọng nói của bạn... (bấm nút đỏ để xong)'
                   : isTranscribing
-                    ? 'Faster-Whisper đang chuyển giọng nói thành chữ...'
+                    ? 'Đang nhận diện giọng nói tiếng Việt...'
                     : 'Nói micro hoặc nhập triệu chứng, bệnh lý, tên thuốc...'
               }
               className="flex-1 h-10 rounded-xl border border-slate-300 bg-slate-50 px-3 text-xs text-slate-900 outline-none focus:bg-white focus:border-teal-600 focus:ring-2 focus:ring-teal-100"

@@ -1258,7 +1258,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                           <CalendarClock className="h-2.5 w-2.5 text-teal-600" />
                           {item.product.stockLots && item.product.stockLots.length > 0
                             ? `FEFO: ${item.product.stockLots[0].BatchNumber} · HSD ${item.product.stockLots[0].ExpiryDate}`
-                            : `FEFO: LOT-GPP-${item.product.ProductID} · HSD 12/2027`}
+                            : 'Tự động phân bổ lô cận hạn nhất (FEFO)'}
                         </span>
                       </div>
                       <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1">
@@ -1534,8 +1534,10 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                 <span className="text-[11px] text-slate-500 block">Tiền khách đưa:</span>
                 <input
                   type="number"
-                  value={cashTendered || finalTotal}
-                  onChange={(e) => setCashTendered(Number(e.target.value))}
+                  min={0}
+                  value={cashTendered === 0 ? '' : cashTendered}
+                  placeholder={String(finalTotal)}
+                  onChange={(e) => setCashTendered(e.target.value === '' ? 0 : Number(e.target.value))}
                   className="mt-0.5 w-full h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs tabular-nums shadow-sm focus:border-teal-600 focus:outline-none"
                 />
               </div>
@@ -1621,7 +1623,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                       </span>
                     ) : (
                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200">
-                        Chờ đối soát ngân hàng (UNPAID)
+                        Chờ đối soát ngân hàng
                       </span>
                     )}
                   </div>
@@ -1635,7 +1637,7 @@ export const PosTerminalPage: React.FC<PosTerminalPageProps> = ({
                   {completedInvoice.PaymentStatus !== 'PAID' && (
                     <div className="pt-2 border-t border-slate-200 text-left space-y-2">
                       <p className="text-[11px] text-amber-800 bg-amber-50/90 border border-amber-200 rounded-lg p-2">
-                        Hóa đơn VietQR đang ở trạng thái <strong>UNPAID (Chưa thu tiền)</strong>. Sau khi khách chuyển khoản thành công, vui lòng nhập mã tham chiếu ngân hàng (FT...) để xác nhận thực thu vào Sổ quỹ:
+                        Hóa đơn VietQR đang ở trạng thái <strong>Chờ đối soát chuyển khoản</strong>. Sau khi khách chuyển khoản thành công, vui lòng nhập mã tham chiếu ngân hàng (FT...) để xác nhận thực thu vào Sổ quỹ:
                       </p>
                       <div className="flex gap-1.5">
                         <input

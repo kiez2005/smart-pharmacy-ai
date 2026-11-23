@@ -23,6 +23,8 @@ export const App: React.FC = () => {
   const [search, setSearch] = useState<string>('');
   const [debouncedSearch, setDebouncedSearch] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [rxFilter, setRxFilter] = useState<'ALL' | 'OTC' | 'RX'>('ALL');
+  const [symptomFilter, setSymptomFilter] = useState<string>('ALL_SYMPTOM');
   const [page, setPage] = useState<number>(1);
   const [total, setTotal] = useState<number>(0);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -60,6 +62,8 @@ export const App: React.FC = () => {
         limit: 12,
         search: debouncedSearch || undefined,
         type: selectedCategory !== 'ALL' ? selectedCategory : undefined,
+        rxFilter: rxFilter !== 'ALL' ? rxFilter : undefined,
+        symptom: symptomFilter !== 'ALL_SYMPTOM' ? symptomFilter : undefined,
       });
       setProducts(res.items);
       setTotal(res.total);
@@ -73,7 +77,7 @@ export const App: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedSearch, selectedCategory]);
+  }, [page, debouncedSearch, selectedCategory, rxFilter, symptomFilter]);
 
   useEffect(() => {
     void loadProducts();
@@ -187,6 +191,16 @@ export const App: React.FC = () => {
           selectedCategory={selectedCategory}
           onSelectCategory={(cat) => {
             setSelectedCategory(cat);
+            setPage(1);
+          }}
+          rxFilter={rxFilter}
+          onChangeRxFilter={(nextRx) => {
+            setRxFilter(nextRx);
+            setPage(1);
+          }}
+          symptomFilter={symptomFilter}
+          onChangeSymptomFilter={(nextSym) => {
+            setSymptomFilter(nextSym);
             setPage(1);
           }}
           page={page}

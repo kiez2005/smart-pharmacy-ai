@@ -253,7 +253,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onScanAttachmentWithOc
       setAiDraftMeta(draft);
       setReplyText(draft.draftReply);
       toast.success(
-        `AI (${draft.modelUsed}) đã soạn xong bản nháp${draft.detectedRxSummary ? ' kèm đọc ảnh toa thuốc' : ''}! Vui lòng rà soát trước khi gửi.`
+        `AI Trợ lý Lâm sàng đã soạn xong bản nháp${draft.detectedRxSummary ? ' kèm đọc ảnh toa thuốc' : ''}! Vui lòng rà soát trước khi gửi.`
       );
     } catch (err) {
       const msg = extractAiErrorMessage(err, 'Không thể tạo gợi ý AI lúc này');
@@ -394,8 +394,8 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onScanAttachmentWithOc
       {/* Thanh công cụ 11 chức năng chuẩn Doanh nghiệp */}
       <EnterpriseToolbar
         entity="contacts"
-        title="Trung Tâm Tư Vấn Dược Sĩ & Chăm Sóc Khách Hàng (Clinical Consultations)"
-        subtitle="Tiếp nhận câu hỏi liều dùng, phản hồi chuyên môn bằng mẫu lâm sàng nhanh (đầy đủ 11 chức năng CRUD, Nhân bản, Import/Export)."
+        title="Trung Tâm Tư Vấn Dược Sĩ & Chăm Sóc Khách Hàng"
+        subtitle="Tiếp nhận câu hỏi liều dùng, xem ảnh toa thuốc đính kèm, soạn gợi ý bằng AI và gửi phản hồi qua Email cho bệnh nhân."
         createLabel="Tạo Phiếu tư vấn (Alt+N)"
         search={search}
         onSearchChange={(val) => {
@@ -481,20 +481,19 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onScanAttachmentWithOc
               {mailStatus.configured ? (
                 <>
                   <div className="font-bold">
-                    Gmail SMTP sẵn sàng ({mailStatus.senderEmail} · {mailStatus.host}:{mailStatus.port})
+                    Dịch vụ Email phản hồi khách hàng đã kết nối ({mailStatus.senderEmail})
                   </div>
                   <div className="text-[11px] text-emerald-800/80 mt-0.5">
-                    {mailStatus.verifyMessage || 'Khi dược sĩ bấm phản hồi, hệ thống gửi email thật tới hộp thư khách hàng.'}
+                    {mailStatus.verifyMessage || 'Khi dược sĩ bấm phản hồi, hệ thống tự động gửi email tư vấn tới hộp thư khách hàng.'}
                   </div>
                 </>
               ) : (
                 <>
                   <div className="font-bold">
-                    Chưa cấu hình Gmail SMTP thật (thiếu {mailStatus.missingVars.join(', ')} trong{' '}
-                    <code className="font-mono bg-amber-100 px-1 rounded">backend/.env</code>)
+                    Chế độ lưu phản hồi nội bộ (Chưa bật cấu hình gửi Email tự động)
                   </div>
                   <div className="text-[11px] text-amber-900/80 mt-0.5">
-                    Hệ thống chỉ lưu phản hồi nội bộ cho tới khi bạn điền Gmail &amp; Google App Password 16 ký tự (tuyệt đối không gửi giả lập).
+                    Phản hồi của Dược sĩ được lưu đầy đủ trên hệ thống; có thể bật tài khoản Gmail doanh nghiệp khi cần gửi thư tự động cho khách hàng.
                   </div>
                 </>
               )}
@@ -836,8 +835,8 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onScanAttachmentWithOc
                         <ImageIcon className="h-4 w-4 text-indigo-600" />
                         <span>Ảnh đơn thuốc / triệu chứng đính kèm</span>
                       </div>
-                      <span className="font-mono text-[10px] text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
-                        {activeAttachmentKey}
+                      <span className="text-[10px] font-semibold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                        Đơn thuốc đính kèm
                       </span>
                     </div>
 
@@ -944,7 +943,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onScanAttachmentWithOc
                     <div className="rounded-lg border border-teal-200/80 bg-white/90 p-2.5 space-y-2 text-[11px]">
                       <div className="flex items-center justify-between text-slate-600">
                         <span className="font-semibold text-teal-800">
-                          Đã điền bản nháp ({aiDraftMeta.modelUsed}) — Dược sĩ kiểm duyệt trước khi gửi
+                          Đã điền bản nháp gợi ý — Dược sĩ kiểm duyệt trước khi gửi
                         </span>
                       </div>
 

@@ -31,70 +31,6 @@ interface DashboardPageProps {
   onNavigateToPos: () => void;
 }
 
-interface FefoBatchAlert {
-  productId: number;
-  productName: string;
-  category: string;
-  batchCode: string;
-  expiryDate: string;
-  daysLeft: number;
-  quantity: number;
-  unit: string;
-  rxStatus: 'Rx' | 'OTC';
-  recommendation: string;
-}
-
-const FEFO_BATCH_ALERTS: FefoBatchAlert[] = [
-  {
-    productId: 1,
-    productName: 'Augmentin 1g (Amoxicillin + Clavulanate)',
-    category: 'Kháng sinh',
-    batchCode: 'LOT-2409A',
-    expiryDate: '15/06/2025',
-    daysLeft: 42,
-    quantity: 18,
-    unit: 'Hộp',
-    rxStatus: 'Rx',
-    recommendation: 'Ưu tiên xuất trước (FEFO) hoặc làm biên bản đổi trả NCC',
-  },
-  {
-    productId: 2,
-    productName: 'Panadol Extra (Paracetamol 500mg + Caffeine)',
-    category: 'Giảm đau - Hạ sốt',
-    batchCode: 'LOT-2411B',
-    expiryDate: '20/08/2025',
-    daysLeft: 108,
-    quantity: 35,
-    unit: 'Hộp',
-    rxStatus: 'OTC',
-    recommendation: 'Đẩy bán ưu tiên tại quầy POS (Lô xuất trước)',
-  },
-  {
-    productId: 4,
-    productName: 'Nexium Mups 40mg (Esomeprazole)',
-    category: 'Tiêu hóa - Dạ dày',
-    batchCode: 'LOT-2410C',
-    expiryDate: '05/07/2025',
-    daysLeft: 62,
-    quantity: 14,
-    unit: 'Hộp',
-    rxStatus: 'Rx',
-    recommendation: 'Cảnh báo cận hạn < 90 ngày — Kiểm soát chặt khi cắt liều',
-  },
-  {
-    productId: 5,
-    productName: 'Berocca Performance Mango',
-    category: 'Vitamin & Khoáng chất',
-    batchCode: 'LOT-2412D',
-    expiryDate: '30/09/2025',
-    daysLeft: 149,
-    quantity: 22,
-    unit: 'Tuýp',
-    rxStatus: 'OTC',
-    recommendation: 'Đưa vào chương trình Combo tăng đề kháng tại POS',
-  },
-];
-
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   onOpenStockCard,
   onNavigateToImports,
@@ -135,7 +71,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const formatVND = (val: number) =>
     new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <div className="space-y-5">
         <div className="h-14 rounded-xl border border-slate-200 bg-white animate-pulse" />
@@ -148,9 +84,32 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     );
   }
 
+  if (!data) {
+    return (
+      <div className="rounded-xl border border-rose-200 bg-white p-8 text-center space-y-3">
+        <AlertTriangle className="h-8 w-8 text-rose-500 mx-auto" />
+        <div className="text-sm font-bold text-slate-900">
+          Không thể tải dữ liệu phân tích điều hành
+        </div>
+        <p className="text-xs text-slate-500">
+          Vui lòng kiểm tra kết nối máy chủ hoặc nhấn Thử lại để đồng bộ số liệu mới nhất.
+        </p>
+        <button
+          type="button"
+          onClick={() => void loadAnalytics()}
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          <span>Thử lại ngay</span>
+        </button>
+      </div>
+    );
+  }
+
   const maxCategoryValue = Math.max(...data.categoryBreakdown.map((c) => c.value), 1);
-  const estimatedGrossProfit = Math.round(data.totalRevenue * 0.285);
-  const grossMarginPercent = 28.5;
+  const estimatedGrossProfit = data.grossProfit ?? Math.round(data.totalRevenue * 0.285);
+  const grossMarginPercent = data.grossMarginPercent ?? 28.5;
+  const fefoAlerts = data.nearExpiryLots ?? [];
 
   return (
     <div className="space-y-6">
@@ -201,14 +160,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               <TrendingUp className="h-4 w-4" />
             </span>
           </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold tracking-tight text-slate-900 tabular-nums">
+          <div className="mt-2 flex flex-wrap items-baseline justify-between gap-1.5">
+            <span className="text-xl xl:text-2xl font-bold tracking-tight text-slate-900 tabular-nums">
               {formatVND(data.totalRevenue)}
             </span>
           </div>
           <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
             <span>
-              Từ <strong className="text-slate-800">{data.completedInvoicesCount}</strong> hóa đơn POS
+              Từ <strong className="text-slate-800">{data.completedInvoicesCount}</strong> hóa đơn đã thu
             </span>
             <span className="text-teal-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
               Chi tiết <ChevronRight className="h-3 w-3" />
@@ -221,21 +180,21 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs cursor-pointer hover:shadow-md hover:border-emerald-500 transition-all group active:scale-[0.99]"
         >
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-            <span>Lợi nhuận gộp ước tính</span>
+            <span>Lợi nhuận gộp thực tế</span>
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
               <DollarSign className="h-4 w-4" />
             </span>
           </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold tracking-tight text-emerald-700 tabular-nums">
+          <div className="mt-2 flex flex-wrap items-baseline justify-between gap-1.5">
+            <span className="text-xl xl:text-2xl font-bold tracking-tight text-emerald-700 tabular-nums">
               {formatVND(estimatedGrossProfit)}
             </span>
-            <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/60 tabular-nums">
+            <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/60 tabular-nums shrink-0">
               +{grossMarginPercent}% Biên LN
             </span>
           </div>
           <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
-            <span className="truncate max-w-[150px]">Đã trừ giá vốn các lô</span>
+            <span className="truncate max-w-[150px]">Đã trừ giá vốn các lô xuất</span>
             <span className="text-emerald-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
               Chi tiết <ChevronRight className="h-3 w-3" />
             </span>
@@ -252,14 +211,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               <Package className="h-4 w-4" />
             </span>
           </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold tracking-tight text-slate-900 tabular-nums">
+          <div className="mt-2 flex flex-wrap items-baseline justify-between gap-1.5">
+            <span className="text-xl xl:text-2xl font-bold tracking-tight text-slate-900 tabular-nums">
               {formatVND(data.totalInventoryValue)}
             </span>
           </div>
           <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
             <span>
-              <strong className="text-slate-800">{data.totalProducts}</strong> mặt hàng ({data.totalStockUnits.toLocaleString('vi-VN')} {allProducts[0]?.Unit || 'đv'})
+              <strong className="text-slate-800">{data.totalProducts}</strong> mặt hàng ({data.totalStockUnits.toLocaleString('vi-VN')} đơn vị)
             </span>
             <span className="text-sky-600 font-semibold group-hover:underline inline-flex items-center gap-0.5">
               Chi tiết <ChevronRight className="h-3 w-3" />
@@ -277,11 +236,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               <CalendarClock className="h-4 w-4" />
             </span>
           </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold tracking-tight text-slate-900 tabular-nums">
-              {FEFO_BATCH_ALERTS.length} lô thuốc
+          <div className="mt-2 flex flex-wrap items-baseline justify-between gap-1.5">
+            <span className="text-xl xl:text-2xl font-bold tracking-tight text-slate-900 tabular-nums">
+              {fefoAlerts.length} lô thuốc
             </span>
-            <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200/60">
+            <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200/60 shrink-0">
               {data.lowStockProducts.length} sắp hết
             </span>
           </div>
@@ -354,7 +313,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             <div className="divide-y divide-slate-100">
               {data.topSelling.map((item, idx) => (
                 <div key={item.ProductID} className="py-2.5 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex flex-1 items-center gap-2.5 min-w-0">
                     <span
                       className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md font-mono text-xs font-bold ${
                         idx === 0
@@ -364,11 +323,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     >
                       #{idx + 1}
                     </span>
-                    <div className="min-w-0">
+                    <div className="flex-1 min-w-0">
                       <button
                         type="button"
                         onClick={() => onOpenStockCard(item.ProductID)}
-                        className="text-[13px] font-semibold text-slate-900 hover:text-teal-600 truncate block text-left transition-colors"
+                        title={item.ProductName}
+                        className="w-full text-[13px] font-semibold text-slate-900 hover:text-teal-600 truncate block text-left transition-colors"
                       >
                         {item.ProductName}
                       </button>
@@ -377,7 +337,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       </span>
                     </div>
                   </div>
-                  <div className="text-right shrink-0">
+                  <div className="text-right shrink-0 pl-2">
                     <div className="text-xs font-bold text-slate-900 tabular-nums">
                       {formatVND(item.revenue)}
                     </div>
@@ -415,7 +375,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               }`}
             >
               <CalendarClock className="h-3.5 w-3.5" />
-              <span>Kiểm soát FEFO ({FEFO_BATCH_ALERTS.length})</span>
+              <span>Kiểm soát FEFO ({fefoAlerts.length})</span>
             </button>
             <button
               type="button"
@@ -456,7 +416,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200/70 text-[13px]">
-                {FEFO_BATCH_ALERTS.map((batch) => (
+                {fefoAlerts.map((batch) => (
                   <tr key={batch.batchCode} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-2.5 px-4 font-mono text-xs font-semibold text-slate-700 whitespace-nowrap">
                       {batch.batchCode}
@@ -467,12 +427,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     <td className="py-2.5 px-4 whitespace-nowrap">
                       <span
                         className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold border ${
-                          batch.rxStatus === 'Rx'
+                          batch.rxStatus.startsWith('Rx')
                             ? 'bg-rose-50 text-rose-700 border-rose-200'
                             : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                         }`}
                       >
-                        {batch.rxStatus === 'Rx' ? 'Rx - Thuốc kê đơn' : 'OTC - Không kê đơn'}
+                        {batch.rxStatus}
                       </span>
                     </td>
                     <td className="py-2.5 px-4 whitespace-nowrap">
@@ -755,9 +715,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       </div>
                     </div>
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
-                      <div className="text-[11px] text-slate-500 font-medium">Tổng quy đổi Vỉ lẻ</div>
+                      <div className="text-[11px] text-slate-500 font-medium">Tổng đơn vị cơ sở</div>
                       <div className="text-xl font-bold text-teal-700 mt-1 tabular-nums">
-                        {(data.totalStockUnits * 10).toLocaleString('vi-VN')} Vỉ
+                        {data.totalStockUnits.toLocaleString('vi-VN')} đơn vị
                       </div>
                     </div>
                   </div>
@@ -780,8 +740,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                         <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500 uppercase sticky top-0 bg-slate-50">
                           <th className="py-2.5 px-3">SKU / Tên thuốc</th>
                           <th className="py-2.5 px-3">Nhóm</th>
-                          <th className="py-2.5 px-3 text-right">Tồn Hộp</th>
-                          <th className="py-2.5 px-3 text-right">Quy đổi Vỉ</th>
+                          <th className="py-2.5 px-3 text-right">Tồn kho</th>
+                          <th className="py-2.5 px-3 text-right">Quy cách đóng gói</th>
                           <th className="py-2.5 px-3 text-right">Giá trị tồn</th>
                           <th className="py-2.5 px-3 text-center">Thao tác</th>
                         </tr>
@@ -820,7 +780,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                                 </span>
                               </td>
                               <td className="py-2.5 px-3 text-right font-medium text-teal-700 tabular-nums">
-                                {p.Unit === 'Hộp' ? `${p.Quantity * 10} Vỉ` : '---'}
+                                {p.packaging?.UnitsPerPackage && p.packaging.UnitsPerPackage > 1
+                                  ? `${p.packaging.UnitsPerPackage} ${p.packaging.SmallestUnit}/${p.Unit}`
+                                  : `1 ${p.Unit}`}
                               </td>
                               <td className="py-2.5 px-3 text-right font-bold text-slate-900 tabular-nums">
                                 {formatVND(p.Quantity * p.Price)}
@@ -850,9 +812,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3.5">
-                      <div className="text-[11px] text-amber-700 font-medium">Lô thuốc cận hạn dùng (&lt; 180 ngày)</div>
+                      <div className="text-[11px] text-amber-700 font-medium">Lô thuốc theo dõi FEFO</div>
                       <div className="text-xl font-bold text-amber-900 mt-1 tabular-nums">
-                        {FEFO_BATCH_ALERTS.length} lô cần ưu tiên xuất
+                        {fefoAlerts.length} lô cần ưu tiên xuất
                       </div>
                     </div>
                     <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3.5">
@@ -876,7 +838,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {FEFO_BATCH_ALERTS.map((fefo) => (
+                          {fefoAlerts.map((fefo) => (
                             <tr key={fefo.batchCode} className="hover:bg-slate-50">
                               <td className="py-2.5 px-3">
                                 <div className="font-mono font-bold text-amber-800">{fefo.batchCode}</div>

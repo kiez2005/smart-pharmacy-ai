@@ -680,7 +680,7 @@ async function main() {
         PaidAmount: inv1Total,
         DebtAmount: 0,
         PaymentStatus: 'PAID',
-        Status: 'PAID',
+        Status: 'COMPLETED',
         UserID: admin.UserID,
         items: {
           create: [
@@ -731,7 +731,7 @@ async function main() {
         PaidAmount: inv2Total,
         DebtAmount: 0,
         PaymentStatus: 'PAID',
-        Status: 'PAID',
+        Status: 'COMPLETED',
         UserID: pharmacist1.UserID,
         items: {
           create: [

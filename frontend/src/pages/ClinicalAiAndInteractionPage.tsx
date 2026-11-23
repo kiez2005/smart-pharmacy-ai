@@ -203,7 +203,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
     } catch (err) {
       const errMsg = extractAiErrorMessage(
         err,
-        'Không kết nối được dịch vụ AI / RAG (kiểm tra Gemini API Key, Ollama hoặc Python AI Service).'
+        'Không kết nối được dịch vụ Trợ lý AI Dược lâm sàng. Vui lòng thử lại sau giây lát.'
       );
       setChatTurns((prev) =>
         prev.map((t) =>
@@ -251,7 +251,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
         SourceName: newDoc.SourceName,
         SourceRef: newDoc.SourceRef || null,
       });
-      toast.success('Đã lưu tài liệu HDSD mới & đồng bộ chỉ mục Vector/BM25!');
+      toast.success('Đã lưu tài liệu HDSD mới & đồng bộ cơ sở dữ liệu tra cứu!');
       setNewDoc((p) => ({ ...p, Title: '', Content: '', SourceRef: '' }));
       await loadKnowledgeDocs();
     } catch (err) {
@@ -293,17 +293,17 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
           <div>
             <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
               <Stethoscope className="h-5 w-5 text-teal-600" />
-              Trợ Lý Dược Lâm Sàng Qwen 2.5 7B (RAG Có Nguồn) & An Toàn Dược
+              Trợ Lý AI Dược Lâm Sàng & Kiểm Tra Tương Tác Thuốc
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Dùng duy nhất 1 model Qwen2.5 7B local cho cả Hỏi đáp HDSD & Tư vấn triệu chứng,
-              kết hợp nhận dạng giọng nói Faster-Whisper và kho tài liệu kiểm chứng [DOC-id].
+              Hỗ trợ tra cứu tờ HDSD, tư vấn triệu chứng lâm sàng có trích dẫn Dược thư Quốc gia và
+              kiểm tra tương tác đa hoạt chất.
             </p>
           </div>
           <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
             {[
-              { id: 'RAG_CHAT' as const, label: 'Chatbot Qwen RAG', icon: Sparkles },
-              { id: 'DDI_CHECKER' as const, label: 'Tương tác DDI', icon: ShieldAlert },
+              { id: 'RAG_CHAT' as const, label: 'Tư vấn Lâm sàng AI', icon: Sparkles },
+              { id: 'DDI_CHECKER' as const, label: 'Tương tác Thuốc (DDI)', icon: ShieldAlert },
               { id: 'KNOWLEDGE_BASE' as const, label: 'Kho Dược thư / HDSD', icon: BookOpen },
             ].map((tab) => {
               const Icon = tab.icon;
@@ -335,13 +335,13 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
           <div className="lg:col-span-4 space-y-3">
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3">
               <div className="text-xs font-bold uppercase tracking-wide text-slate-700">
-                Chế độ hội thoại (Chung 1 Qwen 2.5 7B)
+                Chế độ tư vấn chuyên môn
               </div>
               <div className="grid grid-cols-1 gap-1.5">
                 {[
                   { id: 'AUTO' as const, label: 'Tự động phân luồng (Hỏi thuốc / Triệu chứng)' },
-                  { id: 'DRUG_QA' as const, label: 'Hỏi đáp Thông tin & Liều dùng thuốc (DRUG_QA)' },
-                  { id: 'SYMPTOM_CONSULTATION' as const, label: 'Tư vấn Triệu chứng lâm sàng OTC (SYMPTOM)' },
+                  { id: 'DRUG_QA' as const, label: 'Tra cứu Thông tin & Liều dùng thuốc' },
+                  { id: 'SYMPTOM_CONSULTATION' as const, label: 'Tư vấn Triệu chứng lâm sàng OTC' },
                 ].map((opt) => (
                   <button
                     key={opt.id}
@@ -359,7 +359,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
               </div>
 
               <div className="pt-2 border-t border-slate-100 space-y-1.5">
-                <div className="text-[11px] font-bold text-slate-500">Câu hỏi kiểm chứng mẫu:</div>
+                <div className="text-[11px] font-bold text-slate-500">Câu hỏi tình huống lâm sàng mẫu:</div>
                 {SAMPLE_PROMPTS.map((sp) => (
                   <button
                     key={sp.label}
@@ -384,12 +384,11 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                 <div className="py-16 text-center space-y-2 text-slate-400">
                   <Bot className="mx-auto h-10 w-10 text-teal-500/70" />
                   <div className="text-sm font-bold text-slate-700">
-                    Chatbot Dược Lâm Sàng Trích Dẫn Nguồn [DOC-id]
+                    Trợ Lý Tư Vấn Dược Lâm Sàng & Tra Cứu Dược Thư
                   </div>
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    Nhập câu hỏi hoặc bấm nút Micro để nói bằng tiếng Việt (Faster-Whisper). Mọi
-                    khuyến nghị đều đối chiếu Tờ HDSD / Dược thư trong Kho Tri thức; nếu thiếu nguồn
-                    sẽ chuyển Dược sĩ chứ không đoán bừa.
+                    Nhập câu hỏi hoặc bấm nút Micro để nói bằng tiếng Việt. Mọi khuyến nghị đều đối
+                    chiếu Tờ HDSD và Dược thư Quốc gia trong Kho Tri thức của nhà thuốc.
                   </p>
                 </div>
               ) : (
@@ -416,7 +415,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                         <div className="space-y-1">
                           <div className="font-bold flex items-center gap-1.5 text-rose-700">
                             <AlertOctagon className="h-4 w-4 shrink-0" />
-                            Mô hình AI gặp sự cố (Báo lỗi thật — không trả kết quả giả):
+                            Trợ lý AI tạm thời gián đoạn kết nối:
                           </div>
                           <div>{turn.error}</div>
                         </div>
@@ -431,12 +430,11 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                         turn.ragData && (
                           <>
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="rounded bg-indigo-50 border border-indigo-200 px-2 py-0.5 font-mono text-[10px] font-bold text-indigo-700">
-                                Model: {turn.ragData.modelUsed}
-                                {turn.ragData.provider === 'google-ai-studio' ? ' (AI Studio)' : ''}
+                              <span className="rounded bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                                Trợ lý AI Dược lâm sàng
                               </span>
                               <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">
-                                {turn.ragData.mode}
+                                {turn.ragData.mode === 'DRUG_QA' ? 'Tra cứu Dược thư' : 'Tư vấn Triệu chứng'}
                               </span>
                               {turn.ragData.groundingMode === 'GENERAL_MEDICAL' && (
                                 <span className="rounded bg-sky-50 border border-sky-200 px-2 py-0.5 text-[10px] font-bold text-sky-800">
@@ -558,22 +556,22 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
               )}
             </div>
 
-            {/* Khung nhập câu hỏi + Micro Faster-Whisper */}
+            {/* Khung nhập câu hỏi + Micro giọng nói */}
             <div className="border-t border-slate-200 bg-white p-3 space-y-2">
               {voice.isRecording && (
                 <div className="text-[11px] font-bold text-rose-600 animate-pulse">
-                  ● Đang thu âm micro... Bấm lại nút Micro để dừng và gửi sang Faster-Whisper nhận dạng tiếng Việt.
+                  ● Đang thu âm micro... Bấm lại nút Micro để dừng và nhận diện giọng nói tiếng Việt.
                 </div>
               )}
               {voice.isTranscribing && (
                 <div className="text-[11px] font-bold text-indigo-600 flex items-center gap-1.5">
                   <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  Đang giải mã giọng nói bằng Faster-Whisper local...
+                  Đang chuyển giọng nói tiếng Việt thành văn bản...
                 </div>
               )}
               {voice.error && (
                 <div className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
-                  Lỗi Micro/STT: {voice.error}
+                  Lỗi Micro: {voice.error}
                 </div>
               )}
 
@@ -582,7 +580,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                   type="button"
                   onClick={voice.toggleRecording}
                   disabled={voice.isTranscribing || sendingChat}
-                  title="Nhập bằng giọng nói (Faster-Whisper Local)"
+                  title="Nhập câu hỏi bằng giọng nói tiếng Việt"
                   className={`shrink-0 rounded-lg border px-3 py-2.5 text-xs font-bold inline-flex items-center gap-1.5 transition-colors disabled:opacity-50 ${
                     voice.isRecording
                       ? 'border-rose-500 bg-rose-600 text-white hover:bg-rose-700'
@@ -591,7 +589,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                 >
                   {voice.isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                   <span className="hidden sm:inline">
-                    {voice.isRecording ? 'Dừng ghi âm' : 'Nói (Whisper)'}
+                    {voice.isRecording ? 'Dừng ghi âm' : 'Ghi âm'}
                   </span>
                 </button>
 
@@ -620,7 +618,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                   ) : (
                     <Send className="h-4 w-4" />
                   )}
-                  Hỏi Qwen
+                  Gửi câu hỏi
                 </button>
               </div>
             </div>
@@ -842,7 +840,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
               onClick={() => void handleSaveNewKnowledge()}
               className="w-full rounded-lg bg-teal-600 px-3 py-2 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-50"
             >
-              {savingDoc ? 'Đang lưu & reindex...' : 'Lưu Mục Tri Thức & Đồng Bộ Index'}
+              {savingDoc ? 'Đang lưu & đồng bộ...' : 'Lưu Tài Liệu & Đồng Bộ Dữ Liệu'}
             </button>
 
             <div className="pt-3 border-t border-slate-200 space-y-2">
@@ -862,7 +860,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
                 onClick={() => void handleUploadKnowledgeFile()}
                 className="w-full rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
               >
-                Trích Xuất PDF/Text & Reindex Vector RAG
+                Trích Xuất Tài Liệu & Đồng Bộ Kho Dược Thư
               </button>
             </div>
           </div>
@@ -871,7 +869,7 @@ export const ClinicalAiAndInteractionPage: React.FC = () => {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
                 <Database className="h-4 w-4 text-teal-600" />
-                Kho Tài Liệu Đang Phục Vụ RAG ({docsTotal} mục)
+                Kho Tài Liệu Dược Thư & HDSD ({docsTotal} mục)
               </h3>
               <div className="flex items-center gap-2">
                 <select

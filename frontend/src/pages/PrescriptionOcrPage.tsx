@@ -248,16 +248,16 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
           <div>
             <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
               <ScanLine className="h-5 w-5 text-teal-600" />
-              Nhận Dạng Đơn Thuốc Thật (OpenCV + RapidOCR)
+              Nhận Diện Đơn Thuốc Bằng AI (OCR Lâm Sàng)
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Tải ảnh đơn thuốc thật → OCR trích xuất từng dòng → AI đề xuất Top 5 ứng viên + độ tin
-              cậy → Dược sĩ bắt buộc chọn và xác nhận từng dòng trước khi chuyển sang POS.
+              Tải ảnh đơn thuốc bác sĩ → Tự động bóc tách bảng thuốc điều trị → Đề xuất thuốc trong
+              kho để Dược sĩ đối chiếu và xác nhận chuyển sang POS.
             </p>
           </div>
           <div className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-800">
             <ShieldCheck className="h-4 w-4 text-amber-600 shrink-0" />
-            Không dùng dữ liệu mẫu giả lập — Mọi dòng chưa xác nhận bị khóa chuyển hóa đơn
+            Kiểm soát 2 lớp: Dược sĩ xác nhận từng dòng thuốc trước khi xuất hóa đơn
           </div>
         </div>
 
@@ -303,7 +303,7 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
                     Bấm để chọn ảnh đơn thuốc (PNG, JPG, WEBP)
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    Ảnh sẽ được chuẩn hóa OpenCV (CLAHE + khử nhiễu) trước khi đọc bằng RapidOCR
+                    Ảnh đơn thuốc sẽ được tự động cân chỉnh độ tương phản và nhận diện bảng Thuốc điều trị
                   </div>
                 </div>
               )}
@@ -318,12 +318,12 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
               {scanning ? (
                 <>
                   <RefreshCw className="h-4 w-4 animate-spin" />
-                  Đang tiền xử lý OpenCV & chạy RapidOCR...
+                  Đang phân tích &amp; bóc tách bảng thuốc điều trị...
                 </>
               ) : (
                 <>
                   <ScanLine className="h-4 w-4" />
-                  Quét Đơn Thuốc Bằng RapidOCR
+                  Quét &amp; Bóc Tách Đơn Thuốc
                 </>
               )}
             </button>
@@ -332,7 +332,7 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
               <div className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 flex items-start gap-2">
                 <AlertOctagon className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-bold">OCR không thành công (Không trả kết quả giả):</div>
+                  <div className="font-bold">Không thể nhận diện đơn thuốc từ ảnh này:</div>
                   <div className="mt-0.5">{scanError}</div>
                 </div>
               </div>
@@ -344,37 +344,21 @@ export const PrescriptionOcrPage: React.FC<PrescriptionOcrPageProps> = ({
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold uppercase tracking-wide text-slate-700 flex items-center gap-1.5">
                   <Sliders className="h-3.5 w-3.5 text-teal-600" />
-                  Chi tiết OpenCV & Văn bản thô
+                  Kết quả nhận diện &amp; Văn bản trích xuất
                 </h4>
                 <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">
-                  Confidence TB: {(result.averageConfidence * 100).toFixed(1)}%
+                  Độ tin cậy TB: {(result.averageConfidence * 100).toFixed(1)}%
                 </span>
               </div>
               <div className="text-[11px] text-slate-600 flex flex-wrap items-center gap-1.5">
                 <span>
-                  Engine: <span className="font-mono font-semibold">{result.engine}</span> • Draft:{' '}
-                  <span className="font-mono">{result.draftId.slice(0, 8)}</span>
+                  Phiên quét: <span className="font-mono font-semibold">#{result.draftId.slice(0, 8)}</span>
                 </span>
                 {result.sectionMode === 'TREATMENT_TABLE' && (
                   <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
                     Đã lọc đúng vùng Thuốc điều trị
                   </span>
                 )}
-                {typeof result.elapsedSec === 'number' && (
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-slate-700">
-                    {result.elapsedSec.toFixed(2)}s
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {result.opencvPreprocessing.steps.map((s) => (
-                  <span
-                    key={s}
-                    className="rounded border border-teal-200 bg-teal-50 px-1.5 py-0.5 font-mono text-[10px] text-teal-800"
-                  >
-                    {s}
-                  </span>
-                ))}
               </div>
               <pre className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-mono text-[11px] text-slate-800 whitespace-pre-wrap">
                 {result.rawOcrText}

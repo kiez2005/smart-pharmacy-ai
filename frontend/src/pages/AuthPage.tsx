@@ -33,9 +33,15 @@ const STAFF_COLUMNS: ColumnConfig[] = [
   { id: 'FullName', label: 'Họ tên & Email công vụ' },
   { id: 'License', label: 'Chứng chỉ hành nghề Dược' },
   { id: 'Phone', label: 'Số điện thoại' },
-  { id: 'Role', label: 'Vai trò (RBAC)' },
+  { id: 'Role', label: 'Vai trò chuyên môn' },
   { id: 'Status', label: 'Trạng thái ca trực' },
 ];
+
+const ROLE_DISPLAY_MAP: Record<string, string> = {
+  ADMIN: 'Quản trị hệ thống (Dược sĩ Phụ trách)',
+  PHARMACIST: 'Dược sĩ Lâm sàng',
+  CASHIER: 'Thu ngân & Bán hàng POS',
+};
 
 const RBAC_PERMISSION_MATRIX = [
   {
@@ -214,8 +220,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       {/* Thanh công cụ 11 chức năng chuẩn Doanh nghiệp */}
       <EnterpriseToolbar
         entity="staff"
-        title="Quản Trị Nhân Sự Dược Sĩ & Phân Quyền Hệ Thống (RBAC & Auth)"
-        subtitle="Quản lý chứng chỉ hành nghề Dược, phân quyền vai trò theo chuẩn GPP (đầy đủ 11 chức năng CRUD, Nhân bản, Export Excel/JSON/XML)."
+        title="Quản Trị Nhân Sự Dược Sĩ & Phân Quyền Hệ Thống"
+        subtitle="Quản lý chứng chỉ hành nghề Dược, phân công ca trực và phân quyền nghiệp vụ theo chuẩn GPP."
         createLabel="Cấp Tài khoản mới (Alt+N)"
         search={search}
         onSearchChange={(val) => {
@@ -260,7 +266,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   Dược sĩ phụ trách ca trực: {currentUser.FullName}
                 </span>
                 <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-[10px] font-bold text-teal-800">
-                  Quyền: {currentUser.Role}
+                  {ROLE_DISPLAY_MAP[currentUser.Role] || currentUser.Role}
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -315,7 +321,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   <th className="py-3 px-4 whitespace-nowrap">Số điện thoại</th>
                 )}
                 {visibleColumns.Role !== false && (
-                  <th className="py-3 px-4 whitespace-nowrap">Vai trò Phân quyền (RBAC)</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Vai trò chuyên môn</th>
                 )}
                 {visibleColumns.Status !== false && (
                   <th className="py-3 px-4 whitespace-nowrap">Trạng thái</th>
@@ -384,18 +390,25 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                             onChange={(e) => void handleRoleChange(u.UserID, e.target.value)}
                             className="h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-800 shadow-sm focus:border-teal-600 focus:outline-none"
                           >
-                            <option value="ADMIN">ADMIN (Dược sĩ Phụ trách)</option>
-                            <option value="PHARMACIST">PHARMACIST (Dược sĩ Lâm sàng)</option>
-                            <option value="CASHIER">CASHIER (Thu ngân POS)</option>
+                            <option value="ADMIN">Quản trị viên (Dược sĩ Phụ trách)</option>
+                            <option value="PHARMACIST">Dược sĩ Lâm sàng</option>
+                            <option value="CASHIER">Thu ngân & Bán hàng POS</option>
                           </select>
                         </td>
                       )}
                       {visibleColumns.Status !== false && (
                         <td className="py-3 px-4 whitespace-nowrap">
-                          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/70">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Đang hoạt động
-                          </span>
+                          {u.Status === 'INACTIVE' ? (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200/70">
+                              <Lock className="h-3 w-3" />
+                              Chờ kích hoạt
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200/70">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Đang hoạt động
+                            </span>
+                          )}
                         </td>
                       )}
                       <td className="py-3 px-4 text-right whitespace-nowrap">
@@ -442,10 +455,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-teal-600" />
             <h2 className="text-sm font-bold text-slate-900">
-              Ma Trận Phân Quyền Nghiệp Vụ Chuẩn GPP (Role-Based Access Control Matrix)
+              Ma Trận Phân Quyền Nghiệp Vụ Chuẩn GPP
             </h2>
           </div>
-          <span className="text-xs text-slate-500">Áp dụng tự động theo Token JWT</span>
+          <span className="text-xs text-slate-500">Áp dụng tự động theo vai trò nhân sự</span>
         </div>
 
         <div className="overflow-x-auto">
@@ -453,9 +466,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/40 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 <th className="py-2.5 px-4">Nghiệp vụ / Phân hệ chức năng</th>
-                <th className="py-2.5 px-4 text-center">ADMIN (DS. Phụ trách)</th>
-                <th className="py-2.5 px-4 text-center">PHARMACIST (DS. Lâm sàng)</th>
-                <th className="py-2.5 px-4 text-center">CASHIER (Thu ngân POS)</th>
+                <th className="py-2.5 px-4 text-center">Quản trị viên (DS. Phụ trách)</th>
+                <th className="py-2.5 px-4 text-center">Dược sĩ Lâm sàng</th>
+                <th className="py-2.5 px-4 text-center">Thu ngân & Bán hàng POS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200/60 text-xs">

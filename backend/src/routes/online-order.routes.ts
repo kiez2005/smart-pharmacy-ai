@@ -4,6 +4,7 @@ import {
   customerCancelOnlineOrder,
   downloadPrescriptionImage,
   getPublicStorefrontCatalog,
+  getPublicStoreProfile,
   listOnlineOrdersForStaff,
   pharmacistReviewOnlineOrder,
   storefrontAssistantChat,
@@ -28,6 +29,7 @@ const router = Router();
 // ============================================================================
 // 1. PUBLIC ENDPOINTS CHO KHÁCH HÀNG (Rate-limited A4 + No unauthenticated B2B/PII)
 // ============================================================================
+router.get('/store-profile', publicReadLimiter, getPublicStoreProfile);
 router.get('/catalog', publicReadLimiter, getPublicStorefrontCatalog);
 router.post(
   '/prescriptions',

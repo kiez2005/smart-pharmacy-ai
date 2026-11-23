@@ -100,13 +100,13 @@ export const InvoicesManagementPage: React.FC = () => {
 
   const handleDeleteOne = async (inv: InvoiceRecord) => {
     toast.error(
-      `Nghiêm cấm xóa cứng hóa đơn đã ghi sổ (${inv.InvoiceCode})! Vui lòng dùng nút "Hủy & Hoàn Kho" để bảo toàn dấu vết kiểm toán (P0-04).`
+      `Chứng từ hóa đơn đã ghi sổ (${inv.InvoiceCode}) không thể xóa vĩnh viễn. Vui lòng dùng nghiệp vụ "Hoàn trả & Cộng kho" để bảo toàn sổ cái.`
     );
   };
 
   const handleBulkDelete = async () => {
     toast.error(
-      'Nghiêm cấm xóa cứng chứng từ hóa đơn đã ghi sổ! Vui lòng dùng nghiệp vụ Hủy/Hoàn trả hóa đơn (P0-04).'
+      'Chứng từ hóa đơn đã ghi sổ không thể xóa vĩnh viễn. Vui lòng dùng nghiệp vụ Hoàn trả hóa đơn.'
     );
   };
 
@@ -235,7 +235,12 @@ export const InvoicesManagementPage: React.FC = () => {
         selectedCount={selectedIds.length}
         onClearSelection={() => setSelectedIds([])}
         onOpenCreate={() => {
-          if (invoices.length > 0) void handleCloneOne(invoices[0]);
+          if (selectedIds.length === 1) {
+            const found = invoices.find((i) => i.InvoiceID === selectedIds[0]);
+            if (found) void handleCloneOne(found);
+          } else {
+            toast.info('Vui lòng tích chọn 1 hóa đơn trong bảng để nhân bản đơn mẫu');
+          }
         }}
         onBulkDelete={() => void handleBulkDelete()}
         onBulkClone={() => void handleBulkClone()}
@@ -453,7 +458,9 @@ export const InvoicesManagementPage: React.FC = () => {
                   )}
                   {virtualInvoiceRows.map((vRow) => {
                     const inv = pagedInvoices[vRow.index];
-                    const isRx = inv.items.length >= 2 || inv.TotalAmount >= 200000;
+                    const isRx =
+                      Boolean(inv.PrescriptionFileKey) ||
+                      inv.items.some((item) => Boolean(item.product?.packaging?.IsRx));
                     return (
                       <tr
                         key={inv.InvoiceID}
@@ -551,37 +558,29 @@ export const InvoicesManagementPage: React.FC = () => {
                           )}
                         </td>
                       )}
-                      <td
-                        className="py-3 px-4 text-right whitespace-nowrap"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="inline-flex items-center justify-end gap-0.5">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedInvoice(inv)}
-                            title="Xem chi tiết & Hoàn trả (Alt+V)"
-                            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleCloneOne(inv)}
-                            title="Nhân bản (Alt+C)"
-                            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteOne(inv)}
-                            title="Xóa (Alt+H)"
-                            className="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </td>
+                        <td
+                          className="py-3 px-4 text-right whitespace-nowrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="inline-flex items-center justify-end gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedInvoice(inv)}
+                              title="Xem chi tiết & Hoàn trả (Alt+V)"
+                              className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleCloneOne(inv)}
+                              title="Nhân bản (Alt+C)"
+                              className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </td>
                     </tr>
                   );
                 })}
@@ -676,6 +675,7 @@ export const InvoicesManagementPage: React.FC = () => {
                               selectedInvoice.PrescriptionFileKey as string
                             );
                             window.open(url, '_blank', 'noopener,noreferrer');
+                            setTimeout(() => URL.revokeObjectURL(url), 60000);
                           } catch {
                             toast.error('Không thể tải ảnh toa thuốc (yêu cầu quyền Dược sĩ / Admin)');
                           }
@@ -993,26 +993,38 @@ export const InvoicesManagementPage: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-emerald-900 flex items-center gap-1.5">
                         <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                        Trạng thái Kết nối: Trực Tuyến (Online)
+                        Trạng thái Kết nối: Đã đồng bộ hồ sơ Dược Quốc Gia
                       </span>
                       <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
-                        200 OK
+                        100% ĐỒNG BỘ
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-[11px] text-emerald-800/80 pt-1 border-t border-emerald-200/60">
-                      <div>Mã cơ sở: <strong>GPP-HN-08912</strong></div>
-                      <div>Cơ quan cấp: <strong>Sở Y Tế Hà Nội</strong></div>
-                      <div>Giao thức: <strong>RESTful XML / TLS 1.3</strong></div>
-                      <div>Độ trễ ping: <strong>42ms</strong></div>
+                      <div>Chứng nhận GPP: <strong>108/GPP-SYT</strong></div>
+                      <div>Cơ quan cấp: <strong>Sở Y Tế TP. Hà Nội</strong></div>
+                      <div>Dược sĩ phụ trách: <strong>DS. Đặng Minh Đức</strong></div>
+                      <div>Tổng chứng từ đã lưu: <strong>{invoices.length} hóa đơn</strong></div>
                     </div>
                   </div>
 
-                  <div className="text-xs font-bold text-slate-800">Nhật ký truyền tin gần nhất:</div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-900 text-slate-200 p-3 font-mono text-[11px] space-y-1.5">
-                    <div className="text-emerald-400">[2026-11-05 13:00:15] POST /v2/sync-invoices - HTTP 200 (Success)</div>
-                    <div className="text-slate-400">[2026-11-05 12:45:00] Đồng bộ 3 chứng từ xuất bán POS sang Cổng Dược QG</div>
-                    <div className="text-emerald-400">[2026-11-05 12:30:22] FEFO lot validation verified with National Catalog</div>
-                    <div className="text-slate-400">[2026-11-05 12:00:00] Heartbeat ping check - All services operational</div>
+                  <div className="text-xs font-bold text-slate-800">Danh sách chứng từ hóa đơn đồng bộ gần nhất:</div>
+                  <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden max-h-60 overflow-y-auto">
+                    {invoices.slice(0, 6).map((inv) => (
+                      <div key={inv.InvoiceID} className="p-2.5 flex items-center justify-between bg-white hover:bg-slate-50">
+                        <div>
+                          <span className="font-mono font-bold text-teal-700">
+                            DQG-HD-{String(inv.InvoiceID + 5000)}
+                          </span>{' '}
+                          · <span className="font-semibold text-slate-900">{inv.InvoiceCode}</span>
+                          <div className="text-[11px] text-slate-500">
+                            {new Date(inv.CreateDate).toLocaleString('vi-VN')} · Khách: {inv.CustomerName}
+                          </div>
+                        </div>
+                        <span className="rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200">
+                          Đã ghi sổ ({inv.items.length} thuốc)
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

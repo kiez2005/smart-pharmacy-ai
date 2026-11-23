@@ -73,6 +73,12 @@ const AuthPage = lazy(() => import('./pages/AuthPage').then((m) => ({ default: m
 
 const STOREFRONT_URL = import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:5174';
 
+const ROLE_DISPLAY_LABEL: Record<string, string> = {
+  ADMIN: 'Quản trị hệ thống',
+  PHARMACIST: 'Dược sĩ lâm sàng',
+  CASHIER: 'Thu ngân & Bán hàng',
+};
+
 const TabLoadingFallback = () => (
   <div className="flex flex-col items-center justify-center min-h-[320px] gap-3 text-slate-500">
     <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -434,7 +440,7 @@ export const App: React.FC = () => {
                   {currentUser.FullName}
                 </div>
                 <div className="text-[11px] text-slate-500 truncate">
-                  Quyền: {currentUser.Role}
+                  {ROLE_DISPLAY_LABEL[currentUser.Role] || currentUser.Role}
                 </div>
               </div>
             </div>
@@ -555,7 +561,7 @@ export const App: React.FC = () => {
                     {currentUser.FullName}
                   </div>
                   <div className="text-[10px] text-teal-700 truncate">
-                    Quyền: {currentUser.Role}
+                    {ROLE_DISPLAY_LABEL[currentUser.Role] || currentUser.Role}
                   </div>
                 </div>
               </div>
@@ -610,11 +616,11 @@ export const App: React.FC = () => {
               href={STOREFRONT_URL}
               target="_blank"
               rel="noreferrer"
-              title="Mở trang Web Bán Hàng Độc Lập dành cho khách mua online"
+              title="Mở Website Nhà thuốc trực tuyến dành cho khách hàng"
               className="hidden md:inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 text-xs font-semibold text-sky-800 hover:bg-sky-100 shadow-2xs transition-colors"
             >
               <ExternalLink className="h-3.5 w-3.5" />
-              <span>Web Bán Hàng (:5174)</span>
+              <span>Website Nhà thuốc</span>
             </a>
 
             <button

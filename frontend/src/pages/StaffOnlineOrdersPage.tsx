@@ -171,7 +171,7 @@ export const StaffOnlineOrdersPage: React.FC = () => {
   const handleSubmitReview = async () => {
     if (!reviewingOrder) return;
     if (!canReviewClinical) {
-      toast.error('Chỉ Dược sĩ (PHARMACIST) hoặc Quản trị viên (ADMIN) mới có quyền thẩm định đơn Online!');
+      toast.error('Chỉ Dược sĩ lâm sàng hoặc Quản trị viên mới có quyền thẩm định đơn Online!');
       return;
     }
     if (reviewAction === 'APPROVE' && orderHasRxItem(reviewingOrder) && !reviewingOrder.PrescriptionFileKey) {
@@ -239,7 +239,12 @@ export const StaffOnlineOrdersPage: React.FC = () => {
         stage: nextStage,
         courierTrackingCode: courierTrackingCode.trim() || order.CourierTrackingCode || undefined,
       });
-      toast.success(`Đơn #${updated.OrderCode} đã chuyển sang trạng thái: ${nextStage}`);
+      const stageLabelMap: Record<string, string> = {
+        PACKING: 'Đang đóng gói',
+        SHIPPING: 'Đang giao vận',
+        DELIVERED: 'Đã giao thành công',
+      };
+      toast.success(`Đơn #${updated.OrderCode} đã chuyển sang trạng thái: ${stageLabelMap[nextStage] || nextStage}`);
       if (selectedOrder && selectedOrder.OrderID === order.OrderID) {
         setSelectedOrder(updated);
       }
@@ -397,7 +402,7 @@ export const StaffOnlineOrdersPage: React.FC = () => {
               Quản Trị Đơn Online & Thẩm Định Dược Lâm Sàng
             </h1>
             <span className="rounded-full bg-teal-100 text-teal-800 text-[11px] font-bold px-2.5 py-0.5 border border-teal-300">
-              Phân hệ Nội bộ Dược sĩ (RBAC)
+              Thẩm định Dược sĩ Chuẩn GPP
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">

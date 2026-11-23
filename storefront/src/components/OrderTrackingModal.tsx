@@ -45,13 +45,21 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Không tìm thấy đơn hàng hoặc Tracking Token không hợp lệ / đã hết hạn';
+        'Không tìm thấy đơn hàng hoặc Mã tra cứu bảo mật không hợp lệ / đã hết hạn';
       toast.error(msg);
       setOrder(null);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
 
   useEffect(() => {
     if (initialOrderCode && initialTrackingToken) {
@@ -71,10 +79,10 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
       const updated = await storeApi.cancelOrder(
         order.OrderID,
         trackingToken.trim().toUpperCase(),
-        'Khách hàng tự hủy trên Cổng Storefront'
+        'Khách hàng yêu cầu hủy đơn trực tuyến'
       );
       setOrder(updated);
-      toast.success(`Đã hủy đơn #${updated.OrderCode} và hoàn trả giữ kho tạm thành công!`);
+      toast.success(`Đã hủy đơn #${updated.OrderCode} và hoàn trả giữ hàng tạm thành công!`);
       onOrderCancelled?.();
     } catch (err: unknown) {
       const msg =
@@ -94,8 +102,34 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
     return 0;
   };
 
+  const formatPaymentStatusVi = (status: string) => {
+    const map: Record<string, string> = {
+      UNPAID: 'Chờ thanh toán',
+      PARTIALLY_PAID: 'Thanh toán một phần',
+      PAID: 'Đã thanh toán',
+      REFUNDED: 'Đã hoàn tiền',
+      VOID: 'Đã hủy thanh toán',
+    };
+    return map[status] || status;
+  };
+
+  const formatPaymentMethodVi = (method: string) => {
+    const map: Record<string, string> = {
+      COD: 'Thanh toán khi nhận hàng (COD)',
+      VIETQR: 'Chuyển khoản VietQR',
+      CASH: 'Tiền mặt',
+      CREDIT: 'Công nợ hợp đồng',
+    };
+    return map[method] || method;
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4"
+    >
       <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl overflow-hidden border border-slate-200 max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 bg-teal-50 border-b border-teal-100 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -159,7 +193,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                     {formatVND(order.TotalAmount)}
                   </div>
                   <div className="text-[11px] font-semibold text-teal-700">
-                    {order.PaymentMethod} · {order.PaymentStatus}
+                    {formatPaymentMethodVi(order.PaymentMethod)} · {formatPaymentStatusVi(order.PaymentStatus)}
                   </div>
                 </div>
               </div>

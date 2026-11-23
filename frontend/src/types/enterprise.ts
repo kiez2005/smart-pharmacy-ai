@@ -1,13 +1,31 @@
 import { Product } from './product';
 import { CustomerRecord, PaymentRecord, UserProfile } from './forms';
 
+export interface NearExpiryLotAlert {
+  lotId: number;
+  batchCode: string;
+  productId: number;
+  productName: string;
+  category: string;
+  expiryDate: string;
+  daysLeft: number;
+  quantity: number;
+  unit: string;
+  rxStatus: string;
+  recommendation: string;
+}
+
 export interface DashboardAnalytics {
   totalRevenue: number;
+  totalReceivableDebt?: number;
   totalPurchaseCost: number;
   totalInventoryValue: number;
+  grossProfit?: number;
+  grossMarginPercent?: number;
   totalProducts: number;
   totalStockUnits: number;
   lowStockProducts: Product[];
+  nearExpiryLots?: NearExpiryLotAlert[];
   outOfStockCount: number;
   totalCustomers: number;
   completedInvoicesCount: number;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   ShieldCheck,
@@ -20,6 +20,7 @@ import {
   getUnitLabel,
   getUnitName,
 } from '../utils/packaging';
+import { SafeImage } from './SafeImage';
 
 interface ProductDetailModalProps {
   product: Product;
@@ -66,8 +67,21 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const currentPrice = getEffectivePrice(product, unitMode);
   const stockBadge = getStockStatusBadgeInfo(product);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4"
+    >
       <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl overflow-hidden border border-slate-200 max-h-[92vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-200 bg-slate-50/70">
           <div className="flex flex-wrap items-center gap-2">
@@ -100,7 +114,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           {/* Image */}
           <div className="md:col-span-2 space-y-3">
             <div className="aspect-square rounded-2xl bg-slate-100 border border-slate-200 overflow-hidden">
-              <img
+              <SafeImage
                 src={product.PathImage}
                 alt={product.ProductName}
                 className="w-full h-full object-cover"

@@ -146,6 +146,9 @@ export const EnterpriseToolbar: React.FC<EnterpriseToolbarProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!e.altKey) return;
+      if (pendingImportFile) return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       const key = e.key.toLowerCase();
       if (key === 'n') {
         e.preventDefault();

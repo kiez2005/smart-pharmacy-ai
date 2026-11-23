@@ -101,7 +101,7 @@ export function useVoiceRecorder(options: UseVoiceRecorderOptions = {}) {
           const res = await aiApi.speechToText(audioBlob, `voice-input.${ext}`, language);
           setLastModelUsed(res.modelUsed);
           if (!res.text || !res.text.trim()) {
-            const msg = 'Faster-Whisper không phát hiện lời nói rõ ràng trong đoạn thu âm.';
+            const msg = 'Hệ thống không phát hiện lời nói rõ ràng trong đoạn thu âm.';
             setError(msg);
             onError?.(msg);
             return;
@@ -110,7 +110,7 @@ export function useVoiceRecorder(options: UseVoiceRecorderOptions = {}) {
         } catch (err) {
           const msg = extractAiErrorMessage(
             err,
-            'Không thể chuyển giọng nói thành văn bản (kiểm tra model Faster-Whisper).'
+            'Không thể chuyển giọng nói thành văn bản. Vui lòng thử lại.'
           );
           setError(msg);
           onError?.(msg);

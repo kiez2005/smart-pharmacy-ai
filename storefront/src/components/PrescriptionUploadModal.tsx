@@ -40,6 +40,14 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
     };
   }, [imagePreview]);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -123,7 +131,12 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
   const isB2B = mode === 'B2B_QUOTE';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4"
+    >
       <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden border border-slate-200 max-h-[92vh] flex flex-col">
         <div
           className={`flex items-center justify-between px-5 py-4 border-b shrink-0 ${
@@ -306,7 +319,7 @@ export const PrescriptionUploadModal: React.FC<PrescriptionUploadModalProps> = (
                           className="max-h-36 mx-auto rounded-lg border shadow-xs object-contain"
                         />
                         <div className="text-[11px] font-semibold text-teal-700">
-                          {uploadingFile ? 'Đang mã hóa tải lên...' : `${fileName} (${fileKey || 'sẵn sàng'})`}
+                          {uploadingFile ? 'Đang tải ảnh lên...' : `${fileName} (Đã tải lên an toàn)`}
                         </div>
                       </div>
                     ) : (

@@ -63,11 +63,51 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
   const formatVND = (val: number) =>
     new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
 
-  if (loading || !data) {
+  const currentUserName = (() => {
+    try {
+      const raw = localStorage.getItem('pharmacore_user');
+      if (raw) {
+        const parsed = JSON.parse(raw) as { FullName?: string };
+        if (parsed?.FullName) return parsed.FullName;
+      }
+    } catch {
+      // ignore
+    }
+    return 'DS. Đặng Minh Đức';
+  })();
+
+  if (loading) {
     return (
       <div className="space-y-4">
         <div className="h-12 rounded-xl border border-slate-200 bg-white animate-pulse" />
         <div className="h-64 rounded-xl border border-slate-200 bg-white animate-pulse" />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="rounded-xl border border-rose-200 bg-white p-8 text-center space-y-3">
+        <AlertTriangle className="h-8 w-8 text-rose-500 mx-auto" />
+        <div className="text-sm font-bold text-slate-900">
+          Không thể tải dữ liệu thẻ kho dược phẩm
+        </div>
+        <div className="flex justify-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="h-9 rounded-lg border border-slate-300 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Quay lại Danh mục
+          </button>
+          <button
+            type="button"
+            onClick={() => void fetchCard()}
+            className="h-9 rounded-lg bg-teal-600 px-4 text-xs font-semibold text-white hover:bg-teal-700"
+          >
+            Thử lại
+          </button>
+        </div>
       </div>
     );
   }
@@ -79,6 +119,8 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
     .reduce((sum, e) => sum + (e.BaseQuantityDeducted ?? e.Quantity), 0);
   const looseUnits = product.packaging?.LooseUnits ?? 0;
   const smallestUnit = product.packaging?.SmallestUnit || 'Viên';
+  const blistersPerPackage = Math.max(1, product.packaging?.BlistersPerPackage || 10);
+  const unitsPerPackage = Math.max(1, product.packaging?.UnitsPerPackage || 100);
   const openingStock = Math.max(0, product.Quantity - totalImported + totalExported);
   const variance = actualCount - product.Quantity;
   const varianceValue = variance * product.Price;
@@ -412,7 +454,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
 
           <div className="mt-3.5 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
             <span className="text-[11px] text-slate-500">
-              Người kiểm: <strong className="text-slate-700">DS. Nguyễn Văn Trung</strong>
+              Người kiểm: <strong className="text-slate-700">{currentUserName}</strong>
             </span>
             <button
               type="button"
@@ -649,7 +691,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
                       </div>
                       <div className="flex justify-between border-b border-slate-100 pb-1.5">
                         <span>Dược sĩ phụ trách chốt tồn:</span>
-                        <strong className="text-slate-800">DS. Nguyễn Văn Trung (Mã NV: DS-001)</strong>
+                        <strong className="text-slate-800">{currentUserName}</strong>
                       </div>
                       <div className="flex justify-between border-b border-slate-100 pb-1.5">
                         <span>Phương pháp định giá tồn kho:</span>
@@ -842,22 +884,29 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
                       </div>
 
                       <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
-                        <div className="text-[11px] text-slate-500">2. Quy đổi Vỉ lẻ (1 Hộp = 10 Vỉ)</div>
+                        <div className="text-[11px] text-slate-500">
+                          2. Quy đổi Vỉ lẻ (1 {product.Unit} = {blistersPerPackage} Vỉ)
+                        </div>
                         <div className="text-lg font-bold text-teal-700 mt-1 tabular-nums">
-                          {(product.Quantity * 10).toLocaleString('vi-VN')} Vỉ
+                          {(product.Quantity * blistersPerPackage).toLocaleString('vi-VN')} Vỉ
                         </div>
                         <div className="text-[10px] text-slate-400 mt-0.5">
-                          Đơn giá: {formatVND(Math.round(product.Price / 10))}/Vỉ
+                          Đơn giá: {formatVND(Math.round(product.Price / blistersPerPackage))}/Vỉ
                         </div>
                       </div>
 
                       <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
-                        <div className="text-[11px] text-slate-500">3. Quy đổi Viên lẻ (1 Vỉ = 10 Viên)</div>
+                        <div className="text-[11px] text-slate-500">
+                          3. Quy đổi {smallestUnit} lẻ (1 {product.Unit} = {unitsPerPackage}{' '}
+                          {smallestUnit})
+                        </div>
                         <div className="text-lg font-bold text-sky-700 mt-1 tabular-nums">
-                          {(product.Quantity * 100).toLocaleString('vi-VN')} Viên
+                          {(product.Quantity * unitsPerPackage + looseUnits).toLocaleString('vi-VN')}{' '}
+                          {smallestUnit}
                         </div>
                         <div className="text-[10px] text-slate-400 mt-0.5">
-                          Đơn giá: {formatVND(Math.round(product.Price / 50))}/Viên
+                          Đơn giá: {formatVND(Math.round(product.Price / unitsPerPackage))}/
+                          {smallestUnit}
                         </div>
                       </div>
                     </div>
@@ -866,7 +915,7 @@ export const ProductStockCardPage: React.FC<ProductStockCardPageProps> = ({
                   <div className="rounded-xl border border-slate-200 p-4 space-y-2 bg-slate-50">
                     <h4 className="font-bold text-slate-800">Nguyên tắc ràng buộc kiểm soát kho:</h4>
                     <ul className="list-disc pl-5 space-y-1 text-slate-600">
-                      <li>Không cho phép bán khi tồn kho $\le$ 0 ở bất kỳ đơn vị nào (Hộp, Vỉ, Viên).</li>
+                      <li>Không cho phép bán khi tồn kho ≤ 0 ở bất kỳ đơn vị nào (Hộp, Vỉ, Viên).</li>
                       <li>Khấu trừ tự động theo nguyên tắc Hết hạn trước - Xuất trước (FEFO).</li>
                       <li>Định mức tồn tối thiểu an toàn: 20 Hộp (Hiện tại: {product.Quantity > 20 ? '✅ Đạt an toàn' : '⚠️ Cần nhập bổ sung'}).</li>
                     </ul>

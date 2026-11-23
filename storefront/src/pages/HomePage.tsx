@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   FilePlus2,
   Truck,
@@ -22,12 +22,17 @@ import {
   getPackagingSpec,
   getStockStatusBadgeInfo,
 } from '../utils/packaging';
+import { SafeImage } from '../components/SafeImage';
 
 interface HomePageProps {
   products: Product[];
   categories: string[];
   selectedCategory: string;
   onSelectCategory: (cat: string) => void;
+  rxFilter: 'ALL' | 'OTC' | 'RX';
+  onChangeRxFilter: (next: 'ALL' | 'OTC' | 'RX') => void;
+  symptomFilter: string;
+  onChangeSymptomFilter: (next: string) => void;
   page: number;
   total: number;
   totalPages: number;
@@ -45,27 +50,11 @@ interface HomePageProps {
 }
 
 const SYMPTOM_FILTERS = [
-  { id: 'ALL_SYMPTOM', label: 'Tất cả triệu chứng', keywords: [] as string[] },
-  {
-    id: 'FEVER_FLU',
-    label: 'Cảm cúm & Hạ sốt',
-    keywords: ['paracetamol', 'panadol', 'hạ sốt', 'cảm', 'sốt', 'giảm đau', 'efferalgan'],
-  },
-  {
-    id: 'ANTIBIOTIC',
-    label: 'Kháng sinh & Hô hấp',
-    keywords: ['amoxicillin', 'augmentin', 'azithromycin', 'kháng sinh', 'ho', 'hô hấp'],
-  },
-  {
-    id: 'STOMACH',
-    label: 'Dạ dày & Tiêu hóa',
-    keywords: ['omeprazol', 'dạ dày', 'men tiêu hóa', 'gaviscon', 'tiêu hóa', 'enterogermina'],
-  },
-  {
-    id: 'VITAMIN',
-    label: 'Vitamin & Đề kháng',
-    keywords: ['vitamin', 'kẽm', 'zinc', 'sắt', 'omega', 'tăng đề kháng', 'canxi'],
-  },
+  { id: 'ALL_SYMPTOM', label: 'Tất cả triệu chứng' },
+  { id: 'FEVER_FLU', label: 'Cảm cúm & Hạ sốt' },
+  { id: 'ANTIBIOTIC', label: 'Kháng sinh & Hô hấp' },
+  { id: 'STOMACH', label: 'Dạ dày & Tiêu hóa' },
+  { id: 'VITAMIN', label: 'Vitamin & Đề kháng' },
 ];
 
 export const HomePage: React.FC<HomePageProps> = ({
@@ -73,6 +62,10 @@ export const HomePage: React.FC<HomePageProps> = ({
   categories: serverCategories,
   selectedCategory,
   onSelectCategory,
+  rxFilter,
+  onChangeRxFilter,
+  symptomFilter,
+  onChangeSymptomFilter,
   page,
   total,
   totalPages,
@@ -88,9 +81,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   onOpenTrackingModal,
   onOpenAiChat,
 }) => {
-  const [rxFilter, setRxFilter] = useState<'ALL' | 'OTC' | 'RX'>('ALL');
-  const [symptomFilter, setSymptomFilter] = useState<string>('ALL_SYMPTOM');
-
   const categories = useMemo(
     () =>
       serverCategories.length > 0
@@ -99,22 +89,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     [serverCategories, products]
   );
 
-  const filteredProducts = useMemo(() => {
-    const activeSymptom = SYMPTOM_FILTERS.find((s) => s.id === symptomFilter);
-
-    return products.filter((p) => {
-      if (rxFilter === 'OTC' && p.IsRx) return false;
-      if (rxFilter === 'RX' && !p.IsRx) return false;
-
-      if (activeSymptom && activeSymptom.keywords.length > 0) {
-        const hay = `${p.ProductName} ${p.ProductType} ${p.Description}`.toLowerCase();
-        const hit = activeSymptom.keywords.some((kw) => hay.includes(kw));
-        if (!hit) return false;
-      }
-
-      return true;
-    });
-  }, [products, rxFilter, symptomFilter]);
+  const filteredProducts = products;
 
   return (
     <main className="mx-auto max-w-7xl px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-5 sm:space-y-6">
@@ -130,7 +105,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               Mua Thuốc Chính Hãng — Giao Nhanh Trong 2 Giờ
             </h1>
             <p className="text-xs sm:text-base text-teal-50 leading-relaxed">
-              Đặt thuốc không kê đơn (OTC) linh hoạt theo Hộp / Vỉ / Viên hoặc tải lên toa thuốc bác sĩ để Dược sĩ chuyên môn tư vấn & giữ kho nguyên tử 15 phút.
+              Đặt thuốc không kê đơn (OTC) linh hoạt theo Hộp / Vỉ / Viên hoặc tải lên toa thuốc bác sĩ để Dược sĩ chuyên môn tư vấn & giữ hàng ưu tiên 15 phút.
             </p>
             <div className="flex flex-wrap items-center gap-2.5 pt-1">
               <button
@@ -203,7 +178,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               <button
                 key={sym.id}
                 type="button"
-                onClick={() => setSymptomFilter(sym.id)}
+                onClick={() => onChangeSymptomFilter(sym.id)}
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold shrink-0 transition-colors ${
                   symptomFilter === sym.id
                     ? 'bg-teal-600 text-white shadow-xs'
@@ -225,7 +200,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <button
                   key={opt.key}
                   type="button"
-                  onClick={() => setRxFilter(opt.key)}
+                  onClick={() => onChangeRxFilter(opt.key)}
                   className={`rounded-lg px-2.5 py-1 transition-all ${
                     rxFilter === opt.key
                       ? 'bg-white text-teal-700 shadow-xs'
@@ -289,8 +264,8 @@ export const HomePage: React.FC<HomePageProps> = ({
                 title={searchMeta.warning || ''}
               >
                 {searchMeta.engine === 'hybrid-rrf'
-                  ? 'Hybrid Search: Từ khóa + Ngữ nghĩa'
-                  : searchMeta.warning || 'Chỉ khớp từ khóa'}
+                  ? 'Tìm kiếm thông minh theo tên thuốc & công dụng'
+                  : searchMeta.warning || 'Khớp từ khóa trực tiếp'}
               </span>
             )}
           </div>
@@ -326,8 +301,8 @@ export const HomePage: React.FC<HomePageProps> = ({
                 type="button"
                 onClick={() => {
                   onSelectCategory('ALL');
-                  setRxFilter('ALL');
-                  setSymptomFilter('ALL_SYMPTOM');
+                  onChangeRxFilter('ALL');
+                  onChangeSymptomFilter('ALL_SYMPTOM');
                 }}
                 className="rounded-xl border border-slate-300 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
@@ -360,7 +335,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                       onClick={() => onSelectProduct(product)}
                       className="relative block h-36 sm:h-44 w-full overflow-hidden bg-slate-50 text-left"
                     >
-                      <img
+                      <SafeImage
                         src={product.PathImage}
                         alt={product.ProductName}
                         loading="lazy"

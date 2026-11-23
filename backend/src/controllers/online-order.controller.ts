@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
+import { PHARMACY_STORE_PROFILE } from '../config/pharmacy-profile';
 import {
   deriveIsRxClassification,
   packagingService,
@@ -631,6 +632,23 @@ export const customerCancelOnlineOrder = async (
  * - DTO Allowlist nghiêm ngặt: KHÔNG lộ tồn kho thực tế chính xác, giá sỉ B2B, stockLots, LooseUnits, ReservedBaseQty, Version.
  * - Hỗ trợ phân trang & lọc phía Server (`page`, `limit`, `search`, `type`, `inStockOnly`).
  */
+const SYMPTOM_SQL_KEYWORDS: Record<string, string[]> = {
+  FEVER_FLU: ['paracetamol', 'panadol', 'hạ sốt', 'cảm', 'sốt', 'giảm đau', 'efferalgan', 'decolgen', 'hapacol'],
+  ANTIBIOTIC: ['amoxicillin', 'augmentin', 'azithromycin', 'kháng sinh', 'ho', 'hô hấp', 'prospan', 'acetylcystein'],
+  STOMACH: ['omeprazol', 'dạ dày', 'men tiêu hóa', 'gaviscon', 'tiêu hóa', 'enterogermina', 'smecta', 'phosphalugel'],
+  VITAMIN: ['vitamin', 'kẽm', 'zinc', 'sắt', 'omega', 'tăng đề kháng', 'canxi', 'berocca', 'enervon'],
+};
+
+export const getPublicStoreProfile = async (
+  _req: Request,
+  res: Response
+): Promise<void> => {
+  res.json({
+    success: true,
+    data: PHARMACY_STORE_PROFILE,
+  });
+};
+
 export const getPublicStorefrontCatalog = async (
   req: Request,
   res: Response
@@ -639,6 +657,8 @@ export const getPublicStorefrontCatalog = async (
     const rawSearch = String(req.query.search || '').trim();
     const searchLower = rawSearch.toLowerCase();
     const type = String(req.query.type || req.query.productType || '').trim();
+    const rxFilter = String(req.query.rxFilter || 'ALL').trim().toUpperCase();
+    const symptom = String(req.query.symptom || 'ALL_SYMPTOM').trim().toUpperCase();
     const inStockOnly = req.query.inStockOnly === 'true' || req.query.inStockOnly === '1';
     const page = Math.max(1, Number(req.query.page || 1) || 1);
     const limit = Math.min(48, Math.max(1, Number(req.query.limit || 24) || 24));
@@ -652,6 +672,28 @@ export const getPublicStorefrontCatalog = async (
 
     if (type && type !== 'ALL') {
       conditions.push(Prisma.sql`p.ProductType = ${type}`);
+    }
+
+    if (rxFilter === 'OTC') {
+      conditions.push(Prisma.sql`pk.IsRx = 0`);
+    } else if (rxFilter === 'RX') {
+      conditions.push(Prisma.sql`pk.IsRx = 1`);
+    }
+
+    const symptomKeywords = SYMPTOM_SQL_KEYWORDS[symptom];
+    if (symptomKeywords && symptomKeywords.length > 0) {
+      const symptomClauses = symptomKeywords.map((kw) => {
+        const pat = `%${escapeLike(kw)}%`;
+        return Prisma.sql`(
+          LOWER(p.ProductName) LIKE ${pat} ESCAPE '\\'
+          OR LOWER(p.Description) LIKE ${pat} ESCAPE '\\'
+          OR LOWER(p.ProductType) LIKE ${pat} ESCAPE '\\'
+          OR p.ProductName LIKE ${pat} ESCAPE '\\'
+          OR p.Description LIKE ${pat} ESCAPE '\\'
+          OR p.ProductType LIKE ${pat} ESCAPE '\\'
+        )`;
+      });
+      conditions.push(Prisma.sql`(${Prisma.join(symptomClauses, ' OR ')})`);
     }
 
     if (inStockOnly) {

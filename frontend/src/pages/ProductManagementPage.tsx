@@ -310,6 +310,9 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (!e.altKey) return;
+      if (isFormOpen || viewingProduct || pendingImportFile || activeMetricModal) return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       const key = e.key.toLowerCase();
 
       if (key === 'n') {
@@ -893,7 +896,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                 type="button"
                 onClick={handleVoiceSearch}
                 disabled={voiceSearch.isTranscribing}
-                title={voiceSearch.isRecording ? 'Bấm để dừng thu âm' : 'Tìm kiếm bằng giọng nói (Faster-Whisper)'}
+                title={voiceSearch.isRecording ? 'Bấm để dừng thu âm' : 'Tìm kiếm bằng giọng nói Tiếng Việt'}
                 className={`absolute right-1 top-1 h-7 w-7 rounded-md inline-flex items-center justify-center transition-colors ${
                   voiceSearch.isRecording
                     ? 'bg-rose-500 text-white animate-pulse'
@@ -967,11 +970,8 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
               >
                 {total} kết quả •{' '}
                 {searchEngineInfo.engine === 'hybrid-rrf'
-                  ? 'Hybrid Semantic + Từ khóa'
-                  : searchEngineInfo.semanticDegraded
-                    ? 'Chỉ Từ khóa (Semantic tắt)'
-                    : searchEngineInfo.engine}{' '}
-                ({searchEngineInfo.processingTimeMs}ms)
+                  ? 'Tìm kiếm thông minh'
+                  : 'Tìm theo từ khóa'}
               </span>
             )}
             <ColumnVisibilityMenu
@@ -1168,7 +1168,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                   </div>
                 </div>
                 <p className="text-zinc-500 leading-relaxed">
-                  Hệ thống sẽ kiểm tra cấu trúc 10 trường dữ liệu chuẩn (`ProductName`, `ProductType`, `Quantity`, `Unit`, `Price`, `Description`...) và tự động đồng bộ vào chỉ mục tìm kiếm.
+                  Hệ thống sẽ kiểm tra cấu trúc các trường dữ liệu chuẩn (Tên thuốc, Nhóm dược lý, Số lượng, Đơn vị tính, Giá bán, Mô tả hoạt chất...) và tự động đồng bộ vào danh mục kho.
                 </p>
               </div>
               <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3 bg-zinc-50/50">
@@ -1355,7 +1355,7 @@ export const ProductManagementPage: React.FC<ProductManagementPageProps> = ({
                       </span>
                     </div>
                     <div className="mt-1 text-[11px] text-amber-700">
-                      Định mức cảnh báo an toàn: Số lượng tồn kho $\le$ 45 {availableUnits[0] || 'Hộp'}
+                      Định mức cảnh báo an toàn: Số lượng tồn kho ≤ 45 {availableUnits[0] || 'Hộp'}
                     </div>
                   </div>
 
